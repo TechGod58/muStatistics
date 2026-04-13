@@ -2358,6 +2358,24 @@
                 <input id="forecast-horizon" type="number" min="1" max="24" value="3" />
               </label>
             </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Method</span>
+                <select id="forecast-method">
+                  <option value="linear_trend" selected>linear trend</option>
+                  <option value="moving_average">moving average</option>
+                  <option value="exponential_smoothing">exponential smoothing</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Moving average window</span>
+                <input id="forecast-window" type="number" min="2" max="12" value="3" />
+              </label>
+              <label class="field">
+                <span>Smoothing alpha</span>
+                <input id="forecast-alpha" type="number" min="0.05" max="0.95" step="0.05" value="0.35" />
+              </label>
+            </div>
             <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
           </article>
           <article class="panel" data-quant-parent="model" data-quant-subsection="cluster">

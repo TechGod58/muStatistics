@@ -1387,7 +1387,7 @@ function parseTimeValue(value, fallbackIndex) {
     }
     return Number.isFinite(fallbackIndex) ? fallbackIndex : null;
 }
-export function analyzeForecast(dataset, timeFieldKey, valueFieldKey, horizon = 3, options) {
+export function analyzeForecast(dataset, timeFieldKey, valueFieldKey, horizon = 3, options, settings) {
     if (timeFieldKey === valueFieldKey) {
         throw new Error('Choose different time and value fields for forecasting.');
     }
@@ -1405,28 +1405,74 @@ export function analyzeForecast(dataset, timeFieldKey, valueFieldKey, horizon = 
     if (rows.length < 3) {
         throw new Error('Forecasting requires at least three usable time/value rows.');
     }
+    const method = settings?.method ?? 'linear_trend';
+    const normalizedHorizon = Math.min(24, Math.max(1, Math.floor(horizon)));
+    const movingAverageWindow = Math.min(Math.max(2, Math.floor(settings?.movingAverageWindow ?? 3)), Math.min(12, rows.length));
+    const smoothingAlpha = Math.min(0.95, Math.max(0.05, typeof settings?.smoothingAlpha === 'number' ? settings.smoothingAlpha : 0.35));
     const firstTimeIndex = rows[0].timeIndex;
     const normalizedTimes = rows.map((row) => row.timeIndex - firstTimeIndex);
     const values = rows.map((row) => row.actual);
-    const timeMean = normalizedTimes.reduce((total, value) => total + value, 0) / normalizedTimes.length;
-    const valueMean = values.reduce((total, value) => total + value, 0) / values.length;
-    const ssTime = normalizedTimes.reduce((total, value) => total + ((value - timeMean) ** 2), 0);
-    const covariance = normalizedTimes.reduce((total, value, index) => total + ((value - timeMean) * (values[index] - valueMean)), 0);
-    const slope = ssTime > 0 ? covariance / ssTime : 0;
-    const intercept = valueMean - (slope * timeMean);
-    const fitted = normalizedTimes.map((value) => intercept + (slope * value));
-    const residuals = values.map((value, index) => value - fitted[index]);
-    const mae = residuals.reduce((total, value) => total + Math.abs(value), 0) / residuals.length;
-    const rmse = Math.sqrt(residuals.reduce((total, value) => total + (value ** 2), 0) / residuals.length);
-    const ssTotal = values.reduce((total, value) => total + ((value - valueMean) ** 2), 0);
-    const ssResidual = residuals.reduce((total, value) => total + (value ** 2), 0);
-    const rSquared = ssTotal > 0 ? 1 - (ssResidual / ssTotal) : null;
-    const normalizedHorizon = Math.min(24, Math.max(1, Math.floor(horizon)));
     const sortedGaps = rows.slice(1).map((row, index) => row.timeIndex - rows[index].timeIndex).filter((value) => value > 0);
     const typicalGap = sortedGaps.length > 0
         ? sortedGaps.sort((left, right) => left - right)[Math.floor(sortedGaps.length / 2)]
         : 1;
     const lastTime = rows[rows.length - 1].timeIndex;
+    let intercept = values[0] ?? 0;
+    let slope = 0;
+    let fitted = [];
+    let projectedValues = [];
+    if (method === 'moving_average') {
+        fitted = values.map((value, index) => {
+            if (index === 0)
+                return value;
+            const history = values.slice(Math.max(0, index - movingAverageWindow), index);
+            const mean = history.length > 0 ? history.reduce((total, item) => total + item, 0) / history.length : value;
+            return mean;
+        });
+        const trail = values.slice(-movingAverageWindow);
+        projectedValues = Array.from({ length: normalizedHorizon }, () => {
+            const forecastValue = trail.reduce((total, item) => total + item, 0) / trail.length;
+            trail.push(forecastValue);
+            while (trail.length > movingAverageWindow)
+                trail.shift();
+            return forecastValue;
+        });
+        intercept = fitted[0] ?? intercept;
+        slope = 0;
+    }
+    else if (method === 'exponential_smoothing') {
+        fitted = new Array(values.length).fill(values[0] ?? 0);
+        let level = values[0] ?? 0;
+        for (let index = 1; index < values.length; index += 1) {
+            level = (smoothingAlpha * values[index - 1]) + ((1 - smoothingAlpha) * level);
+            fitted[index] = level;
+        }
+        level = (smoothingAlpha * values[values.length - 1]) + ((1 - smoothingAlpha) * level);
+        projectedValues = Array.from({ length: normalizedHorizon }, () => level);
+        intercept = level;
+        slope = 0;
+    }
+    else {
+        const timeMean = normalizedTimes.reduce((total, value) => total + value, 0) / normalizedTimes.length;
+        const valueMean = values.reduce((total, value) => total + value, 0) / values.length;
+        const ssTime = normalizedTimes.reduce((total, value) => total + ((value - timeMean) ** 2), 0);
+        const covariance = normalizedTimes.reduce((total, value, index) => total + ((value - timeMean) * (values[index] - valueMean)), 0);
+        slope = ssTime > 0 ? covariance / ssTime : 0;
+        intercept = valueMean - (slope * timeMean);
+        fitted = normalizedTimes.map((value) => intercept + (slope * value));
+        projectedValues = Array.from({ length: normalizedHorizon }, (_unused, index) => {
+            const timeIndex = lastTime + (typicalGap * (index + 1));
+            const normalizedTime = timeIndex - firstTimeIndex;
+            return intercept + (slope * normalizedTime);
+        });
+    }
+    const valueMean = values.reduce((total, value) => total + value, 0) / values.length;
+    const residuals = values.map((value, index) => value - (fitted[index] ?? value));
+    const mae = residuals.reduce((total, value) => total + Math.abs(value), 0) / residuals.length;
+    const rmse = Math.sqrt(residuals.reduce((total, value) => total + (value ** 2), 0) / residuals.length);
+    const ssTotal = values.reduce((total, value) => total + ((value - valueMean) ** 2), 0);
+    const ssResidual = residuals.reduce((total, value) => total + (value ** 2), 0);
+    const rSquared = ssTotal > 0 ? 1 - (ssResidual / ssTotal) : null;
     const residualStdDev = sampleStdDev(residuals) ?? 0;
     const critical = 1.96;
     return {
@@ -1434,7 +1480,11 @@ export function analyzeForecast(dataset, timeFieldKey, valueFieldKey, horizon = 
         timeLabel: timeField.label,
         valueField: valueField.key,
         valueLabel: valueField.label,
-        method: 'linear_trend',
+        method,
+        methodSettings: {
+            movingAverageWindow: method === 'moving_average' ? movingAverageWindow : null,
+            smoothingAlpha: method === 'exponential_smoothing' ? smoothingAlpha : null
+        },
         caseCount: rows.length,
         horizon: normalizedHorizon,
         intercept,
@@ -1449,13 +1499,12 @@ export function analyzeForecast(dataset, timeFieldKey, valueFieldKey, horizon = 
             timeValue: typeof row.timeValue === 'number' ? row.timeValue : formatValue(row.timeValue),
             timeIndex: row.timeIndex,
             actual: row.actual,
-            fitted: fitted[index],
-            residual: residuals[index]
+            fitted: fitted[index] ?? row.actual,
+            residual: residuals[index] ?? 0
         })),
         forecast: Array.from({ length: normalizedHorizon }, (_unused, index) => {
             const timeIndex = lastTime + (typicalGap * (index + 1));
-            const normalizedTime = timeIndex - firstTimeIndex;
-            const forecast = intercept + (slope * normalizedTime);
+            const forecast = projectedValues[index] ?? projectedValues[projectedValues.length - 1] ?? values[values.length - 1];
             const margin = residualStdDev > 0 ? critical * residualStdDev : 0;
             return {
                 step: index + 1,
@@ -1466,7 +1515,11 @@ export function analyzeForecast(dataset, timeFieldKey, valueFieldKey, horizon = 
             };
         }),
         notes: [
-            'Forecasting is a first-pass linear trend procedure for pilot planning, not a full ARIMA/exponential-smoothing module.',
+            method === 'linear_trend'
+                ? 'Forecasting is a first-pass linear trend procedure for pilot planning, not a full ARIMA/exponential-smoothing module.'
+                : method === 'moving_average'
+                    ? `Forecasting uses a first-pass moving average (window ${movingAverageWindow}) for pilot planning.`
+                    : `Forecasting uses first-pass simple exponential smoothing (alpha ${smoothingAlpha.toFixed(2)}) for pilot planning.`,
             'Date-like time fields are internally converted to timestamps before fitting.'
         ]
     };

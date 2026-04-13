@@ -939,7 +939,7 @@ function describeQuantAnalysis(analysisKind, analysis = {}) {
     case 'forecasting':
       return {
         title: 'Forecasting',
-        detail: `${analysis.valueField ?? 'value'} over ${analysis.timeField ?? 'time'}`
+        detail: `${analysis.valueField ?? 'value'} over ${analysis.timeField ?? 'time'} (${analysis.method ?? 'linear_trend'})`
       };
     case 'cluster_analysis':
       return {
@@ -2605,7 +2605,10 @@ async function runSavedAnalysisJob(savedJob) {
         analysis: getAnalysisOptionsPayload(),
         timeField: analysis.timeField,
         valueField: analysis.valueField,
-        horizon: analysis.horizon
+        horizon: analysis.horizon,
+        method: analysis.method,
+        movingAverageWindow: analysis.movingAverageWindow,
+        smoothingAlpha: analysis.smoothingAlpha
       });
       state.forecastingResult = env.data.forecast;
       break;
@@ -8081,20 +8084,31 @@ function renderForecasting() {
   const timeEl = document.getElementById('forecast-time-field');
   const valueEl = document.getElementById('forecast-value-field');
   const horizonEl = document.getElementById('forecast-horizon');
+  const methodEl = document.getElementById('forecast-method');
+  const windowEl = document.getElementById('forecast-window');
+  const alphaEl = document.getElementById('forecast-alpha');
   const runBtn = document.getElementById('run-forecasting-btn');
   const resultEl = document.getElementById('forecasting-result');
-  if (!timeEl || !valueEl || !horizonEl || !runBtn || !resultEl) return;
+  if (!timeEl || !valueEl || !horizonEl || !methodEl || !windowEl || !alphaEl || !runBtn || !resultEl) return;
 
   const options = getDatasetAnalysisFieldOptions();
   const numericOptions = options.filter((option) => option.valueType === 'number');
   const previousTime = timeEl.value;
   const previousValue = valueEl.value;
+  const previousMethod = methodEl.value;
   timeEl.innerHTML = options.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${option.valueType})</option>`).join('');
   valueEl.innerHTML = numericOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`).join('');
   timeEl.value = options.some((option) => option.key === previousTime) ? previousTime : options[0]?.key ?? '';
   valueEl.value = numericOptions.some((option) => option.key === previousValue && option.key !== timeEl.value)
     ? previousValue
     : numericOptions.find((option) => option.key !== timeEl.value)?.key ?? numericOptions[0]?.key ?? '';
+  methodEl.value = ['linear_trend', 'moving_average', 'exponential_smoothing'].includes(previousMethod)
+    ? previousMethod
+    : (state.forecastingResult?.method ?? 'linear_trend');
+  windowEl.value = windowEl.value || '3';
+  alphaEl.value = alphaEl.value || '0.35';
+  windowEl.disabled = methodEl.value !== 'moving_average';
+  alphaEl.disabled = methodEl.value !== 'exponential_smoothing';
   runBtn.disabled = options.length < 2 || numericOptions.length === 0 || !valueEl.value;
 
   if (!state.forecastingResult) {
@@ -8103,14 +8117,24 @@ function renderForecasting() {
   }
 
   const result = state.forecastingResult;
+  const methodLabel = result.method === 'moving_average'
+    ? 'Moving average'
+    : result.method === 'exponential_smoothing'
+      ? 'Exponential smoothing'
+      : 'Linear trend';
   const observedItems = result.observations.map((item, index) => ({ label: String(index + 1), value: item.actual }));
   const fittedItems = result.observations.map((item, index) => ({ label: String(index + 1), value: item.fitted }));
   resultEl.innerHTML = buildOutputViewer({
     eyebrow: 'Forecasting',
-    title: `${result.valueLabel} over ${result.timeLabel}`,
-    summary: `Linear trend slope ${formatStatValue(result.slope, 5)} with RMSE ${formatStatValue(result.metrics.rootMeanSquaredError, 5)}.`,
+    title: `${result.valueLabel} over ${result.timeLabel} (${methodLabel})`,
+    summary: result.method === 'linear_trend'
+      ? `Linear trend slope ${formatStatValue(result.slope, 5)} with RMSE ${formatStatValue(result.metrics.rootMeanSquaredError, 5)}.`
+      : result.method === 'moving_average'
+        ? `Moving-average forecast (window ${result.methodSettings?.movingAverageWindow ?? 'n/a'}) with RMSE ${formatStatValue(result.metrics.rootMeanSquaredError, 5)}.`
+        : `Exponential-smoothing forecast (alpha ${formatStatValue(result.methodSettings?.smoothingAlpha, 2)}) with RMSE ${formatStatValue(result.metrics.rootMeanSquaredError, 5)}.`,
     metrics: [
       { label: 'Rows', value: result.caseCount },
+      { label: 'Method', value: methodLabel },
       { label: 'Horizon', value: result.horizon },
       { label: 'MAE', value: formatStatValue(result.metrics.meanAbsoluteError, 5) },
       { label: 'R squared', value: formatStatValue(result.metrics.rSquared, 5) }
@@ -8142,8 +8166,8 @@ function renderForecasting() {
         )
       ),
       buildOutputSection(
-        'Trend profile',
-        `<div class="chart-grid">${buildChartCard('Actual values', buildSvgLineChart(observedItems, { color: '#8fb3ff' }), 'Observed values in sorted time order.')}${buildChartCard('Fitted trend', buildSvgLineChart(fittedItems, { color: '#d2b27a' }), 'Linear trend fitted values.')}</div>`
+        'Profile',
+        `<div class="chart-grid">${buildChartCard('Actual values', buildSvgLineChart(observedItems, { color: '#8fb3ff' }), 'Observed values in sorted time order.')}${buildChartCard('Fitted values', buildSvgLineChart(fittedItems, { color: '#d2b27a' }), 'Method-specific fitted values.')}</div>`
       ),
       result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
     ].filter(Boolean)
@@ -11088,6 +11112,10 @@ document.getElementById('run-sentiment-analysis-btn')?.addEventListener('click',
     syncWorkspaceMenus();
   });
 
+  document.getElementById('forecast-method')?.addEventListener('change', () => {
+    renderForecasting();
+  });
+
   document.getElementById('filter-operator')?.addEventListener('change', (event) => {
     const valueEl = document.getElementById('filter-value');
     const operator = event.target.value;
@@ -11412,6 +11440,9 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
     const timeField = document.getElementById('forecast-time-field')?.value;
     const valueField = document.getElementById('forecast-value-field')?.value;
     const horizon = Number(document.getElementById('forecast-horizon')?.value || 3);
+    const method = document.getElementById('forecast-method')?.value || 'linear_trend';
+    const movingAverageWindow = Number(document.getElementById('forecast-window')?.value || 3);
+    const smoothingAlpha = Number(document.getElementById('forecast-alpha')?.value || 0.35);
     if (!timeField || !valueField || timeField === valueField) {
       alert('Choose different time/order and numeric value fields for forecasting.');
       return;
@@ -11423,7 +11454,10 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       analysis: getAnalysisOptionsPayload(),
       timeField,
       valueField,
-      horizon
+      horizon,
+      method,
+      movingAverageWindow,
+      smoothingAlpha
     });
     state.forecastingResult = env.data.forecast;
     setLastQuantAnalysis('forecasting', {
@@ -11432,7 +11466,10 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       analysisOptions: getAnalysisOptionsPayload(),
       timeField,
       valueField,
-      horizon
+      horizon,
+      method,
+      movingAverageWindow,
+      smoothingAlpha
     });
     renderAll();
   });

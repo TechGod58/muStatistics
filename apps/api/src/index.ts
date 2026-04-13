@@ -6438,6 +6438,9 @@ server.post('/forecasting', async (request, reply) => {
     timeField: string;
     valueField: string;
     horizon: number;
+    method: string;
+    movingAverageWindow: number;
+    smoothingAlpha: number;
   }>;
   const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
   const timeField = typeof body.timeField === 'string' && body.timeField.trim() ? body.timeField.trim() : undefined;
@@ -6456,7 +6459,18 @@ server.post('/forecasting', async (request, reply) => {
       analysis
     });
     return ok({
-      forecast: analyzeForecast(dataset, timeField, valueField, typeof body.horizon === 'number' ? body.horizon : 3, analysis)
+      forecast: analyzeForecast(
+        dataset,
+        timeField,
+        valueField,
+        typeof body.horizon === 'number' ? body.horizon : 3,
+        analysis,
+        {
+          method: body.method === 'moving_average' || body.method === 'exponential_smoothing' ? body.method : 'linear_trend',
+          movingAverageWindow: typeof body.movingAverageWindow === 'number' ? body.movingAverageWindow : undefined,
+          smoothingAlpha: typeof body.smoothingAlpha === 'number' ? body.smoothingAlpha : undefined
+        }
+      )
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to run forecast.';
