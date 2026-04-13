@@ -31,7 +31,7 @@ import {
 } from '@mu/auth';
 import { buildEvidenceSummaryPrompt, scoreEvidenceCoverage } from '@mu/ai';
 import { buildCodeByCaseView, buildCodeClusters, buildCodeCodeMatrix, buildCodeCooccurrence, buildCodeHierarchy, buildCodingComparison, buildCompoundQuery, buildConceptMap, buildFrameworkMatrix, buildInterRaterSummary, buildMapVisualization, buildMatrixCoding, buildPatternAutocode, buildQualitativeQueryReport, buildSentimentAnalysis, buildTextSearch, buildWordCloud, buildWordFrequency, retrieveEvidence, buildEvidenceExport } from '@mu/qual-engine';
-import { analyzeBootstrap, analyzeClusterAnalysis, analyzeCompareMeans, analyzeComplexSamples, analyzeCorrelation, analyzeCrosstab, analyzeDecisionTree, analyzeExactTest, analyzeFactorAnalysis, analyzeForecast, analyzeGeneralLinearModel, analyzeMissingValues, analyzeNeuralNetwork, analyzeNonparametricComparison, analyzePairedTTest, analyzeRegression, analyzeReliability, analyzeRepeatedMeasures, analyzeSurvivalAnalysis, analyzeTTest, buildCaseDataset, buildCustomTable, buildImputationPlan, describeDataset, transformDataset } from '@mu/quant-engine';
+import { analyzeBootstrap, analyzeClusterAnalysis, analyzeCompareMeans, analyzeComplexSamples, analyzeCorrelation, analyzeCrosstab, analyzeDecisionTree, analyzeExactTest, analyzeFactorAnalysis, analyzeForecast, analyzeGeneralLinearModel, analyzeMissingValues, analyzeNeuralNetwork, analyzeNonparametricComparison, analyzePairedTTest, analyzeRegression, analyzeReliability, analyzeRepeatedMeasures, analyzeSurvivalAnalysis, analyzeTTest, buildCaseDataset, buildCustomTable, buildImputationPlan, describeDataset, runSyntax, transformDataset } from '@mu/quant-engine';
 import { fail, ok } from '@mu/shared-types';
 import { deleteProjectArtifacts, ensureDirectory, listProjectArtifacts, pruneProjectArtifacts, readStoredArtifact, resolveStorageRoot, writeProjectArtifact, writeProjectArtifactBytes } from '@mu/storage';
 import { formatAuditActionLabel } from '@mu/ui';
@@ -6726,6 +6726,40 @@ server.post('/neural-network', async (request, reply) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to run neural network.';
+    return reply.status(400).send(fail('INVALID', message));
+  }
+});
+
+server.post('/syntax-run', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    filters: unknown[];
+    recodes: unknown[];
+    analysis: unknown;
+    syntax: string;
+  }>;
+  const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
+  const syntax = typeof body.syntax === 'string' && body.syntax.trim() ? body.syntax : undefined;
+  if (!projectId || !syntax) {
+    return reply.status(400).send(fail('INVALID', 'projectId and syntax are required.'));
+  }
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+
+  try {
+    const analysis = parseDatasetAnalysisOptions(body.analysis);
+    const base = await buildProjectDatasetPayload(projectId);
+    const dataset = transformDataset(base.dataset, {
+      filters: parseDatasetFilters(body.filters),
+      recodes: parseDatasetRecodes(body.recodes),
+      analysis
+    });
+    return ok({
+      syntaxRun: runSyntax(dataset, syntax, analysis)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to run syntax.';
     return reply.status(400).send(fail('INVALID', message));
   }
 });

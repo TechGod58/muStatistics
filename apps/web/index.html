@@ -1261,6 +1261,7 @@
           <button type="button" class="workspace-submenu-btn" data-quant-parent="data" data-quant-subtab="import">Import and export</button>
           <button type="button" class="workspace-submenu-btn" data-quant-parent="data" data-quant-subtab="design">Variables, cases, attributes</button>
           <button type="button" class="workspace-submenu-btn" data-quant-parent="data" data-quant-subtab="browser">Data browser</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="data" data-quant-subtab="syntax">Syntax</button>
         </section>
         <section class="workspace-submenu" data-quant-submenu="transform" hidden>
           <button type="button" class="workspace-submenu-btn" data-quant-parent="transform" data-quant-subtab="derive">Derive variables</button>
@@ -1333,6 +1334,7 @@
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="survival-analysis">Survival analysis</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="complex-samples">Complex samples</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="neural-network">Neural network</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="syntax-run">Syntax run</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="saved-analyses">Saved analyses</button>
             </div>
             <div class="quant-output-history" style="margin-top:18px">
@@ -1476,6 +1478,9 @@
             </section>
             <section class="quant-output-panel" data-quant-output="neural-network" hidden>
               <div id="neural-network-result">Choose a target and numeric predictors, then run a neural network.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="syntax-run" hidden>
+              <div id="syntax-run-result">Enter syntax and run it from the Data Syntax subtab.</div>
             </section>
             <section class="quant-output-panel" data-quant-output="saved-analyses" hidden>
               <div class="section-header">
@@ -2562,6 +2567,30 @@
               <span class="small-muted" id="attribute-count">0</span>
             </div>
             <ul id="attributes-list" class="interactive-list"></ul>
+          </article>
+        </section>
+
+        <section class="quantitative-procedure workspace-section" data-quant-section="data" data-quant-parent="data" data-quant-subsection="syntax">
+          <div class="workspace-banner">
+            <p class="eyebrow">Syntax</p>
+            <h3>Run a pilot subset of SPSS-like command syntax against the active filtered and recoded dataset.</h3>
+          </div>
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Syntax runner</h2>
+                <p class="small-muted" style="margin:0">Supported commands: DESCRIPTIVES, FREQUENCIES, CROSSTABS, CORRELATIONS, REGRESSION.</p>
+              </div>
+              <button id="run-syntax-btn" type="button" class="small">Run syntax</button>
+            </div>
+            <label class="field" style="margin-top:14px">
+              <span>Syntax</span>
+              <textarea id="syntax-input" rows="10" spellcheck="false">DESCRIPTIVES VARIABLES=ALL.
+FREQUENCIES VARIABLES=ALL.</textarea>
+            </label>
+            <div class="small-muted" style="margin-top:12px">
+              Use dataset field keys for best results. Example: CROSSTABS /TABLES=department BY outcome.
+            </div>
           </article>
         </section>
 

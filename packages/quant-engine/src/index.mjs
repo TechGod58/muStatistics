@@ -2380,6 +2380,179 @@ export function analyzeNeuralNetwork(dataset, targetFieldKey, predictorFields, t
         ]
     };
 }
+function splitSyntaxCommands(syntax) {
+    const normalized = syntax.replace(/\r/g, '\n');
+    if (normalized.includes('.')) {
+        return normalized
+            .split('.')
+            .map((command) => command.trim())
+            .filter(Boolean);
+    }
+    return normalized
+        .split('\n')
+        .map((command) => command.trim())
+        .filter(Boolean);
+}
+function cleanSyntaxToken(token) {
+    return token.trim().replace(/^[("'`]+|[)"'`,]+$/g, '');
+}
+function resolveSyntaxField(dataset, token) {
+    const cleaned = cleanSyntaxToken(token);
+    const exact = dataset.fields.find((field) => field.key === cleaned);
+    if (exact)
+        return exact.key;
+    const labelMatch = dataset.fields.find((field) => field.label.toLowerCase() === cleaned.toLowerCase());
+    if (labelMatch)
+        return labelMatch.key;
+    const caseInsensitive = dataset.fields.find((field) => field.key.toLowerCase() === cleaned.toLowerCase());
+    if (caseInsensitive)
+        return caseInsensitive.key;
+    throw new Error(`Syntax field "${cleaned}" was not found in the dataset.`);
+}
+function parseSyntaxFieldList(dataset, text) {
+    const raw = text.trim();
+    if (!raw)
+        return [];
+    if (/^ALL$/i.test(raw)) {
+        return dataset.fields.filter((field) => field.source !== 'system').map((field) => field.key);
+    }
+    return [...new Set(raw
+            .split(/[\s,]+/)
+            .map(cleanSyntaxToken)
+            .filter(Boolean)
+            .map((token) => resolveSyntaxField(dataset, token)))];
+}
+function extractSyntaxClause(command, clause) {
+    const regex = new RegExp(`${clause}\\s*=\\s*([^/]+)`, 'i');
+    const match = command.match(regex);
+    return match?.[1]?.trim() ?? null;
+}
+function runSyntaxCommand(dataset, command, options) {
+    const commandName = command.split(/\s+/)[0]?.toUpperCase() ?? 'UNKNOWN';
+    try {
+        if (commandName === 'DESCRIPTIVES' || commandName === 'DESCRIPTIVE') {
+            const variableClause = extractSyntaxClause(command, 'VARIABLES') ?? command.replace(/^\s*DESCRIPTIVES?/i, '');
+            const fields = parseSyntaxFieldList(dataset, variableClause)
+                .filter((field) => dataset.fields.find((candidate) => candidate.key === field)?.valueType === 'number');
+            if (fields.length === 0)
+                throw new Error('DESCRIPTIVES requires at least one numeric field.');
+            const report = describeDataset(dataset, options);
+            return {
+                command,
+                commandName,
+                status: 'ok',
+                outputKind: 'descriptives',
+                message: `Returned numeric summaries for ${fields.length} field(s).`,
+                output: report.summaries.filter((summary) => fields.includes(summary.key))
+            };
+        }
+        if (commandName === 'FREQUENCIES' || commandName === 'FREQUENCY') {
+            const variableClause = extractSyntaxClause(command, 'VARIABLES') ?? command.replace(/^\s*FREQUENC(?:IES|Y)/i, '');
+            const fields = parseSyntaxFieldList(dataset, variableClause);
+            if (fields.length === 0)
+                throw new Error('FREQUENCIES requires at least one field.');
+            const report = describeDataset(dataset, options);
+            return {
+                command,
+                commandName,
+                status: 'ok',
+                outputKind: 'frequencies',
+                message: `Returned frequency tables for ${fields.length} field(s).`,
+                output: report.summaries.filter((summary) => fields.includes(summary.key))
+            };
+        }
+        if (commandName === 'CROSSTABS' || commandName === 'CROSSTAB') {
+            const tableClause = extractSyntaxClause(command, 'TABLES');
+            const match = tableClause?.match(/(.+?)\s+BY\s+(.+)/i);
+            if (!match)
+                throw new Error('CROSSTABS requires /TABLES=rowField BY columnField.');
+            const rowField = resolveSyntaxField(dataset, match[1] ?? '');
+            const columnField = resolveSyntaxField(dataset, match[2] ?? '');
+            return {
+                command,
+                commandName,
+                status: 'ok',
+                outputKind: 'crosstab',
+                message: `Returned crosstab for ${rowField} by ${columnField}.`,
+                output: analyzeCrosstab(dataset, rowField, columnField, options)
+            };
+        }
+        if (commandName === 'CORRELATIONS' || commandName === 'CORRELATION') {
+            const variableClause = extractSyntaxClause(command, 'VARIABLES') ?? command.replace(/^\s*CORRELATIONS?/i, '');
+            const fields = parseSyntaxFieldList(dataset, variableClause)
+                .filter((field) => dataset.fields.find((candidate) => candidate.key === field)?.valueType === 'number');
+            if (fields.length < 2)
+                throw new Error('CORRELATIONS requires at least two numeric fields.');
+            const correlations = [];
+            for (let left = 0; left < fields.length; left += 1) {
+                for (let right = left + 1; right < fields.length; right += 1) {
+                    correlations.push(analyzeCorrelation(dataset, fields[left], fields[right], options));
+                }
+            }
+            return {
+                command,
+                commandName,
+                status: 'ok',
+                outputKind: 'correlations',
+                message: `Returned ${correlations.length} pairwise correlation(s).`,
+                output: correlations
+            };
+        }
+        if (commandName === 'REGRESSION') {
+            const dependentClause = command.match(/DEPENDENT\s+([^/\s]+)/i)?.[1] ?? extractSyntaxClause(command, 'DEPENDENT');
+            const methodClause = command.match(/METHOD\s*=\s*ENTER\s+([^/]+)/i)?.[1] ?? extractSyntaxClause(command, 'PREDICTORS');
+            if (!dependentClause || !methodClause) {
+                throw new Error('REGRESSION requires /DEPENDENT field /METHOD=ENTER predictors.');
+            }
+            const dependentField = resolveSyntaxField(dataset, dependentClause);
+            const predictorFields = parseSyntaxFieldList(dataset, methodClause);
+            if (predictorFields.length === 0)
+                throw new Error('REGRESSION requires at least one predictor field.');
+            return {
+                command,
+                commandName,
+                status: 'ok',
+                outputKind: 'regression',
+                message: `Returned linear regression for ${dependentField}.`,
+                output: analyzeRegression(dataset, dependentField, predictorFields, 'linear', options)
+            };
+        }
+        return {
+            command,
+            commandName,
+            status: 'error',
+            outputKind: 'message',
+            message: `Unsupported syntax command "${commandName}". Supported: DESCRIPTIVES, FREQUENCIES, CROSSTABS, CORRELATIONS, REGRESSION.`
+        };
+    }
+    catch (error) {
+        return {
+            command,
+            commandName,
+            status: 'error',
+            outputKind: 'message',
+            message: error instanceof Error ? error.message : `Unable to run ${commandName}.`
+        };
+    }
+}
+export function runSyntax(dataset, syntax, options) {
+    const commands = splitSyntaxCommands(syntax);
+    if (commands.length === 0) {
+        throw new Error('Enter at least one syntax command.');
+    }
+    const results = commands.map((command) => runSyntaxCommand(dataset, command, options));
+    return {
+        syntax,
+        commandCount: commands.length,
+        successfulCommandCount: results.filter((result) => result.status === 'ok').length,
+        results,
+        notes: [
+            'Syntax runner supports a pilot subset of SPSS-like commands: DESCRIPTIVES, FREQUENCIES, CROSSTABS, CORRELATIONS, and REGRESSION.',
+            'Use dataset field keys for the most reliable syntax. Field labels are also matched when exact labels are unique.',
+            'This is not full SPSS command-language parity yet; it is an automation bridge for common campus workflows.'
+        ]
+    };
+}
 export function analyzeCrosstab(dataset, rowFieldKey, columnFieldKey, options) {
     if (rowFieldKey === columnFieldKey) {
         throw new Error('Choose two different fields for the crosstab.');

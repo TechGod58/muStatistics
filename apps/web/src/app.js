@@ -124,6 +124,7 @@ const state = {
   survivalAnalysisResult: null,
   complexSamplesResult: null,
   neuralNetworkResult: null,
+  syntaxRunResult: null,
   quantOutputView: 'descriptives',
   quantOutputHistory: [],
   compiledReportIncludedViews: [],
@@ -565,6 +566,7 @@ function getAvailableQuantOutputPages() {
     { view: 'survival-analysis', title: 'Survival analysis', ready: Boolean(state.survivalAnalysisResult) },
     { view: 'complex-samples', title: 'Complex samples', ready: Boolean(state.complexSamplesResult) },
     { view: 'neural-network', title: 'Neural network', ready: Boolean(state.neuralNetworkResult) },
+    { view: 'syntax-run', title: 'Syntax run', ready: Boolean(state.syntaxRunResult) },
     { view: 'saved-analyses', title: 'Saved analyses', ready: state.savedAnalysisJobs.length > 0 }
   ];
 }
@@ -857,6 +859,7 @@ function mapAnalysisKindToOutputView(kind) {
     case 'survival_analysis': return 'survival-analysis';
     case 'complex_samples': return 'complex-samples';
     case 'neural_network': return 'neural-network';
+    case 'syntax_run': return 'syntax-run';
     default: return state.quantOutputView;
   }
 }
@@ -973,6 +976,11 @@ function describeQuantAnalysis(analysisKind, analysis = {}) {
         title: 'Neural network',
         detail: `${analysis.targetField ?? 'target'} from ${(analysis.predictorFields ?? []).join(', ') || 'predictors'}`
       };
+    case 'syntax_run':
+      return {
+        title: 'Syntax run',
+        detail: `${String(analysis.syntax ?? '').split(/\s+/).slice(0, 6).join(' ') || 'SPSS-like syntax'}`
+      };
     default:
       return {
         title: formatAnalysisKindLabel(analysisKind),
@@ -1023,6 +1031,7 @@ function quantOutputTitle(view) {
     'survival-analysis': 'Survival analysis',
     'complex-samples': 'Complex samples',
     'neural-network': 'Neural network',
+    'syntax-run': 'Syntax run',
     'saved-analyses': 'Saved analyses'
   };
   return labels[view] ?? view;
@@ -1053,6 +1062,7 @@ function getAllCompiledReportViews() {
     'survival-analysis',
     'complex-samples',
     'neural-network',
+    'syntax-run',
     'saved-analyses'
   ];
 }
@@ -1080,6 +1090,7 @@ function getDefaultCommitteePackViews() {
     'survival-analysis',
     'complex-samples',
     'neural-network',
+    'syntax-run',
     'frequency'
   ].filter((view) => getAllCompiledReportViews().includes(view));
 }
@@ -2077,6 +2088,7 @@ async function loadSelectedProjectData() {
     state.survivalAnalysisResult = null;
     state.complexSamplesResult = null;
     state.neuralNetworkResult = null;
+    state.syntaxRunResult = null;
     state.lastQuantAnalysis = null;
     state.selectedAnalysisWeightField = '';
     state.selectedMissingStrategy = 'available';
@@ -2190,6 +2202,7 @@ async function loadSelectedProjectData() {
   state.survivalAnalysisResult = null;
   state.complexSamplesResult = null;
   state.neuralNetworkResult = null;
+  state.syntaxRunResult = null;
   state.cooccurrenceResult = null;
   state.matrixCodingResult = null;
   state.codeCodeMatrixResult = null;
@@ -2218,6 +2231,7 @@ async function loadSelectedProjectData() {
   state.survivalAnalysisResult = null;
   state.complexSamplesResult = null;
   state.neuralNetworkResult = null;
+  state.syntaxRunResult = null;
   state.lastQuantAnalysis = null;
   state.activeSourceId = state.selectedSources.some((source) => source.id === state.activeSourceId)
     ? state.activeSourceId
@@ -2329,6 +2343,7 @@ function formatAnalysisKindLabel(kind) {
     case 'survival_analysis': return 'survival analysis';
     case 'complex_samples': return 'complex samples';
     case 'neural_network': return 'neural network';
+    case 'syntax_run': return 'syntax run';
     case 'crosstab': return 'crosstab';
     case 'custom_table': return 'custom table';
     case 'exact_test': return 'exact test';
@@ -2360,6 +2375,7 @@ function clearQuantResults() {
   state.survivalAnalysisResult = null;
   state.complexSamplesResult = null;
   state.neuralNetworkResult = null;
+  state.syntaxRunResult = null;
   state.selectedCrosstab = null;
   state.selectedCrosstabError = '';
 }
@@ -2682,6 +2698,17 @@ async function runSavedAnalysisJob(savedJob) {
         hiddenUnits: analysis.hiddenUnits
       });
       state.neuralNetworkResult = env.data.neuralNetwork;
+      break;
+    }
+    case 'syntax_run': {
+      const env = await postJson(`${API_BASE}/syntax-run`, {
+        projectId: state.selectedProjectId,
+        filters: state.selectedDatasetFilters,
+        recodes: state.selectedDatasetRecodes,
+        analysis: getAnalysisOptionsPayload(),
+        syntax: analysis.syntax
+      });
+      state.syntaxRunResult = env.data.syntaxRun;
       break;
     }
     default:
@@ -8712,6 +8739,129 @@ function renderNeuralNetwork() {
   });
 }
 
+function renderSyntaxCommandOutput(result) {
+  if (result.status !== 'ok') {
+    return `<p class="small-muted">${escapeHtml(result.message)}</p>`;
+  }
+  if (result.outputKind === 'descriptives') {
+    const summaries = Array.isArray(result.output) ? result.output : [];
+    return buildOutputTable(
+      ['Field', 'N', 'Missing', 'Mean', 'Std. dev.', 'Min', 'Max'],
+      summaries.map((summary) => [
+        escapeHtml(summary.label ?? summary.key ?? ''),
+        String(summary.validCount ?? ''),
+        String(summary.missingCount ?? ''),
+        formatStatValue(summary.numeric?.mean, 5),
+        formatStatValue(summary.numeric?.stdDev, 5),
+        formatStatValue(summary.numeric?.min, 5),
+        formatStatValue(summary.numeric?.max, 5)
+      ])
+    );
+  }
+  if (result.outputKind === 'frequencies') {
+    const summaries = Array.isArray(result.output) ? result.output : [];
+    return summaries.map((summary) => buildOutputSection(
+      `Frequency: ${summary.label ?? summary.key ?? 'field'}`,
+      buildOutputTable(
+        ['Value', 'Count', 'Percent'],
+        (summary.frequencies ?? []).slice(0, 30).map((frequency) => [
+          escapeHtml(frequency.value),
+          formatStatValue(frequency.count, 3),
+          `${formatDecimal((frequency.proportion ?? 0) * 100, 1)}%`
+        ])
+      )
+    )).join('');
+  }
+  if (result.outputKind === 'crosstab') {
+    const table = result.output ?? {};
+    return buildOutputTable(
+      ['Row', 'Column', 'Count', 'Row %', 'Column %'],
+      (table.cells ?? []).map((cell) => [
+        escapeHtml(cell.rowValue),
+        escapeHtml(cell.columnValue),
+        formatStatValue(cell.count, 3),
+        `${formatDecimal((cell.rowProportion ?? 0) * 100, 1)}%`,
+        `${formatDecimal((cell.columnProportion ?? 0) * 100, 1)}%`
+      ])
+    );
+  }
+  if (result.outputKind === 'correlations') {
+    const correlations = Array.isArray(result.output) ? result.output : [];
+    return buildOutputTable(
+      ['X', 'Y', 'N', 'Pearson r', 'p', '95% CI'],
+      correlations.map((item) => [
+        escapeHtml(item.xField ?? ''),
+        escapeHtml(item.yField ?? ''),
+        String(item.caseCount ?? ''),
+        formatStatValue(item.pearsonR, 5),
+        formatStatValue(item.pValue, 5),
+        escapeHtml(formatConfidenceInterval(item.confidenceInterval, 5))
+      ])
+    );
+  }
+  if (result.outputKind === 'regression') {
+    const regression = result.output ?? {};
+    return [
+      buildOutputTable(
+        ['Metric', 'Value'],
+        Object.entries(regression.metrics ?? {}).slice(0, 12).map(([key, value]) => [
+          escapeHtml(key),
+          formatStatValue(value, 5)
+        ])
+      ),
+      buildOutputTable(
+        ['Term', 'B', 'Std. error', 't/z', 'p', '95% CI'],
+        (regression.coefficients ?? []).map((coefficient) => [
+          escapeHtml(coefficient.field ?? ''),
+          formatStatValue(coefficient.coefficient, 6),
+          formatStatValue(coefficient.standardError, 6),
+          formatStatValue(coefficient.statistic, 5),
+          formatStatValue(coefficient.pValue, 5),
+          escapeHtml(formatConfidenceInterval(coefficient.confidenceInterval, 5))
+        ])
+      )
+    ].join('');
+  }
+  return `<pre>${escapeHtml(JSON.stringify(result.output ?? result.message, null, 2))}</pre>`;
+}
+
+function renderSyntaxRun() {
+  const inputEl = document.getElementById('syntax-input');
+  const runBtn = document.getElementById('run-syntax-btn');
+  const resultEl = document.getElementById('syntax-run-result');
+  if (!inputEl || !runBtn || !resultEl) return;
+  runBtn.disabled = !state.selectedProjectId;
+
+  if (!state.syntaxRunResult) {
+    resultEl.innerHTML = '<p>Enter syntax in the Data Syntax subtab and run it.</p>';
+    return;
+  }
+
+  const result = state.syntaxRunResult;
+  resultEl.innerHTML = buildOutputViewer({
+    eyebrow: 'Syntax run',
+    title: 'SPSS-like syntax output',
+    summary: `${result.successfulCommandCount} of ${result.commandCount} command(s) completed.`,
+    metrics: [
+      { label: 'Commands', value: result.commandCount },
+      { label: 'Successful', value: result.successfulCommandCount },
+      { label: 'Failed', value: result.commandCount - result.successfulCommandCount },
+      { label: 'Status', value: result.successfulCommandCount === result.commandCount ? 'complete' : 'review' }
+    ],
+    sections: [
+      ...result.results.map((commandResult, index) => buildOutputSection(
+        `${index + 1}. ${commandResult.commandName} (${commandResult.status})`,
+        `
+          <p class="small-muted">${escapeHtml(commandResult.message)}</p>
+          <pre>${escapeHtml(commandResult.command)}</pre>
+          ${renderSyntaxCommandOutput(commandResult)}
+        `
+      )),
+      result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
+    ].filter(Boolean)
+  });
+}
+
 function renderCorrelation() {
   const xEl = document.getElementById('correlation-x-field');
   const yEl = document.getElementById('correlation-y-field');
@@ -9873,6 +10023,7 @@ function renderAll() {
   renderSurvivalAnalysis();
   renderComplexSamples();
   renderNeuralNetwork();
+  renderSyntaxRun();
   renderRetrieval();
   renderSavedQualitativeQueries();
   renderTextSearch();
@@ -11494,6 +11645,30 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       predictorFields,
       task,
       hiddenUnits
+    });
+    renderAll();
+  });
+
+  document.getElementById('run-syntax-btn')?.addEventListener('click', async () => {
+    if (!state.selectedProjectId) { alert('Select a project first.'); return; }
+    const syntax = document.getElementById('syntax-input')?.value?.trim() ?? '';
+    if (!syntax) {
+      alert('Enter syntax to run.');
+      return;
+    }
+    const env = await postJson(`${API_BASE}/syntax-run`, {
+      projectId: state.selectedProjectId,
+      filters: state.selectedDatasetFilters,
+      recodes: state.selectedDatasetRecodes,
+      analysis: getAnalysisOptionsPayload(),
+      syntax
+    });
+    state.syntaxRunResult = env.data.syntaxRun;
+    setLastQuantAnalysis('syntax_run', {
+      filters: cloneJson(state.selectedDatasetFilters),
+      recodes: cloneJson(state.selectedDatasetRecodes),
+      analysisOptions: getAnalysisOptionsPayload(),
+      syntax
     });
     renderAll();
   });
