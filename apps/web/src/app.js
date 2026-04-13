@@ -122,6 +122,8 @@ const state = {
   generalLinearModelResult: null,
   repeatedMeasuresResult: null,
   survivalAnalysisResult: null,
+  complexSamplesResult: null,
+  neuralNetworkResult: null,
   quantOutputView: 'descriptives',
   quantOutputHistory: [],
   compiledReportIncludedViews: [],
@@ -561,6 +563,8 @@ function getAvailableQuantOutputPages() {
     { view: 'general-linear-model', title: 'GLM/ANCOVA', ready: Boolean(state.generalLinearModelResult) },
     { view: 'repeated-measures', title: 'Repeated measures', ready: Boolean(state.repeatedMeasuresResult) },
     { view: 'survival-analysis', title: 'Survival analysis', ready: Boolean(state.survivalAnalysisResult) },
+    { view: 'complex-samples', title: 'Complex samples', ready: Boolean(state.complexSamplesResult) },
+    { view: 'neural-network', title: 'Neural network', ready: Boolean(state.neuralNetworkResult) },
     { view: 'saved-analyses', title: 'Saved analyses', ready: state.savedAnalysisJobs.length > 0 }
   ];
 }
@@ -851,6 +855,8 @@ function mapAnalysisKindToOutputView(kind) {
     case 'general_linear_model': return 'general-linear-model';
     case 'repeated_measures': return 'repeated-measures';
     case 'survival_analysis': return 'survival-analysis';
+    case 'complex_samples': return 'complex-samples';
+    case 'neural_network': return 'neural-network';
     default: return state.quantOutputView;
   }
 }
@@ -957,6 +963,16 @@ function describeQuantAnalysis(analysisKind, analysis = {}) {
         title: 'Survival analysis',
         detail: `${analysis.timeField ?? 'time'} / ${analysis.eventField ?? 'event'}`
       };
+    case 'complex_samples':
+      return {
+        title: 'Complex samples',
+        detail: `${analysis.targetField ?? 'target'}${analysis.groupField ? ` by ${analysis.groupField}` : ''}`
+      };
+    case 'neural_network':
+      return {
+        title: 'Neural network',
+        detail: `${analysis.targetField ?? 'target'} from ${(analysis.predictorFields ?? []).join(', ') || 'predictors'}`
+      };
     default:
       return {
         title: formatAnalysisKindLabel(analysisKind),
@@ -1005,6 +1021,8 @@ function quantOutputTitle(view) {
     'general-linear-model': 'GLM/ANCOVA',
     'repeated-measures': 'Repeated measures',
     'survival-analysis': 'Survival analysis',
+    'complex-samples': 'Complex samples',
+    'neural-network': 'Neural network',
     'saved-analyses': 'Saved analyses'
   };
   return labels[view] ?? view;
@@ -1033,6 +1051,8 @@ function getAllCompiledReportViews() {
     'general-linear-model',
     'repeated-measures',
     'survival-analysis',
+    'complex-samples',
+    'neural-network',
     'saved-analyses'
   ];
 }
@@ -1058,6 +1078,8 @@ function getDefaultCommitteePackViews() {
     'general-linear-model',
     'repeated-measures',
     'survival-analysis',
+    'complex-samples',
+    'neural-network',
     'frequency'
   ].filter((view) => getAllCompiledReportViews().includes(view));
 }
@@ -2053,6 +2075,8 @@ async function loadSelectedProjectData() {
     state.generalLinearModelResult = null;
     state.repeatedMeasuresResult = null;
     state.survivalAnalysisResult = null;
+    state.complexSamplesResult = null;
+    state.neuralNetworkResult = null;
     state.lastQuantAnalysis = null;
     state.selectedAnalysisWeightField = '';
     state.selectedMissingStrategy = 'available';
@@ -2164,6 +2188,8 @@ async function loadSelectedProjectData() {
   state.generalLinearModelResult = null;
   state.repeatedMeasuresResult = null;
   state.survivalAnalysisResult = null;
+  state.complexSamplesResult = null;
+  state.neuralNetworkResult = null;
   state.cooccurrenceResult = null;
   state.matrixCodingResult = null;
   state.codeCodeMatrixResult = null;
@@ -2190,6 +2216,8 @@ async function loadSelectedProjectData() {
   state.generalLinearModelResult = null;
   state.repeatedMeasuresResult = null;
   state.survivalAnalysisResult = null;
+  state.complexSamplesResult = null;
+  state.neuralNetworkResult = null;
   state.lastQuantAnalysis = null;
   state.activeSourceId = state.selectedSources.some((source) => source.id === state.activeSourceId)
     ? state.activeSourceId
@@ -2299,6 +2327,8 @@ function formatAnalysisKindLabel(kind) {
     case 'general_linear_model': return 'GLM/ANCOVA';
     case 'repeated_measures': return 'repeated measures';
     case 'survival_analysis': return 'survival analysis';
+    case 'complex_samples': return 'complex samples';
+    case 'neural_network': return 'neural network';
     case 'crosstab': return 'crosstab';
     case 'custom_table': return 'custom table';
     case 'exact_test': return 'exact test';
@@ -2328,6 +2358,8 @@ function clearQuantResults() {
   state.generalLinearModelResult = null;
   state.repeatedMeasuresResult = null;
   state.survivalAnalysisResult = null;
+  state.complexSamplesResult = null;
+  state.neuralNetworkResult = null;
   state.selectedCrosstab = null;
   state.selectedCrosstabError = '';
 }
@@ -2622,6 +2654,34 @@ async function runSavedAnalysisJob(savedJob) {
         groupField: analysis.groupField
       });
       state.survivalAnalysisResult = env.data.survivalAnalysis;
+      break;
+    }
+    case 'complex_samples': {
+      const env = await postJson(`${API_BASE}/complex-samples`, {
+        projectId: state.selectedProjectId,
+        filters: state.selectedDatasetFilters,
+        recodes: state.selectedDatasetRecodes,
+        analysis: getAnalysisOptionsPayload(),
+        targetField: analysis.targetField,
+        strataField: analysis.strataField,
+        clusterField: analysis.clusterField,
+        groupField: analysis.groupField
+      });
+      state.complexSamplesResult = env.data.complexSamples;
+      break;
+    }
+    case 'neural_network': {
+      const env = await postJson(`${API_BASE}/neural-network`, {
+        projectId: state.selectedProjectId,
+        filters: state.selectedDatasetFilters,
+        recodes: state.selectedDatasetRecodes,
+        analysis: getAnalysisOptionsPayload(),
+        targetField: analysis.targetField,
+        predictorFields: Array.isArray(analysis.predictorFields) ? analysis.predictorFields : [],
+        task: analysis.task,
+        hiddenUnits: analysis.hiddenUnits
+      });
+      state.neuralNetworkResult = env.data.neuralNetwork;
       break;
     }
     default:
@@ -8487,6 +8547,171 @@ function renderSurvivalAnalysis() {
   });
 }
 
+function renderComplexSamples() {
+  const targetEl = document.getElementById('complex-samples-target-field');
+  const strataEl = document.getElementById('complex-samples-strata-field');
+  const clusterEl = document.getElementById('complex-samples-cluster-field');
+  const groupEl = document.getElementById('complex-samples-group-field');
+  const runBtn = document.getElementById('run-complex-samples-btn');
+  const resultEl = document.getElementById('complex-samples-result');
+  if (!targetEl || !strataEl || !clusterEl || !groupEl || !runBtn || !resultEl) return;
+  const options = getDatasetAnalysisFieldOptions();
+  const previous = {
+    target: targetEl.value,
+    strata: strataEl.value,
+    cluster: clusterEl.value,
+    group: groupEl.value
+  };
+  targetEl.innerHTML = options.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${escapeHtml(option.valueType)})</option>`).join('');
+  targetEl.value = options.some((option) => option.key === previous.target) ? previous.target : options[0]?.key ?? '';
+  const optionalOptions = (currentValue) => `<option value="">None</option>${options
+    .filter((option) => option.key !== targetEl.value)
+    .map((option) => `<option value="${escapeHtml(option.key)}"${option.key === currentValue ? ' selected' : ''}>${escapeHtml(option.label)} (${escapeHtml(option.valueType)})</option>`)
+    .join('')}`;
+  strataEl.innerHTML = optionalOptions(previous.strata);
+  clusterEl.innerHTML = optionalOptions(previous.cluster);
+  groupEl.innerHTML = optionalOptions(previous.group);
+  runBtn.disabled = !targetEl.value || options.length === 0;
+
+  if (!state.complexSamplesResult) {
+    resultEl.innerHTML = '<p>Choose a target and optional survey design fields, then run complex samples.</p>';
+    return;
+  }
+
+  const result = state.complexSamplesResult;
+  resultEl.innerHTML = buildOutputViewer({
+    eyebrow: 'Complex samples',
+    title: `${result.targetLabel} survey-design summary`,
+    summary: `${result.caseCount} usable row(s), ${result.designSummary.domainCount} domain(s), statistic: ${result.statistic}.`,
+    metrics: [
+      { label: 'Rows', value: result.caseCount },
+      { label: 'Weighted rows', value: formatStatValue(result.designSummary.weightedCaseCount, 3) },
+      { label: 'Strata', value: result.designSummary.strataCount ?? 'n/a' },
+      { label: 'Clusters', value: result.designSummary.clusterCount ?? 'n/a' }
+    ],
+    sections: [
+      buildOutputSection(
+        'Design setup',
+        buildOutputTable(
+          ['Role', 'Field'],
+          [
+            ['Target', escapeHtml(result.targetLabel)],
+            ['Weight', escapeHtml(result.weightField ?? 'No weight field selected')],
+            ['Strata', escapeHtml(result.strataLabel ?? 'None')],
+            ['Cluster', escapeHtml(result.clusterLabel ?? 'None')],
+            ['Domain/group', escapeHtml(result.groupLabel ?? 'All cases')]
+          ]
+        )
+      ),
+      buildOutputSection(
+        'Estimates',
+        buildOutputTable(
+          ['Domain', 'Level', 'Statistic', 'N', 'Weighted N', 'Estimate', 'Std. error', '95% CI', 'Design effect'],
+          result.estimates.map((estimate) => [
+            escapeHtml(estimate.domainValue),
+            escapeHtml(estimate.levelValue ?? ''),
+            escapeHtml(estimate.statistic),
+            String(estimate.count),
+            formatStatValue(estimate.weightedCount, 3),
+            formatStatValue(estimate.estimate, 5),
+            formatStatValue(estimate.standardError, 5),
+            escapeHtml(formatConfidenceInterval(estimate.confidenceInterval, 5)),
+            formatStatValue(estimate.designEffect, 5)
+          ])
+        )
+      ),
+      result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
+    ].filter(Boolean)
+  });
+}
+
+function renderNeuralNetwork() {
+  const targetEl = document.getElementById('neural-network-target-field');
+  const predictorsEl = document.getElementById('neural-network-predictor-fields');
+  const taskEl = document.getElementById('neural-network-task');
+  const hiddenEl = document.getElementById('neural-network-hidden-units');
+  const runBtn = document.getElementById('run-neural-network-btn');
+  const resultEl = document.getElementById('neural-network-result');
+  if (!targetEl || !predictorsEl || !taskEl || !hiddenEl || !runBtn || !resultEl) return;
+  const options = getDatasetAnalysisFieldOptions();
+  const numericOptions = options.filter((option) => option.valueType === 'number');
+  const previousTarget = targetEl.value;
+  const previousPredictors = getSelectedValues(predictorsEl);
+  targetEl.innerHTML = options.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${escapeHtml(option.valueType)})</option>`).join('');
+  targetEl.value = options.some((option) => option.key === previousTarget) ? previousTarget : options[0]?.key ?? '';
+  predictorsEl.innerHTML = numericOptions
+    .filter((option) => option.key !== targetEl.value)
+    .map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`)
+    .join('');
+  for (const option of predictorsEl.options) option.selected = previousPredictors.includes(option.value);
+  if (getSelectedValues(predictorsEl).length === 0) {
+    numericOptions.filter((option) => option.key !== targetEl.value).slice(0, 4).forEach((option) => {
+      const target = [...predictorsEl.options].find((candidate) => candidate.value === option.key);
+      if (target) target.selected = true;
+    });
+  }
+  runBtn.disabled = !targetEl.value || getSelectedValues(predictorsEl).length === 0;
+
+  if (!state.neuralNetworkResult) {
+    resultEl.innerHTML = '<p>Choose a target and numeric predictors, then run a neural network.</p>';
+    return;
+  }
+
+  const result = state.neuralNetworkResult;
+  const importanceItems = result.featureImportance.map((item) => ({ label: item.label, value: item.importance }));
+  resultEl.innerHTML = buildOutputViewer({
+    eyebrow: 'Neural network',
+    title: `${result.targetLabel} ${result.task} model`,
+    summary: `${result.caseCount} usable row(s), ${result.hiddenUnits} hidden units.`,
+    metrics: [
+      { label: 'Rows', value: result.caseCount },
+      { label: 'Task', value: result.task },
+      { label: 'Accuracy', value: result.metrics.accuracy === undefined ? 'n/a' : `${formatDecimal((result.metrics.accuracy ?? 0) * 100, 1)}%` },
+      { label: 'RMSE', value: formatStatValue(result.metrics.rootMeanSquaredError, 5) }
+    ],
+    sections: [
+      buildOutputSection(
+        'Feature importance',
+        buildOutputTable(
+          ['Predictor', 'Importance'],
+          result.featureImportance.map((item) => [
+            escapeHtml(item.label),
+            formatStatValue(item.importance, 5)
+          ])
+        )
+      ),
+      result.confusionMatrix?.length ? buildOutputSection(
+        'Confusion matrix',
+        buildOutputTable(
+          ['Actual', 'Predicted', 'Count'],
+          result.confusionMatrix.map((cell) => [
+            escapeHtml(cell.actual),
+            escapeHtml(cell.predicted),
+            String(cell.count)
+          ])
+        )
+      ) : '',
+      buildOutputSection(
+        'Prediction preview',
+        buildOutputTable(
+          ['Case', 'Actual', 'Predicted', 'Residual'],
+          result.predictions.slice(0, 50).map((prediction) => [
+            escapeHtml(prediction.caseLabel ?? prediction.caseId ?? 'case'),
+            escapeHtml(String(prediction.actual)),
+            escapeHtml(String(typeof prediction.predicted === 'number' ? formatStatValue(prediction.predicted, 5) : prediction.predicted)),
+            formatStatValue(prediction.residual, 5)
+          ])
+        )
+      ),
+      importanceItems.length ? buildOutputSection(
+        'Importance chart',
+        `<div class="chart-grid">${buildChartCard('Predictor importance', buildSvgBarChart(importanceItems, { color: '#d2b27a' }), 'Relative importance from input-to-hidden and hidden-to-output weights.')}</div>`
+      ) : '',
+      result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
+    ].filter(Boolean)
+  });
+}
+
 function renderCorrelation() {
   const xEl = document.getElementById('correlation-x-field');
   const yEl = document.getElementById('correlation-y-field');
@@ -9646,6 +9871,8 @@ function renderAll() {
   renderGeneralLinearModel();
   renderRepeatedMeasures();
   renderSurvivalAnalysis();
+  renderComplexSamples();
+  renderNeuralNetwork();
   renderRetrieval();
   renderSavedQualitativeQueries();
   renderTextSearch();
@@ -11201,6 +11428,72 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       timeField,
       eventField,
       groupField
+    });
+    renderAll();
+  });
+
+  document.getElementById('run-complex-samples-btn')?.addEventListener('click', async () => {
+    if (!state.selectedProjectId) { alert('Select a project first.'); return; }
+    const targetField = document.getElementById('complex-samples-target-field')?.value;
+    const strataField = document.getElementById('complex-samples-strata-field')?.value || undefined;
+    const clusterField = document.getElementById('complex-samples-cluster-field')?.value || undefined;
+    const groupField = document.getElementById('complex-samples-group-field')?.value || undefined;
+    if (!targetField) {
+      alert('Choose a target field for complex samples.');
+      return;
+    }
+    const env = await postJson(`${API_BASE}/complex-samples`, {
+      projectId: state.selectedProjectId,
+      filters: state.selectedDatasetFilters,
+      recodes: state.selectedDatasetRecodes,
+      analysis: getAnalysisOptionsPayload(),
+      targetField,
+      strataField,
+      clusterField,
+      groupField
+    });
+    state.complexSamplesResult = env.data.complexSamples;
+    setLastQuantAnalysis('complex_samples', {
+      filters: cloneJson(state.selectedDatasetFilters),
+      recodes: cloneJson(state.selectedDatasetRecodes),
+      analysisOptions: getAnalysisOptionsPayload(),
+      targetField,
+      strataField,
+      clusterField,
+      groupField
+    });
+    renderAll();
+  });
+
+  document.getElementById('run-neural-network-btn')?.addEventListener('click', async () => {
+    if (!state.selectedProjectId) { alert('Select a project first.'); return; }
+    const targetField = document.getElementById('neural-network-target-field')?.value;
+    const predictorFields = getSelectedValues(document.getElementById('neural-network-predictor-fields'));
+    const task = document.getElementById('neural-network-task')?.value === 'classification' ? 'classification' : 'regression';
+    const hiddenUnits = Number(document.getElementById('neural-network-hidden-units')?.value || 5);
+    if (!targetField || predictorFields.length === 0 || predictorFields.includes(targetField)) {
+      alert('Choose a target field and different numeric predictor fields.');
+      return;
+    }
+    const env = await postJson(`${API_BASE}/neural-network`, {
+      projectId: state.selectedProjectId,
+      filters: state.selectedDatasetFilters,
+      recodes: state.selectedDatasetRecodes,
+      analysis: getAnalysisOptionsPayload(),
+      targetField,
+      predictorFields,
+      task,
+      hiddenUnits
+    });
+    state.neuralNetworkResult = env.data.neuralNetwork;
+    setLastQuantAnalysis('neural_network', {
+      filters: cloneJson(state.selectedDatasetFilters),
+      recodes: cloneJson(state.selectedDatasetRecodes),
+      analysisOptions: getAnalysisOptionsPayload(),
+      targetField,
+      predictorFields,
+      task,
+      hiddenUnits
     });
     renderAll();
   });

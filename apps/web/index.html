@@ -1293,6 +1293,8 @@
           <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="glm">GLM/ANCOVA</button>
           <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="repeated">Repeated measures</button>
           <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="survival">Survival</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="complex">Complex samples</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="neural">Neural network</button>
         </section>
 
         <section class="quantitative-output-desk workspace-section">
@@ -1329,6 +1331,8 @@
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="general-linear-model">GLM/ANCOVA</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="repeated-measures">Repeated measures</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="survival-analysis">Survival analysis</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="complex-samples">Complex samples</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="neural-network">Neural network</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="saved-analyses">Saved analyses</button>
             </div>
             <div class="quant-output-history" style="margin-top:18px">
@@ -1466,6 +1470,12 @@
             </section>
             <section class="quant-output-panel" data-quant-output="survival-analysis" hidden>
               <div id="survival-analysis-result">Choose time and event fields, then run Kaplan-Meier survival analysis.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="complex-samples" hidden>
+              <div id="complex-samples-result">Choose a target and optional survey design fields, then run complex samples.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="neural-network" hidden>
+              <div id="neural-network-result">Choose a target and numeric predictors, then run a neural network.</div>
             </section>
             <section class="quant-output-panel" data-quant-output="saved-analyses" hidden>
               <div class="section-header">
@@ -2450,6 +2460,65 @@
               </label>
             </div>
             <div class="small-muted" style="margin-top:16px">Event fields accept values like 1/0, true/false, yes/no, event/censored. Results open in the Output Viewer.</div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="complex">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Complex samples</h2>
+                <p class="small-muted" style="margin:0">Create survey-design aware means or proportions with optional strata, cluster, and domain fields.</p>
+              </div>
+              <button id="run-complex-samples-btn" type="button" class="small">Run complex samples</button>
+            </div>
+            <div class="grid grid-4 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Target field</span>
+                <select id="complex-samples-target-field"></select>
+              </label>
+              <label class="field">
+                <span>Strata field optional</span>
+                <select id="complex-samples-strata-field"></select>
+              </label>
+              <label class="field">
+                <span>Cluster field optional</span>
+                <select id="complex-samples-cluster-field"></select>
+              </label>
+              <label class="field">
+                <span>Domain/group optional</span>
+                <select id="complex-samples-group-field"></select>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Use the Quantitative analysis controls above for weight field selection. Results open in the Output Viewer.</div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="neural">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Neural network</h2>
+                <p class="small-muted" style="margin:0">Run a deterministic single-hidden-layer model for exploratory prediction.</p>
+              </div>
+              <button id="run-neural-network-btn" type="button" class="small">Run neural network</button>
+            </div>
+            <div class="grid grid-4 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Target field</span>
+                <select id="neural-network-target-field"></select>
+              </label>
+              <label class="field">
+                <span>Numeric predictors</span>
+                <select id="neural-network-predictor-fields" multiple size="8"></select>
+              </label>
+              <label class="field">
+                <span>Task</span>
+                <select id="neural-network-task">
+                  <option value="regression" selected>regression</option>
+                  <option value="classification">classification</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Hidden units</span>
+                <input id="neural-network-hidden-units" type="number" min="2" max="12" value="5" />
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">This is exploratory apparent-fit output; train/test validation is a later expansion. Results open in the Output Viewer.</div>
           </article>
         </section>
 

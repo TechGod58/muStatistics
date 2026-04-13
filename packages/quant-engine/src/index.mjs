@@ -2071,6 +2071,315 @@ export function analyzeSurvivalAnalysis(dataset, timeFieldKey, eventFieldKey, gr
         ]
     };
 }
+function confidenceIntervalFromEstimate(estimate, standardError, clamp) {
+    if (standardError === null || !Number.isFinite(standardError))
+        return null;
+    const lower = estimate - (1.96 * standardError);
+    const upper = estimate + (1.96 * standardError);
+    return {
+        level: 0.95,
+        lower: clamp ? Math.max(0, Math.min(1, lower)) : lower,
+        upper: clamp ? Math.max(0, Math.min(1, upper)) : upper
+    };
+}
+function clusterEstimateStandardError(values, weights, clusters, estimator) {
+    const clusterValues = new Map();
+    for (let index = 0; index < values.length; index += 1) {
+        const key = clusters[index] ?? 'cluster';
+        const entry = clusterValues.get(key) ?? { values: [], weights: [] };
+        entry.values.push(values[index]);
+        entry.weights.push(weights[index]);
+        clusterValues.set(key, entry);
+    }
+    const estimates = [...clusterValues.values()]
+        .map((entry) => estimator(entry.values, entry.weights))
+        .filter((value) => value !== null && Number.isFinite(value));
+    if (estimates.length < 2)
+        return null;
+    const stdDev = sampleStdDev(estimates);
+    return stdDev === null ? null : stdDev / Math.sqrt(estimates.length);
+}
+export function analyzeComplexSamples(dataset, targetFieldKey, options = {}) {
+    const targetField = requireDatasetField(dataset, targetFieldKey, 'complex-samples target');
+    const normalizedOptions = normalizeAnalysisOptions(options);
+    const strataFieldKey = typeof options.strataField === 'string' && options.strataField.trim() && options.strataField !== targetFieldKey
+        ? options.strataField.trim()
+        : '';
+    const clusterFieldKey = typeof options.clusterField === 'string' && options.clusterField.trim() && options.clusterField !== targetFieldKey
+        ? options.clusterField.trim()
+        : '';
+    const groupFieldKey = typeof options.groupField === 'string' && options.groupField.trim() && options.groupField !== targetFieldKey
+        ? options.groupField.trim()
+        : '';
+    const strataField = strataFieldKey ? requireDatasetField(dataset, strataFieldKey, 'complex-samples strata') : null;
+    const clusterField = clusterFieldKey ? requireDatasetField(dataset, clusterFieldKey, 'complex-samples cluster') : null;
+    const groupField = groupFieldKey ? requireDatasetField(dataset, groupFieldKey, 'complex-samples domain/group') : null;
+    const requiredFields = [targetFieldKey, strataFieldKey, clusterFieldKey, groupFieldKey].filter(Boolean);
+    const preparedRows = analysisRows(dataset, requiredFields, normalizedOptions)
+        .map(({ row, weight }) => ({
+        target: row[targetFieldKey] ?? null,
+        strata: strataFieldKey ? formatValue(row[strataFieldKey] ?? null) : null,
+        cluster: clusterFieldKey ? formatValue(row[clusterFieldKey] ?? null) : null,
+        domain: groupFieldKey ? formatValue(row[groupFieldKey] ?? null) : 'All cases',
+        weight
+    }))
+        .filter((entry) => entry.target !== null && entry.weight > 0 && Boolean(entry.domain));
+    if (preparedRows.length < 2) {
+        throw new Error('Complex samples analysis requires at least two usable rows.');
+    }
+    const numericTarget = preparedRows.every((entry) => typeof entry.target === 'number');
+    const statistic = numericTarget ? 'mean' : 'proportion';
+    const domains = [...new Set(preparedRows.map((row) => row.domain))].sort((left, right) => left.localeCompare(right));
+    const estimates = [];
+    for (const domain of domains) {
+        const domainRows = preparedRows.filter((row) => row.domain === domain);
+        const weights = domainRows.map((row) => row.weight);
+        const weightedCount = weights.reduce((total, value) => total + value, 0);
+        const strataCount = strataFieldKey ? new Set(domainRows.map((row) => row.strata ?? '')).size : null;
+        const clusterValues = clusterFieldKey ? domainRows.map((row) => row.cluster ?? 'cluster') : [];
+        const clusterCount = clusterFieldKey ? new Set(clusterValues).size : null;
+        if (numericTarget) {
+            const values = domainRows.map((row) => Number(row.target));
+            const estimate = weightedMean(values, weights);
+            if (estimate === null)
+                continue;
+            const weightedStd = weightedStdDev(values, weights);
+            const effectiveN = effectiveSampleSize(weights);
+            const simpleSe = weightedStd !== null && effectiveN > 0 ? weightedStd / Math.sqrt(effectiveN) : null;
+            const clusterSe = clusterFieldKey
+                ? clusterEstimateStandardError(values, weights, clusterValues, weightedMean)
+                : null;
+            const standardError = clusterSe ?? simpleSe;
+            estimates.push({
+                domainValue: domain,
+                levelValue: null,
+                statistic: 'mean',
+                count: domainRows.length,
+                weightedCount,
+                estimate,
+                standardError,
+                confidenceInterval: confidenceIntervalFromEstimate(estimate, standardError, false),
+                strataCount,
+                clusterCount,
+                designEffect: clusterSe !== null && simpleSe !== null && simpleSe > 0 ? (clusterSe / simpleSe) ** 2 : null
+            });
+        }
+        else {
+            const levels = uniqueFormattedLevels(domainRows.map((row) => row.target));
+            for (const level of levels) {
+                const indicators = domainRows.map((row) => formatValue(row.target) === level ? 1 : 0);
+                const estimate = weightedMean(indicators, weights);
+                if (estimate === null)
+                    continue;
+                const effectiveN = effectiveSampleSize(weights);
+                const simpleSe = effectiveN > 0 ? Math.sqrt((estimate * (1 - estimate)) / effectiveN) : null;
+                const clusterSe = clusterFieldKey
+                    ? clusterEstimateStandardError(indicators, weights, clusterValues, weightedMean)
+                    : null;
+                const standardError = clusterSe ?? simpleSe;
+                estimates.push({
+                    domainValue: domain,
+                    levelValue: level,
+                    statistic: 'proportion',
+                    count: domainRows.length,
+                    weightedCount,
+                    estimate,
+                    standardError,
+                    confidenceInterval: confidenceIntervalFromEstimate(estimate, standardError, true),
+                    strataCount,
+                    clusterCount,
+                    designEffect: clusterSe !== null && simpleSe !== null && simpleSe > 0 ? (clusterSe / simpleSe) ** 2 : null
+                });
+            }
+        }
+    }
+    if (estimates.length === 0) {
+        throw new Error('Complex samples analysis could not produce estimates for the selected target field.');
+    }
+    return {
+        targetField: targetField.key,
+        targetLabel: targetField.label,
+        groupField: groupField?.key ?? null,
+        groupLabel: groupField?.label ?? null,
+        strataField: strataField?.key ?? null,
+        strataLabel: strataField?.label ?? null,
+        clusterField: clusterField?.key ?? null,
+        clusterLabel: clusterField?.label ?? null,
+        weightField: normalizedOptions.weightField || null,
+        caseCount: preparedRows.length,
+        statistic,
+        designSummary: {
+            strataCount: strataFieldKey ? new Set(preparedRows.map((row) => row.strata ?? '')).size : null,
+            clusterCount: clusterFieldKey ? new Set(preparedRows.map((row) => row.cluster ?? '')).size : null,
+            domainCount: domains.length,
+            weightedCaseCount: preparedRows.reduce((total, row) => total + row.weight, 0)
+        },
+        estimates,
+        notes: [
+            'Complex Samples is a first-pass survey-design summary procedure.',
+            'If a cluster field is selected, standard errors use cluster-level estimate variation; otherwise they use effective sample size from weights.',
+            'This does not yet replace full SPSS Complex Samples procedures such as plan files, Taylor linearization for every statistic, or replicate weights.'
+        ]
+    };
+}
+function solveRidgeSystem(matrix, vector, lambda = 1e-6) {
+    const regularized = matrix.map((row, rowIndex) => row.map((value, columnIndex) => value + (rowIndex === columnIndex && rowIndex > 0 ? lambda : 0)));
+    return solveLinearSystem(regularized, vector);
+}
+function fitLinearOutputWeights(features, targets) {
+    const columnCount = features[0]?.length ?? 0;
+    const outputCount = targets[0]?.length ?? 0;
+    const xtx = Array.from({ length: columnCount }, () => Array.from({ length: columnCount }, () => 0));
+    const xty = Array.from({ length: columnCount }, () => Array.from({ length: outputCount }, () => 0));
+    for (let rowIndex = 0; rowIndex < features.length; rowIndex += 1) {
+        const row = features[rowIndex];
+        const target = targets[rowIndex];
+        for (let i = 0; i < columnCount; i += 1) {
+            for (let j = 0; j < columnCount; j += 1) {
+                xtx[i][j] += row[i] * row[j];
+            }
+            for (let output = 0; output < outputCount; output += 1) {
+                xty[i][output] += row[i] * target[output];
+            }
+        }
+    }
+    return Array.from({ length: outputCount }, (_unused, output) => solveRidgeSystem(xtx, xty.map((row) => row[output] ?? 0), 1e-4));
+}
+function hiddenLayerFeatures(values, inputWeights, biases) {
+    return [
+        1,
+        ...inputWeights.map((weights, hiddenIndex) => Math.tanh((biases[hiddenIndex] ?? 0) + weights.reduce((total, weight, inputIndex) => total + (weight * values[inputIndex]), 0)))
+    ];
+}
+export function analyzeNeuralNetwork(dataset, targetFieldKey, predictorFields, task = 'regression', hiddenUnits = 5, options) {
+    const uniquePredictors = [...new Set(predictorFields.map((field) => field.trim()).filter(Boolean))]
+        .filter((field) => field !== targetFieldKey);
+    if (uniquePredictors.length === 0) {
+        throw new Error('Neural network requires at least one predictor field.');
+    }
+    const targetField = requireDatasetField(dataset, targetFieldKey, 'neural-network target');
+    const predictorMeta = uniquePredictors.map((field) => requireDatasetField(dataset, field, 'neural-network predictor'));
+    const rows = analysisRows(dataset, [targetFieldKey, ...uniquePredictors], options)
+        .map(({ row }) => ({
+        caseId: typeof row.case_id === 'string' ? row.case_id : null,
+        caseLabel: typeof row.case_label === 'string' ? row.case_label : null,
+        target: row[targetFieldKey] ?? null,
+        predictors: uniquePredictors.map((field) => row[field])
+    }))
+        .filter((entry) => entry.target !== null && entry.predictors.every((value) => typeof value === 'number'));
+    if (rows.length < Math.max(4, uniquePredictors.length + 2)) {
+        throw new Error('Neural network requires more usable rows than predictor fields.');
+    }
+    const normalizedHiddenUnits = Math.min(12, Math.max(2, Math.floor(hiddenUnits)));
+    const means = uniquePredictors.map((_field, index) => rows.reduce((total, row) => total + row.predictors[index], 0) / rows.length);
+    const stdDevs = uniquePredictors.map((_field, index) => sampleStdDev(rows.map((row) => row.predictors[index])) || 1);
+    const standardizedInputs = rows.map((row) => row.predictors.map((value, index) => (value - means[index]) / stdDevs[index]));
+    const random = seededRandom(424242);
+    const inputWeights = Array.from({ length: normalizedHiddenUnits }, () => Array.from({ length: uniquePredictors.length }, () => (random() * 2) - 1));
+    const biases = Array.from({ length: normalizedHiddenUnits }, () => (random() * 2) - 1);
+    const features = standardizedInputs.map((values) => hiddenLayerFeatures(values, inputWeights, biases));
+    if (task === 'classification') {
+        const classes = uniqueFormattedLevels(rows.map((row) => row.target));
+        if (classes.length < 2) {
+            throw new Error('Classification neural network requires at least two target classes.');
+        }
+        const targets = rows.map((row) => classes.map((level) => formatValue(row.target) === level ? 1 : 0));
+        const outputWeights = fitLinearOutputWeights(features, targets);
+        const scored = features.map((featureRow) => outputWeights.map((weights) => weights.reduce((total, weight, index) => total + (weight * featureRow[index]), 0)));
+        const predictions = scored.map((scores, index) => {
+            const predictedIndex = scores.indexOf(Math.max(...scores));
+            return {
+                caseId: rows[index].caseId,
+                caseLabel: rows[index].caseLabel,
+                actual: formatValue(rows[index].target),
+                predicted: classes[predictedIndex] ?? classes[0]
+            };
+        });
+        const correct = predictions.filter((prediction) => prediction.actual === prediction.predicted).length;
+        const confusionCounts = new Map();
+        for (const prediction of predictions) {
+            const key = `${prediction.actual}::${prediction.predicted}`;
+            confusionCounts.set(key, (confusionCounts.get(key) ?? 0) + 1);
+        }
+        const featureImportance = uniquePredictors.map((field, inputIndex) => {
+            const importance = inputWeights.reduce((total, hiddenWeights, hiddenIndex) => {
+                const downstream = outputWeights.reduce((sum, output) => sum + Math.abs(output[hiddenIndex + 1] ?? 0), 0);
+                return total + (Math.abs(hiddenWeights[inputIndex] ?? 0) * downstream);
+            }, 0);
+            return { field, label: predictorMeta[inputIndex].label, importance };
+        }).sort((left, right) => right.importance - left.importance);
+        return {
+            targetField: targetField.key,
+            targetLabel: targetField.label,
+            predictorFields: uniquePredictors,
+            predictorLabels: predictorMeta.map((field) => field.label),
+            task,
+            caseCount: rows.length,
+            hiddenUnits: normalizedHiddenUnits,
+            metrics: {
+                accuracy: rows.length > 0 ? correct / rows.length : null
+            },
+            featureImportance,
+            classes,
+            confusionMatrix: [...confusionCounts.entries()].map(([key, count]) => {
+                const [actual, predicted] = key.split('::');
+                return { actual: actual ?? '', predicted: predicted ?? '', count };
+            }),
+            predictions: predictions.slice(0, 100),
+            notes: [
+                'Neural network output uses a deterministic single-hidden-layer random-feature model for pilot exploration.',
+                'The current procedure reports apparent fit on the same rows used for fitting; train/test validation is a future expansion.'
+            ]
+        };
+    }
+    const numericRows = rows.filter((row) => typeof row.target === 'number');
+    if (numericRows.length !== rows.length || numericRows.length < Math.max(4, uniquePredictors.length + 2)) {
+        throw new Error('Regression neural network requires a numeric target field and enough complete rows.');
+    }
+    const targets = numericRows.map((row) => [row.target]);
+    const outputWeights = fitLinearOutputWeights(features, targets);
+    const predictions = features.map((featureRow, index) => {
+        const predicted = outputWeights[0].reduce((total, weight, weightIndex) => total + (weight * featureRow[weightIndex]), 0);
+        const actual = numericRows[index].target;
+        return {
+            caseId: numericRows[index].caseId,
+            caseLabel: numericRows[index].caseLabel,
+            actual,
+            predicted,
+            residual: actual - predicted
+        };
+    });
+    const actualValues = predictions.map((prediction) => Number(prediction.actual));
+    const predictedValues = predictions.map((prediction) => Number(prediction.predicted));
+    const residuals = predictions.map((prediction) => prediction.residual ?? 0);
+    const yMean = actualValues.reduce((total, value) => total + value, 0) / actualValues.length;
+    const ssTotal = actualValues.reduce((total, value) => total + ((value - yMean) ** 2), 0);
+    const ssResidual = actualValues.reduce((total, value, index) => total + ((value - predictedValues[index]) ** 2), 0);
+    const featureImportance = uniquePredictors.map((field, inputIndex) => {
+        const importance = inputWeights.reduce((total, hiddenWeights, hiddenIndex) => total + (Math.abs(hiddenWeights[inputIndex] ?? 0) * Math.abs(outputWeights[0][hiddenIndex + 1] ?? 0)), 0);
+        return { field, label: predictorMeta[inputIndex].label, importance };
+    }).sort((left, right) => right.importance - left.importance);
+    return {
+        targetField: targetField.key,
+        targetLabel: targetField.label,
+        predictorFields: uniquePredictors,
+        predictorLabels: predictorMeta.map((field) => field.label),
+        task,
+        caseCount: rows.length,
+        hiddenUnits: normalizedHiddenUnits,
+        metrics: {
+            rootMeanSquaredError: Math.sqrt(residuals.reduce((total, value) => total + (value ** 2), 0) / residuals.length),
+            meanAbsoluteError: residuals.reduce((total, value) => total + Math.abs(value), 0) / residuals.length,
+            rSquared: ssTotal === 0 ? 1 : 1 - (ssResidual / ssTotal)
+        },
+        featureImportance,
+        predictions: predictions.slice(0, 100),
+        notes: [
+            'Neural network output uses a deterministic single-hidden-layer random-feature model for pilot exploration.',
+            'The current procedure reports apparent fit on the same rows used for fitting; train/test validation is a future expansion.'
+        ]
+    };
+}
 export function analyzeCrosstab(dataset, rowFieldKey, columnFieldKey, options) {
     if (rowFieldKey === columnFieldKey) {
         throw new Error('Choose two different fields for the crosstab.');

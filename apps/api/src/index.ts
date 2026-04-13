@@ -31,7 +31,7 @@ import {
 } from '@mu/auth';
 import { buildEvidenceSummaryPrompt, scoreEvidenceCoverage } from '@mu/ai';
 import { buildCodeByCaseView, buildCodeClusters, buildCodeCodeMatrix, buildCodeCooccurrence, buildCodeHierarchy, buildCodingComparison, buildCompoundQuery, buildConceptMap, buildFrameworkMatrix, buildInterRaterSummary, buildMapVisualization, buildMatrixCoding, buildPatternAutocode, buildQualitativeQueryReport, buildSentimentAnalysis, buildTextSearch, buildWordCloud, buildWordFrequency, retrieveEvidence, buildEvidenceExport } from '@mu/qual-engine';
-import { analyzeBootstrap, analyzeClusterAnalysis, analyzeCompareMeans, analyzeCorrelation, analyzeCrosstab, analyzeDecisionTree, analyzeExactTest, analyzeFactorAnalysis, analyzeForecast, analyzeGeneralLinearModel, analyzeMissingValues, analyzeNonparametricComparison, analyzePairedTTest, analyzeRegression, analyzeReliability, analyzeRepeatedMeasures, analyzeSurvivalAnalysis, analyzeTTest, buildCaseDataset, buildCustomTable, buildImputationPlan, describeDataset, transformDataset } from '@mu/quant-engine';
+import { analyzeBootstrap, analyzeClusterAnalysis, analyzeCompareMeans, analyzeComplexSamples, analyzeCorrelation, analyzeCrosstab, analyzeDecisionTree, analyzeExactTest, analyzeFactorAnalysis, analyzeForecast, analyzeGeneralLinearModel, analyzeMissingValues, analyzeNeuralNetwork, analyzeNonparametricComparison, analyzePairedTTest, analyzeRegression, analyzeReliability, analyzeRepeatedMeasures, analyzeSurvivalAnalysis, analyzeTTest, buildCaseDataset, buildCustomTable, buildImputationPlan, describeDataset, transformDataset } from '@mu/quant-engine';
 import { fail, ok } from '@mu/shared-types';
 import { deleteProjectArtifacts, ensureDirectory, listProjectArtifacts, pruneProjectArtifacts, readStoredArtifact, resolveStorageRoot, writeProjectArtifact, writeProjectArtifactBytes } from '@mu/storage';
 import { formatAuditActionLabel } from '@mu/ui';
@@ -6642,6 +6642,90 @@ server.post('/survival-analysis', async (request, reply) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to run survival analysis.';
+    return reply.status(400).send(fail('INVALID', message));
+  }
+});
+
+server.post('/complex-samples', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    filters: unknown[];
+    recodes: unknown[];
+    analysis: unknown;
+    targetField: string;
+    strataField: string;
+    clusterField: string;
+    groupField: string;
+  }>;
+  const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
+  const targetField = typeof body.targetField === 'string' && body.targetField.trim() ? body.targetField.trim() : undefined;
+  const strataField = typeof body.strataField === 'string' && body.strataField.trim() ? body.strataField.trim() : undefined;
+  const clusterField = typeof body.clusterField === 'string' && body.clusterField.trim() ? body.clusterField.trim() : undefined;
+  const groupField = typeof body.groupField === 'string' && body.groupField.trim() ? body.groupField.trim() : undefined;
+  if (!projectId || !targetField) {
+    return reply.status(400).send(fail('INVALID', 'projectId and targetField are required.'));
+  }
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+
+  try {
+    const analysis = parseDatasetAnalysisOptions(body.analysis);
+    const base = await buildProjectDatasetPayload(projectId);
+    const dataset = transformDataset(base.dataset, {
+      filters: parseDatasetFilters(body.filters),
+      recodes: parseDatasetRecodes(body.recodes),
+      analysis
+    });
+    return ok({
+      complexSamples: analyzeComplexSamples(dataset, targetField, {
+        ...analysis,
+        strataField,
+        clusterField,
+        groupField
+      })
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to run complex samples analysis.';
+    return reply.status(400).send(fail('INVALID', message));
+  }
+});
+
+server.post('/neural-network', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    filters: unknown[];
+    recodes: unknown[];
+    analysis: unknown;
+    targetField: string;
+    predictorFields: string[];
+    task: string;
+    hiddenUnits: number;
+  }>;
+  const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
+  const targetField = typeof body.targetField === 'string' && body.targetField.trim() ? body.targetField.trim() : undefined;
+  const predictorFields = Array.isArray(body.predictorFields) ? body.predictorFields.map((field) => String(field ?? '').trim()).filter(Boolean) : [];
+  const task = body.task === 'classification' ? 'classification' : 'regression';
+  if (!projectId || !targetField || predictorFields.length === 0) {
+    return reply.status(400).send(fail('INVALID', 'projectId, targetField, and at least one predictor field are required.'));
+  }
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+
+  try {
+    const analysis = parseDatasetAnalysisOptions(body.analysis);
+    const base = await buildProjectDatasetPayload(projectId);
+    const dataset = transformDataset(base.dataset, {
+      filters: parseDatasetFilters(body.filters),
+      recodes: parseDatasetRecodes(body.recodes),
+      analysis
+    });
+    return ok({
+      neuralNetwork: analyzeNeuralNetwork(dataset, targetField, predictorFields, task, typeof body.hiddenUnits === 'number' ? body.hiddenUnits : 5, analysis)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to run neural network.';
     return reply.status(400).send(fail('INVALID', message));
   }
 });
