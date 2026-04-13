@@ -17,19 +17,19 @@ coverage/
 !**/.env.example
 
 # Local databases, runtime state, and user/project data
-apps/api/data/
-data/
-data-portable-test/
-runtime/
-.logs/
+/apps/api/data/
+/data/
+/data-portable-test/
+/runtime/
+/.logs/
 apps/api/-
 *.db
 *.sqlite
 *.sqlite3
 
 # Generated portable bundles
-portable/
-apps/api/portable/
+/portable/
+/apps/api/portable/
 
 # Logs and OS/editor noise
 *.log
