@@ -119,6 +119,9 @@ const state = {
   forecastingResult: null,
   clusterAnalysisResult: null,
   decisionTreeResult: null,
+  generalLinearModelResult: null,
+  repeatedMeasuresResult: null,
+  survivalAnalysisResult: null,
   quantOutputView: 'descriptives',
   quantOutputHistory: [],
   compiledReportIncludedViews: [],
@@ -555,6 +558,9 @@ function getAvailableQuantOutputPages() {
     { view: 'forecasting', title: 'Forecasting', ready: Boolean(state.forecastingResult) },
     { view: 'cluster-analysis', title: 'Cluster analysis', ready: Boolean(state.clusterAnalysisResult) },
     { view: 'decision-tree', title: 'Decision tree', ready: Boolean(state.decisionTreeResult) },
+    { view: 'general-linear-model', title: 'GLM/ANCOVA', ready: Boolean(state.generalLinearModelResult) },
+    { view: 'repeated-measures', title: 'Repeated measures', ready: Boolean(state.repeatedMeasuresResult) },
+    { view: 'survival-analysis', title: 'Survival analysis', ready: Boolean(state.survivalAnalysisResult) },
     { view: 'saved-analyses', title: 'Saved analyses', ready: state.savedAnalysisJobs.length > 0 }
   ];
 }
@@ -842,6 +848,9 @@ function mapAnalysisKindToOutputView(kind) {
     case 'forecasting': return 'forecasting';
     case 'cluster_analysis': return 'cluster-analysis';
     case 'decision_tree': return 'decision-tree';
+    case 'general_linear_model': return 'general-linear-model';
+    case 'repeated_measures': return 'repeated-measures';
+    case 'survival_analysis': return 'survival-analysis';
     default: return state.quantOutputView;
   }
 }
@@ -933,6 +942,21 @@ function describeQuantAnalysis(analysisKind, analysis = {}) {
         title: 'Decision tree',
         detail: `${analysis.targetField ?? 'target'} from ${(analysis.predictorFields ?? []).join(', ') || 'predictors'}`
       };
+    case 'general_linear_model':
+      return {
+        title: 'GLM/ANCOVA',
+        detail: `${analysis.dependentField ?? 'dependent'} by ${(analysis.factorFields ?? []).join(', ') || 'factors'} ${(analysis.covariateFields ?? []).join(', ') || ''}`.trim()
+      };
+    case 'repeated_measures':
+      return {
+        title: 'Repeated measures',
+        detail: `${(analysis.fields ?? []).join(', ') || 'selected measures'}`
+      };
+    case 'survival_analysis':
+      return {
+        title: 'Survival analysis',
+        detail: `${analysis.timeField ?? 'time'} / ${analysis.eventField ?? 'event'}`
+      };
     default:
       return {
         title: formatAnalysisKindLabel(analysisKind),
@@ -978,6 +1002,9 @@ function quantOutputTitle(view) {
     forecasting: 'Forecasting',
     'cluster-analysis': 'Cluster analysis',
     'decision-tree': 'Decision tree',
+    'general-linear-model': 'GLM/ANCOVA',
+    'repeated-measures': 'Repeated measures',
+    'survival-analysis': 'Survival analysis',
     'saved-analyses': 'Saved analyses'
   };
   return labels[view] ?? view;
@@ -1003,6 +1030,9 @@ function getAllCompiledReportViews() {
     'forecasting',
     'cluster-analysis',
     'decision-tree',
+    'general-linear-model',
+    'repeated-measures',
+    'survival-analysis',
     'saved-analyses'
   ];
 }
@@ -1025,6 +1055,9 @@ function getDefaultCommitteePackViews() {
     'forecasting',
     'cluster-analysis',
     'decision-tree',
+    'general-linear-model',
+    'repeated-measures',
+    'survival-analysis',
     'frequency'
   ].filter((view) => getAllCompiledReportViews().includes(view));
 }
@@ -2017,6 +2050,9 @@ async function loadSelectedProjectData() {
     state.forecastingResult = null;
     state.clusterAnalysisResult = null;
     state.decisionTreeResult = null;
+    state.generalLinearModelResult = null;
+    state.repeatedMeasuresResult = null;
+    state.survivalAnalysisResult = null;
     state.lastQuantAnalysis = null;
     state.selectedAnalysisWeightField = '';
     state.selectedMissingStrategy = 'available';
@@ -2125,6 +2161,9 @@ async function loadSelectedProjectData() {
   state.forecastingResult = null;
   state.clusterAnalysisResult = null;
   state.decisionTreeResult = null;
+  state.generalLinearModelResult = null;
+  state.repeatedMeasuresResult = null;
+  state.survivalAnalysisResult = null;
   state.cooccurrenceResult = null;
   state.matrixCodingResult = null;
   state.codeCodeMatrixResult = null;
@@ -2148,6 +2187,9 @@ async function loadSelectedProjectData() {
   state.forecastingResult = null;
   state.clusterAnalysisResult = null;
   state.decisionTreeResult = null;
+  state.generalLinearModelResult = null;
+  state.repeatedMeasuresResult = null;
+  state.survivalAnalysisResult = null;
   state.lastQuantAnalysis = null;
   state.activeSourceId = state.selectedSources.some((source) => source.id === state.activeSourceId)
     ? state.activeSourceId
@@ -2254,6 +2296,9 @@ function formatAnalysisKindLabel(kind) {
     case 'forecasting': return 'forecasting';
     case 'cluster_analysis': return 'cluster analysis';
     case 'decision_tree': return 'decision tree';
+    case 'general_linear_model': return 'GLM/ANCOVA';
+    case 'repeated_measures': return 'repeated measures';
+    case 'survival_analysis': return 'survival analysis';
     case 'crosstab': return 'crosstab';
     case 'custom_table': return 'custom table';
     case 'exact_test': return 'exact test';
@@ -2280,6 +2325,9 @@ function clearQuantResults() {
   state.forecastingResult = null;
   state.clusterAnalysisResult = null;
   state.decisionTreeResult = null;
+  state.generalLinearModelResult = null;
+  state.repeatedMeasuresResult = null;
+  state.survivalAnalysisResult = null;
   state.selectedCrosstab = null;
   state.selectedCrosstabError = '';
 }
@@ -2537,6 +2585,43 @@ async function runSavedAnalysisJob(savedJob) {
         maxDepth: analysis.maxDepth
       });
       state.decisionTreeResult = env.data.decisionTree;
+      break;
+    }
+    case 'general_linear_model': {
+      const env = await postJson(`${API_BASE}/general-linear-model`, {
+        projectId: state.selectedProjectId,
+        filters: state.selectedDatasetFilters,
+        recodes: state.selectedDatasetRecodes,
+        analysis: getAnalysisOptionsPayload(),
+        dependentField: analysis.dependentField,
+        factorFields: Array.isArray(analysis.factorFields) ? analysis.factorFields : [],
+        covariateFields: Array.isArray(analysis.covariateFields) ? analysis.covariateFields : []
+      });
+      state.generalLinearModelResult = env.data.generalLinearModel;
+      break;
+    }
+    case 'repeated_measures': {
+      const env = await postJson(`${API_BASE}/repeated-measures`, {
+        projectId: state.selectedProjectId,
+        filters: state.selectedDatasetFilters,
+        recodes: state.selectedDatasetRecodes,
+        analysis: getAnalysisOptionsPayload(),
+        fields: Array.isArray(analysis.fields) ? analysis.fields : []
+      });
+      state.repeatedMeasuresResult = env.data.repeatedMeasures;
+      break;
+    }
+    case 'survival_analysis': {
+      const env = await postJson(`${API_BASE}/survival-analysis`, {
+        projectId: state.selectedProjectId,
+        filters: state.selectedDatasetFilters,
+        recodes: state.selectedDatasetRecodes,
+        analysis: getAnalysisOptionsPayload(),
+        timeField: analysis.timeField,
+        eventField: analysis.eventField,
+        groupField: analysis.groupField
+      });
+      state.survivalAnalysisResult = env.data.survivalAnalysis;
       break;
     }
     default:
@@ -8131,6 +8216,277 @@ function renderDecisionTree() {
   });
 }
 
+function renderGeneralLinearModel() {
+  const dependentEl = document.getElementById('glm-dependent-field');
+  const factorsEl = document.getElementById('glm-factor-fields');
+  const covariatesEl = document.getElementById('glm-covariate-fields');
+  const runBtn = document.getElementById('run-general-linear-model-btn');
+  const resultEl = document.getElementById('general-linear-model-result');
+  if (!dependentEl || !factorsEl || !covariatesEl || !runBtn || !resultEl) return;
+
+  const options = getDatasetAnalysisFieldOptions();
+  const numericOptions = options.filter((option) => option.valueType === 'number');
+  const previousDependent = dependentEl.value;
+  const previousFactors = getSelectedValues(factorsEl);
+  const previousCovariates = getSelectedValues(covariatesEl);
+  dependentEl.innerHTML = numericOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`).join('');
+  dependentEl.value = numericOptions.some((option) => option.key === previousDependent) ? previousDependent : numericOptions[0]?.key ?? '';
+  factorsEl.innerHTML = options
+    .filter((option) => option.key !== dependentEl.value)
+    .map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${escapeHtml(option.valueType)})</option>`)
+    .join('');
+  covariatesEl.innerHTML = numericOptions
+    .filter((option) => option.key !== dependentEl.value)
+    .map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`)
+    .join('');
+  for (const option of factorsEl.options) option.selected = previousFactors.includes(option.value);
+  for (const option of covariatesEl.options) option.selected = previousCovariates.includes(option.value) && !getSelectedValues(factorsEl).includes(option.value);
+  if (getSelectedValues(factorsEl).length === 0 && getSelectedValues(covariatesEl).length === 0) {
+    const defaultFactor = [...factorsEl.options].find((option) => option.value !== dependentEl.value);
+    if (defaultFactor) defaultFactor.selected = true;
+  }
+  runBtn.disabled = !dependentEl.value || (getSelectedValues(factorsEl).length === 0 && getSelectedValues(covariatesEl).length === 0);
+
+  if (!state.generalLinearModelResult) {
+    resultEl.innerHTML = '<p>Choose a numeric dependent field plus factor or covariate fields, then run GLM.</p>';
+    return;
+  }
+
+  const result = state.generalLinearModelResult;
+  resultEl.innerHTML = buildOutputViewer({
+    eyebrow: 'GLM / ANCOVA',
+    title: `${result.dependentLabel} general linear model`,
+    summary: `${result.caseCount} usable row(s), R squared ${formatStatValue(result.metrics.rSquared, 5)}, omnibus F ${formatStatValue(result.metrics.fStatistic, 5)}.`,
+    metrics: [
+      { label: 'Rows', value: result.caseCount },
+      { label: 'Design columns', value: result.designColumnCount },
+      { label: 'R squared', value: formatStatValue(result.metrics.rSquared, 5) },
+      { label: 'Model p', value: formatStatValue(result.metrics.fPValue, 5) }
+    ],
+    sections: [
+      buildOutputSection(
+        'Model fit',
+        buildOutputTable(
+          ['Metric', 'Value'],
+          [
+            ['Model df', String(result.metrics.modelDf)],
+            ['Residual df', String(result.metrics.residualDf)],
+            ['SS model', formatStatValue(result.metrics.sumSquaresModel, 5)],
+            ['SS residual', formatStatValue(result.metrics.sumSquaresResidual, 5)],
+            ['Residual std. error', formatStatValue(result.metrics.residualStdError, 5)]
+          ]
+        )
+      ),
+      buildOutputSection(
+        'Coefficients',
+        buildOutputTable(
+          ['Term', 'Type', 'B', 'Std. error', 't', 'p', '95% CI'],
+          result.coefficients.map((coefficient) => [
+            escapeHtml(coefficient.label ?? coefficient.field),
+            escapeHtml(coefficient.termType),
+            formatStatValue(coefficient.coefficient, 6),
+            formatStatValue(coefficient.standardError, 6),
+            formatStatValue(coefficient.statistic, 5),
+            formatStatValue(coefficient.pValue, 5),
+            escapeHtml(formatConfidenceInterval(coefficient.confidenceInterval, 5))
+          ])
+        )
+      ),
+      buildOutputSection(
+        'Terms',
+        buildOutputTable(
+          ['Field', 'Type', 'Levels / baseline'],
+          result.terms.map((term) => [
+            escapeHtml(term.label),
+            escapeHtml(term.type),
+            escapeHtml(term.type === 'factor'
+              ? `${(term.levels ?? []).join(', ')}; baseline ${term.baseline ?? 'n/a'}`
+              : 'numeric covariate')
+          ])
+        )
+      ),
+      buildAssumptionsSection(result.assumptions),
+      result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
+    ].filter(Boolean)
+  });
+}
+
+function renderRepeatedMeasures() {
+  const fieldsEl = document.getElementById('repeated-measures-fields');
+  const runBtn = document.getElementById('run-repeated-measures-btn');
+  const resultEl = document.getElementById('repeated-measures-result');
+  if (!fieldsEl || !runBtn || !resultEl) return;
+  const numericOptions = getDatasetAnalysisFieldOptions().filter((option) => option.valueType === 'number');
+  const previousSelections = getSelectedValues(fieldsEl);
+  fieldsEl.innerHTML = numericOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`).join('');
+  for (const option of fieldsEl.options) option.selected = previousSelections.includes(option.value);
+  if (getSelectedValues(fieldsEl).length < 2) {
+    numericOptions.slice(0, Math.min(3, numericOptions.length)).forEach((option) => {
+      const target = [...fieldsEl.options].find((candidate) => candidate.value === option.key);
+      if (target) target.selected = true;
+    });
+  }
+  runBtn.disabled = numericOptions.length < 2;
+
+  if (!state.repeatedMeasuresResult) {
+    resultEl.innerHTML = '<p>Choose at least two numeric repeated measure fields, then run repeated measures.</p>';
+    return;
+  }
+
+  const result = state.repeatedMeasuresResult;
+  const meanItems = result.summaries.map((summary) => ({ label: summary.label, value: summary.mean }));
+  resultEl.innerHTML = buildOutputViewer({
+    eyebrow: 'Repeated measures',
+    title: `${result.measureCount} within-subject measure(s)`,
+    summary: `${result.subjectCount} complete subject row(s), omnibus F ${formatStatValue(result.anova?.fStatistic, 5)}.`,
+    metrics: [
+      { label: 'Subjects', value: result.subjectCount },
+      { label: 'Measures', value: result.measureCount },
+      { label: 'F', value: formatStatValue(result.anova?.fStatistic, 5) },
+      { label: 'p', value: formatStatValue(result.anova?.pValue, 5) }
+    ],
+    sections: [
+      buildOutputSection(
+        'Measure summaries',
+        buildOutputTable(
+          ['Measure', 'N', 'Mean', 'Std. dev.', 'Min', 'Max'],
+          result.summaries.map((summary) => [
+            escapeHtml(summary.label),
+            String(summary.count),
+            formatStatValue(summary.mean, 5),
+            formatStatValue(summary.stdDev, 5),
+            formatStatValue(summary.min, 5),
+            formatStatValue(summary.max, 5)
+          ])
+        )
+      ),
+      result.anova ? buildOutputSection(
+        'Within-subject omnibus test',
+        buildOutputTable(
+          ['Effect', 'SS', 'df', 'F', 'p', 'Partial eta squared'],
+          [[
+            'Condition',
+            formatStatValue(result.anova.ssCondition, 5),
+            `${result.anova.dfCondition}, ${result.anova.dfError}`,
+            formatStatValue(result.anova.fStatistic, 5),
+            formatStatValue(result.anova.pValue, 5),
+            formatStatValue(result.anova.partialEtaSquared, 5)
+          ]]
+        )
+      ) : '',
+      buildOutputSection(
+        'Pairwise differences',
+        buildOutputTable(
+          ['Comparison', 'Mean difference', 'Std. dev. diff.', 't', 'df', 'p', '95% CI'],
+          result.pairwiseComparisons.map((comparison) => [
+            `${escapeHtml(comparison.rightLabel)} - ${escapeHtml(comparison.leftLabel)}`,
+            formatStatValue(comparison.meanDifference, 5),
+            formatStatValue(comparison.stdDevDifference, 5),
+            formatStatValue(comparison.tStatistic, 5),
+            String(comparison.degreesOfFreedom),
+            formatStatValue(comparison.pValue, 5),
+            escapeHtml(formatConfidenceInterval(comparison.confidenceInterval, 5))
+          ])
+        )
+      ),
+      buildOutputSection(
+        'Profile plot direction',
+        `<div class="chart-grid">${buildChartCard('Condition means', buildSvgLineChart(meanItems, { color: '#d2b27a' }), 'Mean profile across selected repeated fields.')}</div>`
+      ),
+      buildAssumptionsSection(result.assumptions),
+      result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
+    ].filter(Boolean)
+  });
+}
+
+function renderSurvivalAnalysis() {
+  const timeEl = document.getElementById('survival-time-field');
+  const eventEl = document.getElementById('survival-event-field');
+  const groupEl = document.getElementById('survival-group-field');
+  const runBtn = document.getElementById('run-survival-analysis-btn');
+  const resultEl = document.getElementById('survival-analysis-result');
+  if (!timeEl || !eventEl || !groupEl || !runBtn || !resultEl) return;
+  const options = getDatasetAnalysisFieldOptions();
+  const previousTime = timeEl.value;
+  const previousEvent = eventEl.value;
+  const previousGroup = groupEl.value;
+  timeEl.innerHTML = options.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${escapeHtml(option.valueType)})</option>`).join('');
+  timeEl.value = options.some((option) => option.key === previousTime) ? previousTime : options[0]?.key ?? '';
+  eventEl.innerHTML = options
+    .filter((option) => option.key !== timeEl.value)
+    .map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${escapeHtml(option.valueType)})</option>`)
+    .join('');
+  eventEl.value = options.some((option) => option.key === previousEvent && option.key !== timeEl.value)
+    ? previousEvent
+    : options.find((option) => option.key !== timeEl.value)?.key ?? '';
+  groupEl.innerHTML = `<option value="">No grouping</option>${options
+    .filter((option) => option.key !== timeEl.value && option.key !== eventEl.value)
+    .map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${escapeHtml(option.valueType)})</option>`)
+    .join('')}`;
+  groupEl.value = options.some((option) => option.key === previousGroup && option.key !== timeEl.value && option.key !== eventEl.value) ? previousGroup : '';
+  runBtn.disabled = options.length < 2 || !timeEl.value || !eventEl.value;
+
+  if (!state.survivalAnalysisResult) {
+    resultEl.innerHTML = '<p>Choose time and event fields, then run Kaplan-Meier survival analysis.</p>';
+    return;
+  }
+
+  const result = state.survivalAnalysisResult;
+  const survivalCharts = result.groups.map((group) => {
+    const items = result.steps
+      .filter((step) => step.groupValue === group.groupValue)
+      .map((step) => ({ label: String(step.time), value: step.survival }));
+    return buildChartCard(
+      `${group.groupValue} survival`,
+      buildSvgLineChart(items, { color: '#8fb3ff' }),
+      'Kaplan-Meier survival estimate by observed time.'
+    );
+  }).join('');
+  resultEl.innerHTML = buildOutputViewer({
+    eyebrow: 'Survival analysis',
+    title: `${result.timeLabel} by ${result.eventLabel}`,
+    summary: `${result.caseCount} usable row(s) across ${result.groups.length} group(s).`,
+    metrics: [
+      { label: 'Rows', value: result.caseCount },
+      { label: 'Groups', value: result.groups.length },
+      { label: 'Events', value: result.groups.reduce((total, group) => total + group.eventCount, 0) },
+      { label: 'Censored', value: result.groups.reduce((total, group) => total + group.censoredCount, 0) }
+    ],
+    sections: [
+      buildOutputSection(
+        'Group summaries',
+        buildOutputTable(
+          ['Group', 'Rows', 'Events', 'Censored', 'Median survival', 'Last survival'],
+          result.groups.map((group) => [
+            escapeHtml(group.groupValue),
+            String(group.caseCount),
+            String(group.eventCount),
+            String(group.censoredCount),
+            formatStatValue(group.medianSurvival, 5),
+            formatStatValue(group.lastSurvival, 5)
+          ])
+        )
+      ),
+      buildOutputSection(
+        'Kaplan-Meier table',
+        buildOutputTable(
+          ['Group', 'Time', 'At risk', 'Events', 'Censored', 'Survival'],
+          result.steps.map((step) => [
+            escapeHtml(step.groupValue),
+            formatStatValue(step.time, 5),
+            String(step.atRisk),
+            String(step.events),
+            String(step.censored),
+            formatStatValue(step.survival, 5)
+          ])
+        )
+      ),
+      survivalCharts ? buildOutputSection('Survival curves', `<div class="chart-grid">${survivalCharts}</div>`) : '',
+      result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
+    ].filter(Boolean)
+  });
+}
+
 function renderCorrelation() {
   const xEl = document.getElementById('correlation-x-field');
   const yEl = document.getElementById('correlation-y-field');
@@ -9287,6 +9643,9 @@ function renderAll() {
   renderForecasting();
   renderClusterAnalysis();
   renderDecisionTree();
+  renderGeneralLinearModel();
+  renderRepeatedMeasures();
+  renderSurvivalAnalysis();
   renderRetrieval();
   renderSavedQualitativeQueries();
   renderTextSearch();
@@ -10753,6 +11112,95 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       targetField,
       predictorFields,
       maxDepth
+    });
+    renderAll();
+  });
+
+  document.getElementById('run-general-linear-model-btn')?.addEventListener('click', async () => {
+    if (!state.selectedProjectId) { alert('Select a project first.'); return; }
+    const dependentField = document.getElementById('glm-dependent-field')?.value;
+    const factorFields = getSelectedValues(document.getElementById('glm-factor-fields'));
+    const covariateFields = getSelectedValues(document.getElementById('glm-covariate-fields'))
+      .filter((field) => !factorFields.includes(field));
+    if (!dependentField || (factorFields.length === 0 && covariateFields.length === 0)) {
+      alert('Choose a dependent field and at least one factor or covariate.');
+      return;
+    }
+    if ([...factorFields, ...covariateFields].includes(dependentField)) {
+      alert('Dependent, factor, and covariate fields must be different.');
+      return;
+    }
+    const env = await postJson(`${API_BASE}/general-linear-model`, {
+      projectId: state.selectedProjectId,
+      filters: state.selectedDatasetFilters,
+      recodes: state.selectedDatasetRecodes,
+      analysis: getAnalysisOptionsPayload(),
+      dependentField,
+      factorFields,
+      covariateFields
+    });
+    state.generalLinearModelResult = env.data.generalLinearModel;
+    setLastQuantAnalysis('general_linear_model', {
+      filters: cloneJson(state.selectedDatasetFilters),
+      recodes: cloneJson(state.selectedDatasetRecodes),
+      analysisOptions: getAnalysisOptionsPayload(),
+      dependentField,
+      factorFields,
+      covariateFields
+    });
+    renderAll();
+  });
+
+  document.getElementById('run-repeated-measures-btn')?.addEventListener('click', async () => {
+    if (!state.selectedProjectId) { alert('Select a project first.'); return; }
+    const fields = getSelectedValues(document.getElementById('repeated-measures-fields'));
+    if (fields.length < 2) {
+      alert('Choose at least two repeated measure fields.');
+      return;
+    }
+    const env = await postJson(`${API_BASE}/repeated-measures`, {
+      projectId: state.selectedProjectId,
+      filters: state.selectedDatasetFilters,
+      recodes: state.selectedDatasetRecodes,
+      analysis: getAnalysisOptionsPayload(),
+      fields
+    });
+    state.repeatedMeasuresResult = env.data.repeatedMeasures;
+    setLastQuantAnalysis('repeated_measures', {
+      filters: cloneJson(state.selectedDatasetFilters),
+      recodes: cloneJson(state.selectedDatasetRecodes),
+      analysisOptions: getAnalysisOptionsPayload(),
+      fields
+    });
+    renderAll();
+  });
+
+  document.getElementById('run-survival-analysis-btn')?.addEventListener('click', async () => {
+    if (!state.selectedProjectId) { alert('Select a project first.'); return; }
+    const timeField = document.getElementById('survival-time-field')?.value;
+    const eventField = document.getElementById('survival-event-field')?.value;
+    const groupField = document.getElementById('survival-group-field')?.value || undefined;
+    if (!timeField || !eventField || timeField === eventField) {
+      alert('Choose different time and event fields.');
+      return;
+    }
+    const env = await postJson(`${API_BASE}/survival-analysis`, {
+      projectId: state.selectedProjectId,
+      filters: state.selectedDatasetFilters,
+      recodes: state.selectedDatasetRecodes,
+      analysis: getAnalysisOptionsPayload(),
+      timeField,
+      eventField,
+      groupField
+    });
+    state.survivalAnalysisResult = env.data.survivalAnalysis;
+    setLastQuantAnalysis('survival_analysis', {
+      filters: cloneJson(state.selectedDatasetFilters),
+      recodes: cloneJson(state.selectedDatasetRecodes),
+      analysisOptions: getAnalysisOptionsPayload(),
+      timeField,
+      eventField,
+      groupField
     });
     renderAll();
   });

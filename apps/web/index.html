@@ -1290,6 +1290,9 @@
           <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="forecast">Forecasting</button>
           <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="cluster">Cluster</button>
           <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="tree">Decision tree</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="glm">GLM/ANCOVA</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="repeated">Repeated measures</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="survival">Survival</button>
         </section>
 
         <section class="quantitative-output-desk workspace-section">
@@ -1323,6 +1326,9 @@
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="forecasting">Forecasting</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="cluster-analysis">Cluster analysis</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="decision-tree">Decision tree</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="general-linear-model">GLM/ANCOVA</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="repeated-measures">Repeated measures</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="survival-analysis">Survival analysis</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="saved-analyses">Saved analyses</button>
             </div>
             <div class="quant-output-history" style="margin-top:18px">
@@ -1451,6 +1457,15 @@
             </section>
             <section class="quant-output-panel" data-quant-output="decision-tree" hidden>
               <div id="decision-tree-result">Choose a target and predictors, then run a decision tree.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="general-linear-model" hidden>
+              <div id="general-linear-model-result">Choose a dependent variable plus factors/covariates, then run GLM.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="repeated-measures" hidden>
+              <div id="repeated-measures-result">Choose repeated numeric measure fields, then run repeated measures.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="survival-analysis" hidden>
+              <div id="survival-analysis-result">Choose time and event fields, then run Kaplan-Meier survival analysis.</div>
             </section>
             <section class="quant-output-panel" data-quant-output="saved-analyses" hidden>
               <div class="section-header">
@@ -2373,6 +2388,68 @@
               </label>
             </div>
             <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="glm">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">GLM / ANCOVA</h2>
+                <p class="small-muted" style="margin:0">Fit a numeric dependent variable with categorical factors and numeric covariates.</p>
+              </div>
+              <button id="run-general-linear-model-btn" type="button" class="small">Run GLM</button>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Dependent field</span>
+                <select id="glm-dependent-field"></select>
+              </label>
+              <label class="field">
+                <span>Factor fields</span>
+                <select id="glm-factor-fields" multiple size="8"></select>
+              </label>
+              <label class="field">
+                <span>Covariate fields</span>
+                <select id="glm-covariate-fields" multiple size="8"></select>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Factors are dummy-coded with a baseline level. Results open in the Output Viewer.</div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="repeated">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Repeated measures</h2>
+                <p class="small-muted" style="margin:0">Compare paired numeric measurements across time points or conditions.</p>
+              </div>
+              <button id="run-repeated-measures-btn" type="button" class="small">Run repeated measures</button>
+            </div>
+            <label class="field" style="margin-top:14px">
+              <span>Repeated measure fields</span>
+              <select id="repeated-measures-fields" multiple size="8"></select>
+            </label>
+            <div class="small-muted" style="margin-top:16px">Complete rows across the selected measures are included. Results open in the Output Viewer.</div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="survival">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Survival analysis</h2>
+                <p class="small-muted" style="margin:0">Build Kaplan-Meier survival tables from time and event status fields.</p>
+              </div>
+              <button id="run-survival-analysis-btn" type="button" class="small">Run survival analysis</button>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Time field</span>
+                <select id="survival-time-field"></select>
+              </label>
+              <label class="field">
+                <span>Event field</span>
+                <select id="survival-event-field"></select>
+              </label>
+              <label class="field">
+                <span>Group field optional</span>
+                <select id="survival-group-field"></select>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Event fields accept values like 1/0, true/false, yes/no, event/censored. Results open in the Output Viewer.</div>
           </article>
         </section>
 

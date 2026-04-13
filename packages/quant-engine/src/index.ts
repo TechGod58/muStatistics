@@ -338,6 +338,120 @@ export type DecisionTreeResult = {
   notes: string[];
 };
 
+export type GeneralLinearModelCoefficient = RegressionCoefficient & {
+  label: string;
+  termType: 'intercept' | 'covariate' | 'factor';
+  termField?: string;
+};
+
+export type GeneralLinearModelResult = {
+  dependentField: string;
+  dependentLabel: string;
+  factorFields: string[];
+  factorLabels: string[];
+  covariateFields: string[];
+  covariateLabels: string[];
+  caseCount: number;
+  designColumnCount: number;
+  coefficients: GeneralLinearModelCoefficient[];
+  metrics: {
+    rSquared: number | null;
+    adjustedRSquared: number | null;
+    residualStdError: number | null;
+    fStatistic: number | null;
+    fPValue: number | null;
+    modelDf: number;
+    residualDf: number;
+    sumSquaresModel: number | null;
+    sumSquaresResidual: number | null;
+    sumSquaresTotal: number | null;
+  };
+  terms: Array<{
+    field: string;
+    label: string;
+    type: 'factor' | 'covariate';
+    baseline?: string;
+    levels?: string[];
+  }>;
+  assumptions: AssumptionCheck[];
+  notes: string[];
+};
+
+export type RepeatedMeasureSummary = {
+  field: string;
+  label: string;
+  count: number;
+  mean: number;
+  stdDev: number | null;
+  min: number;
+  max: number;
+};
+
+export type RepeatedMeasurePairwise = {
+  leftField: string;
+  leftLabel: string;
+  rightField: string;
+  rightLabel: string;
+  count: number;
+  meanDifference: number;
+  stdDevDifference: number | null;
+  tStatistic: number | null;
+  degreesOfFreedom: number;
+  pValue: number | null;
+  confidenceInterval: ConfidenceInterval | null;
+};
+
+export type RepeatedMeasuresResult = {
+  fields: string[];
+  fieldLabels: string[];
+  subjectCount: number;
+  measureCount: number;
+  summaries: RepeatedMeasureSummary[];
+  pairwiseComparisons: RepeatedMeasurePairwise[];
+  anova: {
+    fStatistic: number | null;
+    pValue: number | null;
+    dfCondition: number;
+    dfError: number;
+    ssCondition: number;
+    ssError: number;
+    partialEtaSquared: number | null;
+  } | null;
+  assumptions: AssumptionCheck[];
+  notes: string[];
+};
+
+export type SurvivalStep = {
+  groupValue: string;
+  time: number;
+  atRisk: number;
+  events: number;
+  censored: number;
+  survival: number;
+};
+
+export type SurvivalGroupSummary = {
+  groupValue: string;
+  caseCount: number;
+  eventCount: number;
+  censoredCount: number;
+  medianSurvival: number | null;
+  lastSurvival: number;
+};
+
+export type SurvivalAnalysisResult = {
+  timeField: string;
+  timeLabel: string;
+  eventField: string;
+  eventLabel: string;
+  groupField: string | null;
+  groupLabel: string | null;
+  caseCount: number;
+  groups: SurvivalGroupSummary[];
+  steps: SurvivalStep[];
+  notes: string[];
+};
+
 export type DatasetFilterOperator =
   | 'equals'
   | 'not_equals'
@@ -2521,6 +2635,399 @@ export function analyzeDecisionTree(
     notes: [
       'Decision trees are first-pass classification trees using Gini impurity.',
       'The current output is intended for exploratory modeling and teaching, not audited production prediction.'
+    ]
+  };
+}
+
+function uniqueFormattedLevels(values: DatasetValue[]): string[] {
+  return [...new Set(values
+    .filter((value) => value !== null && value !== undefined)
+    .map((value) => formatValue(value)))]
+    .sort((left, right) => left.localeCompare(right));
+}
+
+export function analyzeGeneralLinearModel(
+  dataset: CaseDataset,
+  dependentFieldKey: string,
+  factorFields: string[] = [],
+  covariateFields: string[] = [],
+  options?: DatasetAnalysisOptions
+): GeneralLinearModelResult {
+  const normalizedFactors = [...new Set(factorFields.map((field) => field.trim()).filter(Boolean))]
+    .filter((field) => field !== dependentFieldKey);
+  const normalizedCovariates = [...new Set(covariateFields.map((field) => field.trim()).filter(Boolean))]
+    .filter((field) => field !== dependentFieldKey && !normalizedFactors.includes(field));
+  if (normalizedFactors.length === 0 && normalizedCovariates.length === 0) {
+    throw new Error('Choose at least one factor or covariate for GLM.');
+  }
+
+  const dependentField = requireDatasetField(dataset, dependentFieldKey, 'GLM dependent');
+  const factorMeta = normalizedFactors.map((field) => requireDatasetField(dataset, field, 'GLM factor'));
+  const covariateMeta = normalizedCovariates.map((field) => requireDatasetField(dataset, field, 'GLM covariate'));
+  const requiredFields = [dependentFieldKey, ...normalizedFactors, ...normalizedCovariates];
+  const rows = analysisRows(dataset, requiredFields, options)
+    .map(({ row, weight }) => ({
+      y: row[dependentFieldKey],
+      factorValues: Object.fromEntries(normalizedFactors.map((field) => [field, row[field] ?? null])) as Record<string, DatasetValue>,
+      covariateValues: Object.fromEntries(normalizedCovariates.map((field) => [field, row[field] ?? null])) as Record<string, DatasetValue>,
+      weight
+    }))
+    .filter((entry): entry is {
+      y: number;
+      factorValues: Record<string, DatasetValue>;
+      covariateValues: Record<string, DatasetValue>;
+      weight: number;
+    } =>
+      typeof entry.y === 'number'
+      && entry.weight > 0
+      && normalizedFactors.every((field) => entry.factorValues[field] !== null && entry.factorValues[field] !== undefined)
+      && normalizedCovariates.every((field) => typeof entry.covariateValues[field] === 'number')
+    );
+
+  const factorLevels = new Map<string, string[]>();
+  for (const field of normalizedFactors) {
+    const levels = uniqueFormattedLevels(rows.map((entry) => entry.factorValues[field] ?? null));
+    if (levels.length < 2) {
+      throw new Error(`GLM factor "${field}" needs at least two observed levels.`);
+    }
+    factorLevels.set(field, levels);
+  }
+
+  const columns: Array<{
+    field: string;
+    label: string;
+    termType: 'intercept' | 'covariate' | 'factor';
+    value: (entry: typeof rows[number]) => number;
+    termField?: string;
+  }> = [{
+    field: '(Intercept)',
+    label: 'Intercept',
+    termType: 'intercept',
+    value: () => 1
+  }];
+
+  for (const field of normalizedCovariates) {
+    const meta = covariateMeta.find((candidate) => candidate.key === field);
+    columns.push({
+      field,
+      label: meta?.label ?? field,
+      termType: 'covariate',
+      termField: field,
+      value: (entry) => Number(entry.covariateValues[field])
+    });
+  }
+
+  for (const field of normalizedFactors) {
+    const meta = factorMeta.find((candidate) => candidate.key === field);
+    const levels = factorLevels.get(field) ?? [];
+    const baseline = levels[0]!;
+    for (const level of levels.slice(1)) {
+      columns.push({
+        field: `${field}:${level}`,
+        label: `${meta?.label ?? field} = ${level}`,
+        termType: 'factor',
+        termField: field,
+        value: (entry) => formatValue(entry.factorValues[field] ?? null) === level ? 1 : 0
+      });
+    }
+    if (levels.length === 1 && baseline) {
+      // Kept for readability if a caller inspects the terms object after validation changes.
+    }
+  }
+
+  if (rows.length <= columns.length) {
+    throw new Error('GLM requires more usable rows than design columns.');
+  }
+
+  const xMatrix = rows.map((entry) => columns.map((column) => column.value(entry)));
+  const yVector = rows.map((entry) => entry.y);
+  const weights = rows.map((entry) => entry.weight);
+  const xtwx = Array.from({ length: columns.length }, () => Array.from({ length: columns.length }, () => 0));
+  const xtwy = Array.from({ length: columns.length }, () => 0);
+  for (let rowIndex = 0; rowIndex < xMatrix.length; rowIndex += 1) {
+    const vector = xMatrix[rowIndex]!;
+    const y = yVector[rowIndex]!;
+    const weight = weights[rowIndex]!;
+    for (let i = 0; i < vector.length; i += 1) {
+      xtwy[i] += vector[i]! * y * weight;
+      for (let j = 0; j < vector.length; j += 1) {
+        xtwx[i]![j] += vector[i]! * vector[j]! * weight;
+      }
+    }
+  }
+
+  const coefficients = solveLinearSystem(xtwx, xtwy);
+  const predictions = xMatrix.map((vector) => coefficients.reduce((total, coefficient, index) => total + (coefficient * vector[index]!), 0));
+  const weightedCaseCount = weights.reduce((total, value) => total + value, 0);
+  const yMean = yVector.reduce((total, value, index) => total + (value * weights[index]!), 0) / weightedCaseCount;
+  const ssTotal = yVector.reduce((total, value, index) => total + (weights[index]! * ((value - yMean) ** 2)), 0);
+  const ssResidual = yVector.reduce((total, value, index) => total + (weights[index]! * ((value - predictions[index]!) ** 2)), 0);
+  const ssModel = Math.max(0, ssTotal - ssResidual);
+  const modelDf = Math.max(0, columns.length - 1);
+  const residualDf = Math.max(0, rows.length - columns.length);
+  const meanSquareResidual = residualDf > 0 ? ssResidual / residualDf : null;
+  const meanSquareModel = modelDf > 0 ? ssModel / modelDf : null;
+  const fStatistic = meanSquareModel !== null && meanSquareResidual !== null && meanSquareResidual > 0
+    ? meanSquareModel / meanSquareResidual
+    : null;
+  const rSquared = ssTotal === 0 ? 1 : 1 - (ssResidual / ssTotal);
+  const adjustedRSquared = residualDf > 0 && rows.length > 1
+    ? 1 - ((1 - rSquared) * ((rows.length - 1) / residualDf))
+    : null;
+  const covarianceMatrix = meanSquareResidual === null ? null : invertMatrix(xtwx).map((row) => row.map((value) => value * meanSquareResidual));
+
+  return {
+    dependentField: dependentField.key,
+    dependentLabel: dependentField.label,
+    factorFields: normalizedFactors,
+    factorLabels: factorMeta.map((field) => field.label),
+    covariateFields: normalizedCovariates,
+    covariateLabels: covariateMeta.map((field) => field.label),
+    caseCount: rows.length,
+    designColumnCount: columns.length,
+    coefficients: coefficients.map((coefficient, index) => {
+      const column = columns[index]!;
+      const standardError = covarianceMatrix ? Math.sqrt(Math.max(0, covarianceMatrix[index]![index]!)) : null;
+      const statistic = standardError && standardError > 0 ? coefficient / standardError : null;
+      const pValue = statistic === null ? null : studentTPValue(statistic, residualDf);
+      return {
+        field: column.field,
+        label: column.label,
+        termType: column.termType,
+        termField: column.termField,
+        coefficient,
+        standardError,
+        statistic,
+        pValue,
+        confidenceInterval: standardError === null ? null : confidenceInterval95(coefficient, standardError, residualDf),
+        oddsRatio: null
+      };
+    }),
+    metrics: {
+      rSquared,
+      adjustedRSquared,
+      residualStdError: meanSquareResidual === null ? null : Math.sqrt(meanSquareResidual),
+      fStatistic,
+      fPValue: fStatistic === null || modelDf <= 0 || residualDf <= 0 ? null : fDistributionPValue(fStatistic, modelDf, residualDf),
+      modelDf,
+      residualDf,
+      sumSquaresModel: ssModel,
+      sumSquaresResidual: ssResidual,
+      sumSquaresTotal: ssTotal
+    },
+    terms: [
+      ...normalizedCovariates.map((field) => ({
+        field,
+        label: covariateMeta.find((candidate) => candidate.key === field)?.label ?? field,
+        type: 'covariate' as const
+      })),
+      ...normalizedFactors.map((field) => {
+        const levels = factorLevels.get(field) ?? [];
+        return {
+          field,
+          label: factorMeta.find((candidate) => candidate.key === field)?.label ?? field,
+          type: 'factor' as const,
+          baseline: levels[0],
+          levels
+        };
+      })
+    ],
+    assumptions: [
+      buildAssumptionCheck('sample_size', 'Sample size', rows.length > columns.length ? 'pass' : 'fail', rows.length, 'GLM requires more usable rows than design columns.'),
+      buildAssumptionCheck('design_rank', 'Design matrix rank', 'warn', columns.length, 'Categorical factors are dummy-coded with the first sorted level as the baseline.')
+    ],
+    notes: [
+      'GLM/ANCOVA is a first-pass weighted least-squares implementation with categorical dummy coding.',
+      'Use the coefficient table and omnibus F statistic as exploratory output until the full SPSS GLM workflow is expanded.'
+    ]
+  };
+}
+
+export function analyzeRepeatedMeasures(
+  dataset: CaseDataset,
+  fields: string[],
+  options?: DatasetAnalysisOptions
+): RepeatedMeasuresResult {
+  const normalizedFields = [...new Set(fields.map((field) => field.trim()).filter(Boolean))];
+  if (normalizedFields.length < 2) {
+    throw new Error('Repeated-measures analysis requires at least two numeric measure fields.');
+  }
+  const meta = normalizedFields.map((field) => requireDatasetField(dataset, field, 'repeated-measures'));
+  const rows = analysisRows(dataset, normalizedFields, options)
+    .map(({ row }) => normalizedFields.map((field) => row[field]))
+    .filter((values): values is number[] => values.every((value) => typeof value === 'number'));
+  if (rows.length < 2) {
+    throw new Error('Repeated-measures analysis requires at least two complete cases.');
+  }
+
+  const measureCount = normalizedFields.length;
+  const summaries = normalizedFields.map((field, index) => {
+    const values = rows.map((row) => row[index]!);
+    return {
+      field,
+      label: meta[index]!.label,
+      count: values.length,
+      mean: values.reduce((total, value) => total + value, 0) / values.length,
+      stdDev: sampleStdDev(values),
+      min: Math.min(...values),
+      max: Math.max(...values)
+    };
+  });
+
+  const pairwiseComparisons: RepeatedMeasurePairwise[] = [];
+  for (let left = 0; left < measureCount; left += 1) {
+    for (let right = left + 1; right < measureCount; right += 1) {
+      const differences = rows.map((row) => row[right]! - row[left]!);
+      const meanDifference = differences.reduce((total, value) => total + value, 0) / differences.length;
+      const stdDevDifference = sampleStdDev(differences);
+      const df = differences.length - 1;
+      const standardError = stdDevDifference === null ? null : stdDevDifference / Math.sqrt(differences.length);
+      const tStatistic = standardError && standardError > 0 ? meanDifference / standardError : null;
+      pairwiseComparisons.push({
+        leftField: normalizedFields[left]!,
+        leftLabel: meta[left]!.label,
+        rightField: normalizedFields[right]!,
+        rightLabel: meta[right]!.label,
+        count: differences.length,
+        meanDifference,
+        stdDevDifference,
+        tStatistic,
+        degreesOfFreedom: df,
+        pValue: tStatistic === null ? null : studentTPValue(tStatistic, df),
+        confidenceInterval: standardError === null ? null : confidenceInterval95(meanDifference, standardError, df)
+      });
+    }
+  }
+
+  const allValues = rows.flat();
+  const grandMean = allValues.reduce((total, value) => total + value, 0) / allValues.length;
+  const subjectMeans = rows.map((row) => row.reduce((total, value) => total + value, 0) / row.length);
+  const conditionMeans = summaries.map((summary) => summary.mean);
+  const ssTotal = rows.reduce((total, row) => total + row.reduce((rowTotal, value) => rowTotal + ((value - grandMean) ** 2), 0), 0);
+  const ssSubjects = subjectMeans.reduce((total, mean) => total + (measureCount * ((mean - grandMean) ** 2)), 0);
+  const ssCondition = conditionMeans.reduce((total, mean) => total + (rows.length * ((mean - grandMean) ** 2)), 0);
+  const ssError = Math.max(0, ssTotal - ssSubjects - ssCondition);
+  const dfCondition = measureCount - 1;
+  const dfError = (rows.length - 1) * (measureCount - 1);
+  const msCondition = dfCondition > 0 ? ssCondition / dfCondition : null;
+  const msError = dfError > 0 ? ssError / dfError : null;
+  const fStatistic = msCondition !== null && msError !== null && msError > 0 ? msCondition / msError : null;
+
+  return {
+    fields: normalizedFields,
+    fieldLabels: meta.map((field) => field.label),
+    subjectCount: rows.length,
+    measureCount,
+    summaries,
+    pairwiseComparisons,
+    anova: {
+      fStatistic,
+      pValue: fStatistic === null ? null : fDistributionPValue(fStatistic, dfCondition, dfError),
+      dfCondition,
+      dfError,
+      ssCondition,
+      ssError,
+      partialEtaSquared: (ssCondition + ssError) > 0 ? ssCondition / (ssCondition + ssError) : null
+    },
+    assumptions: [
+      buildAssumptionCheck('complete_cases', 'Complete repeated cases', rows.length >= 2 ? 'pass' : 'fail', rows.length, 'Only rows with all selected repeated measures are included.'),
+      buildAssumptionCheck('sphericity', 'Sphericity', 'warn', null, 'Mauchly/sphericity correction is not yet implemented; interpret omnibus F cautiously.')
+    ],
+    notes: [
+      'Repeated-measures output uses complete cases across the selected measure fields.',
+      'Pairwise rows are paired t-test style differences; omnibus output is a first-pass repeated-measures ANOVA summary.'
+    ]
+  };
+}
+
+function isSurvivalEvent(value: DatasetValue): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return false;
+    if (['1', 'true', 'yes', 'y', 'event', 'dead', 'death', 'complete', 'completed', 'failed'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'n', 'censored', 'alive', 'withdrawn'].includes(normalized)) return false;
+  }
+  return false;
+}
+
+export function analyzeSurvivalAnalysis(
+  dataset: CaseDataset,
+  timeFieldKey: string,
+  eventFieldKey: string,
+  groupFieldKey?: string,
+  options?: DatasetAnalysisOptions
+): SurvivalAnalysisResult {
+  if (timeFieldKey === eventFieldKey) {
+    throw new Error('Choose different time and event fields for survival analysis.');
+  }
+  const timeField = requireDatasetField(dataset, timeFieldKey, 'survival time');
+  const eventField = requireDatasetField(dataset, eventFieldKey, 'survival event');
+  const normalizedGroupField = typeof groupFieldKey === 'string' && groupFieldKey.trim() && groupFieldKey !== timeFieldKey && groupFieldKey !== eventFieldKey
+    ? groupFieldKey.trim()
+    : '';
+  const groupField = normalizedGroupField ? requireDatasetField(dataset, normalizedGroupField, 'survival group') : null;
+  const requiredFields = [timeFieldKey, eventFieldKey, normalizedGroupField].filter(Boolean);
+  const rows = analysisRows(dataset, requiredFields, options)
+    .map(({ row }, index) => ({
+      time: parseTimeValue(row[timeFieldKey] ?? null, index),
+      event: isSurvivalEvent(row[eventFieldKey] ?? null),
+      groupValue: groupField ? formatValue(row[normalizedGroupField] ?? null) : 'All cases'
+    }))
+    .filter((entry): entry is { time: number; event: boolean; groupValue: string } =>
+      entry.time !== null && Number.isFinite(entry.time) && entry.time >= 0 && Boolean(entry.groupValue)
+    );
+
+  if (rows.length < 2) {
+    throw new Error('Kaplan-Meier survival analysis requires at least two usable time/event rows.');
+  }
+
+  const groupValues = [...new Set(rows.map((row) => row.groupValue))].sort((left, right) => left.localeCompare(right));
+  const steps: SurvivalStep[] = [];
+  const groups: SurvivalGroupSummary[] = [];
+  for (const groupValue of groupValues) {
+    const groupRows = rows.filter((row) => row.groupValue === groupValue).sort((left, right) => left.time - right.time);
+    const times = [...new Set(groupRows.map((row) => row.time))].sort((left, right) => left - right);
+    let survival = 1;
+    let medianSurvival: number | null = null;
+    for (const time of times) {
+      const atRisk = groupRows.filter((row) => row.time >= time).length;
+      const events = groupRows.filter((row) => row.time === time && row.event).length;
+      const censored = groupRows.filter((row) => row.time === time && !row.event).length;
+      if (atRisk > 0 && events > 0) {
+        survival *= (1 - (events / atRisk));
+      }
+      if (medianSurvival === null && survival <= 0.5) {
+        medianSurvival = time;
+      }
+      steps.push({ groupValue, time, atRisk, events, censored, survival });
+    }
+    const eventCount = groupRows.filter((row) => row.event).length;
+    groups.push({
+      groupValue,
+      caseCount: groupRows.length,
+      eventCount,
+      censoredCount: groupRows.length - eventCount,
+      medianSurvival,
+      lastSurvival: survival
+    });
+  }
+
+  return {
+    timeField: timeField.key,
+    timeLabel: timeField.label,
+    eventField: eventField.key,
+    eventLabel: eventField.label,
+    groupField: groupField?.key ?? null,
+    groupLabel: groupField?.label ?? null,
+    caseCount: rows.length,
+    groups,
+    steps,
+    notes: [
+      'Survival output uses Kaplan-Meier product-limit estimates.',
+      'Event values are treated as true for 1/true/yes/event/death style values and false for 0/false/no/censored/alive style values.',
+      'Log-rank tests and Cox regression are not included in this first-pass batch.'
     ]
   };
 }

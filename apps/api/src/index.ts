@@ -31,7 +31,7 @@ import {
 } from '@mu/auth';
 import { buildEvidenceSummaryPrompt, scoreEvidenceCoverage } from '@mu/ai';
 import { buildCodeByCaseView, buildCodeClusters, buildCodeCodeMatrix, buildCodeCooccurrence, buildCodeHierarchy, buildCodingComparison, buildCompoundQuery, buildConceptMap, buildFrameworkMatrix, buildInterRaterSummary, buildMapVisualization, buildMatrixCoding, buildPatternAutocode, buildQualitativeQueryReport, buildSentimentAnalysis, buildTextSearch, buildWordCloud, buildWordFrequency, retrieveEvidence, buildEvidenceExport } from '@mu/qual-engine';
-import { analyzeBootstrap, analyzeClusterAnalysis, analyzeCompareMeans, analyzeCorrelation, analyzeCrosstab, analyzeDecisionTree, analyzeExactTest, analyzeFactorAnalysis, analyzeForecast, analyzeMissingValues, analyzeNonparametricComparison, analyzePairedTTest, analyzeRegression, analyzeReliability, analyzeTTest, buildCaseDataset, buildCustomTable, buildImputationPlan, describeDataset, transformDataset } from '@mu/quant-engine';
+import { analyzeBootstrap, analyzeClusterAnalysis, analyzeCompareMeans, analyzeCorrelation, analyzeCrosstab, analyzeDecisionTree, analyzeExactTest, analyzeFactorAnalysis, analyzeForecast, analyzeGeneralLinearModel, analyzeMissingValues, analyzeNonparametricComparison, analyzePairedTTest, analyzeRegression, analyzeReliability, analyzeRepeatedMeasures, analyzeSurvivalAnalysis, analyzeTTest, buildCaseDataset, buildCustomTable, buildImputationPlan, describeDataset, transformDataset } from '@mu/quant-engine';
 import { fail, ok } from '@mu/shared-types';
 import { deleteProjectArtifacts, ensureDirectory, listProjectArtifacts, pruneProjectArtifacts, readStoredArtifact, resolveStorageRoot, writeProjectArtifact, writeProjectArtifactBytes } from '@mu/storage';
 import { formatAuditActionLabel } from '@mu/ui';
@@ -6532,6 +6532,116 @@ server.post('/decision-tree', async (request, reply) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to run decision tree.';
+    return reply.status(400).send(fail('INVALID', message));
+  }
+});
+
+server.post('/general-linear-model', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    filters: unknown[];
+    recodes: unknown[];
+    analysis: unknown;
+    dependentField: string;
+    factorFields: string[];
+    covariateFields: string[];
+  }>;
+  const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
+  const dependentField = typeof body.dependentField === 'string' && body.dependentField.trim() ? body.dependentField.trim() : undefined;
+  const factorFields = Array.isArray(body.factorFields) ? body.factorFields.map((field) => String(field ?? '').trim()).filter(Boolean) : [];
+  const covariateFields = Array.isArray(body.covariateFields) ? body.covariateFields.map((field) => String(field ?? '').trim()).filter(Boolean) : [];
+  if (!projectId || !dependentField || (factorFields.length === 0 && covariateFields.length === 0)) {
+    return reply.status(400).send(fail('INVALID', 'projectId, dependentField, and at least one factor or covariate are required.'));
+  }
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+
+  try {
+    const analysis = parseDatasetAnalysisOptions(body.analysis);
+    const base = await buildProjectDatasetPayload(projectId);
+    const dataset = transformDataset(base.dataset, {
+      filters: parseDatasetFilters(body.filters),
+      recodes: parseDatasetRecodes(body.recodes),
+      analysis
+    });
+    return ok({
+      generalLinearModel: analyzeGeneralLinearModel(dataset, dependentField, factorFields, covariateFields, analysis)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to run GLM.';
+    return reply.status(400).send(fail('INVALID', message));
+  }
+});
+
+server.post('/repeated-measures', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    filters: unknown[];
+    recodes: unknown[];
+    analysis: unknown;
+    fields: string[];
+  }>;
+  const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
+  const fields = Array.isArray(body.fields) ? body.fields.map((field) => String(field ?? '').trim()).filter(Boolean) : [];
+  if (!projectId || fields.length < 2) {
+    return reply.status(400).send(fail('INVALID', 'projectId and at least two repeated measure fields are required.'));
+  }
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+
+  try {
+    const analysis = parseDatasetAnalysisOptions(body.analysis);
+    const base = await buildProjectDatasetPayload(projectId);
+    const dataset = transformDataset(base.dataset, {
+      filters: parseDatasetFilters(body.filters),
+      recodes: parseDatasetRecodes(body.recodes),
+      analysis
+    });
+    return ok({
+      repeatedMeasures: analyzeRepeatedMeasures(dataset, fields, analysis)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to run repeated-measures analysis.';
+    return reply.status(400).send(fail('INVALID', message));
+  }
+});
+
+server.post('/survival-analysis', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    filters: unknown[];
+    recodes: unknown[];
+    analysis: unknown;
+    timeField: string;
+    eventField: string;
+    groupField: string;
+  }>;
+  const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
+  const timeField = typeof body.timeField === 'string' && body.timeField.trim() ? body.timeField.trim() : undefined;
+  const eventField = typeof body.eventField === 'string' && body.eventField.trim() ? body.eventField.trim() : undefined;
+  const groupField = typeof body.groupField === 'string' && body.groupField.trim() ? body.groupField.trim() : undefined;
+  if (!projectId || !timeField || !eventField) {
+    return reply.status(400).send(fail('INVALID', 'projectId, timeField, and eventField are required.'));
+  }
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+
+  try {
+    const analysis = parseDatasetAnalysisOptions(body.analysis);
+    const base = await buildProjectDatasetPayload(projectId);
+    const dataset = transformDataset(base.dataset, {
+      filters: parseDatasetFilters(body.filters),
+      recodes: parseDatasetRecodes(body.recodes),
+      analysis
+    });
+    return ok({
+      survivalAnalysis: analyzeSurvivalAnalysis(dataset, timeField, eventField, groupField, analysis)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to run survival analysis.';
     return reply.status(400).send(fail('INVALID', message));
   }
 });
