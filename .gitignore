@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+**/dist/
+.vite/
+coverage/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local databases, runtime state, and user/project data
+apps/api/data/
+data/
+data-portable-test/
+runtime/
+.logs/
+apps/api/-
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated portable bundles
+portable/
+apps/api/portable/
+
+# Logs and OS/editor noise
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Keep lockfiles tracked for reproducible installs.
+!pnpm-lock.yaml

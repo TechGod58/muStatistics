@@ -1,0 +1,2872 @@
+const SYSTEM_FIELDS = [
+    { key: 'case_id', label: 'Case ID', source: 'system', valueType: 'string' },
+    { key: 'case_label', label: 'Case Label', source: 'system', valueType: 'string' }
+];
+function normalizeFieldKey(label) {
+    const normalized = label
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    return normalized || 'field';
+}
+function allocateFieldKey(baseLabel, used, fallbackPrefix) {
+    const base = normalizeFieldKey(baseLabel) || fallbackPrefix;
+    let key = base;
+    let counter = 2;
+    while (used.has(key)) {
+        key = `${base}_${counter++}`;
+    }
+    used.add(key);
+    return key;
+}
+function inferValueType(values) {
+    const kinds = new Set(values.filter((value) => value !== null).map((value) => typeof value));
+    if (kinds.size === 0)
+        return 'null';
+    if (kinds.size > 1)
+        return 'mixed';
+    const [kind] = [...kinds];
+    if (kind === 'string' || kind === 'number' || kind === 'boolean')
+        return kind;
+    return 'mixed';
+}
+function formatValue(value) {
+    if (value === null)
+        return 'Missing';
+    if (typeof value === 'boolean')
+        return value ? 'true' : 'false';
+    return String(value);
+}
+function aggregateSourceAttributeValues(values) {
+    if (values.length === 0)
+        return null;
+    const distinct = new Map(values.map((value) => [JSON.stringify(value), value]));
+    if (distinct.size === 1) {
+        return distinct.values().next().value;
+    }
+    return [...distinct.values()].map((value) => formatValue(value)).join(' | ');
+}
+function materializeDerivedCodeValue(variable, supportCount) {
+    if (variable.kind === 'binary')
+        return supportCount > 0 ? 1 : 0;
+    if (variable.kind === 'continuous')
+        return supportCount;
+    if (variable.kind === 'categorical')
+        return supportCount === 0 ? 'none' : supportCount === 1 ? 'single' : 'multiple';
+    return supportCount > 0 ? 'present' : null;
+}
+function getDerivedVariableValueType(variable) {
+    if (variable.kind === 'binary' || variable.kind === 'continuous')
+        return 'number';
+    if (variable.kind === 'categorical' || variable.kind === 'text')
+        return 'string';
+    return 'null';
+}
+export function buildCaseDataset(input) {
+    const usedKeys = new Set(SYSTEM_FIELDS.map((field) => field.key));
+    const notes = [];
+    const fields = [...SYSTEM_FIELDS];
+    const caseAttributeNames = [...new Set(input.attributes
+            .filter((attribute) => attribute.targetType === 'case')
+            .map((attribute) => attribute.name))].sort((left, right) => left.localeCompare(right));
+    const sourceAttributeNames = [...new Set(input.attributes
+            .filter((attribute) => attribute.targetType === 'source')
+            .map((attribute) => attribute.name))].sort((left, right) => left.localeCompare(right));
+    const supportedVariables = input.variables.filter((variable) => variable.sourceKind === 'derived_code'
+        && (variable.kind === 'binary' || variable.kind === 'continuous' || variable.kind === 'categorical'));
+    const unsupportedVariables = input.variables.filter((variable) => !(variable.sourceKind === 'derived_code'
+        && (variable.kind === 'binary' || variable.kind === 'continuous' || variable.kind === 'categorical')));
+    for (const variable of unsupportedVariables) {
+        notes.push({
+            level: 'info',
+            message: `${variable.label} is a ${variable.kind} ${variable.sourceKind} variable and is not yet materialized into the case-level dataset.`
+        });
+    }
+    const caseAttributeKeys = new Map();
+    for (const name of caseAttributeNames) {
+        const key = allocateFieldKey(name, usedKeys, 'case_attribute');
+        caseAttributeKeys.set(name, key);
+        fields.push({ key, label: name, source: 'attribute', valueType: 'null' });
+    }
+    const sourceAttributeKeys = new Map();
+    for (const name of sourceAttributeNames) {
+        const key = allocateFieldKey(`${name}_source`, usedKeys, 'source_attribute');
+        sourceAttributeKeys.set(name, key);
+        fields.push({ key, label: `${name} (source)`, source: 'attribute', valueType: 'null' });
+    }
+    const variableKeys = new Map();
+    for (const variable of supportedVariables) {
+        const key = allocateFieldKey(variable.name, usedKeys, 'variable');
+        variableKeys.set(variable.id, key);
+        fields.push({ key, label: variable.label, source: 'variable', valueType: getDerivedVariableValueType(variable) });
+    }
+    const caseAttributesByCase = new Map();
+    const sourceAttributesBySource = new Map();
+    for (const attribute of input.attributes) {
+        if (attribute.targetType === 'case') {
+            const byName = caseAttributesByCase.get(attribute.targetId) ?? new Map();
+            byName.set(attribute.name, attribute.value);
+            caseAttributesByCase.set(attribute.targetId, byName);
+        }
+        if (attribute.targetType === 'source') {
+            const byName = sourceAttributesBySource.get(attribute.targetId) ?? new Map();
+            byName.set(attribute.name, attribute.value);
+            sourceAttributesBySource.set(attribute.targetId, byName);
+        }
+    }
+    const traceLinkLookup = new Map(input.traceLinks.map((traceLink) => [
+        `${traceLink.variableId}::${traceLink.caseId}`,
+        traceLink.supportingCodeApplicationIds?.length ?? 0
+    ]));
+    const rows = input.cases.map((caseEntity) => {
+        const row = {
+            case_id: caseEntity.id,
+            case_label: caseEntity.label
+        };
+        const caseAttributes = caseAttributesByCase.get(caseEntity.id) ?? new Map();
+        for (const [name, key] of caseAttributeKeys.entries()) {
+            row[key] = caseAttributes.get(name) ?? null;
+        }
+        for (const [name, key] of sourceAttributeKeys.entries()) {
+            const values = caseEntity.sourceIds
+                .map((sourceId) => sourceAttributesBySource.get(sourceId)?.get(name))
+                .filter((value) => value !== undefined);
+            row[key] = aggregateSourceAttributeValues(values);
+        }
+        for (const variable of supportedVariables) {
+            const key = variableKeys.get(variable.id);
+            if (!key)
+                continue;
+            const supportCount = traceLinkLookup.get(`${variable.id}::${caseEntity.id}`) ?? 0;
+            row[key] = materializeDerivedCodeValue(variable, supportCount);
+        }
+        return row;
+    });
+    const fieldValueTypes = new Map();
+    for (const field of fields) {
+        fieldValueTypes.set(field.key, inferValueType(rows.map((row) => row[field.key] ?? null)));
+    }
+    return {
+        caseCount: input.cases.length,
+        fields: fields.map((field) => ({
+            ...field,
+            valueType: fieldValueTypes.get(field.key) ?? field.valueType
+        })),
+        rows,
+        notes
+    };
+}
+export function countWhere(rows, field, value) {
+    return rows.filter((row) => row[field] === value).length;
+}
+export function proportionWhere(rows, field, value) {
+    if (rows.length === 0)
+        return 0;
+    return countWhere(rows, field, value) / rows.length;
+}
+function summarizeNumeric(values) {
+    if (values.length === 0)
+        return null;
+    const sum = values.reduce((total, value) => total + value, 0);
+    return {
+        mean: sum / values.length,
+        min: Math.min(...values),
+        max: Math.max(...values),
+        stdDev: sampleStdDev(values)
+    };
+}
+function sampleStdDev(values) {
+    if (values.length < 2)
+        return null;
+    const mean = values.reduce((total, value) => total + value, 0) / values.length;
+    const variance = values.reduce((total, value) => total + ((value - mean) ** 2), 0) / (values.length - 1);
+    return Math.sqrt(variance);
+}
+function normalizeAnalysisOptions(options) {
+    return {
+        weightField: typeof options?.weightField === 'string' && options.weightField.trim()
+            ? options.weightField.trim()
+            : '',
+        missingValues: (options?.missingValues ?? [])
+            .map((value) => value.trim())
+            .filter(Boolean),
+        missingStrategy: options?.missingStrategy === 'listwise' ? 'listwise' : 'available'
+    };
+}
+function normalizeMissingValue(rawValue, missingValues) {
+    if (rawValue === null)
+        return null;
+    if (typeof rawValue === 'string') {
+        const trimmed = rawValue.trim();
+        if (trimmed.length === 0)
+            return null;
+        if (missingValues.some((candidate) => candidate.toLowerCase() === trimmed.toLowerCase())) {
+            return null;
+        }
+        return rawValue;
+    }
+    return rawValue;
+}
+function normalizeDatasetForAnalysis(dataset, options) {
+    const normalizedOptions = normalizeAnalysisOptions(options);
+    const rows = dataset.rows.map((row) => {
+        const copy = { ...row };
+        for (const key of Object.keys(copy)) {
+            copy[key] = normalizeMissingValue(copy[key] ?? null, normalizedOptions.missingValues);
+        }
+        return copy;
+    });
+    return {
+        ...dataset,
+        rows,
+        notes: normalizedOptions.missingValues.length > 0
+            ? [
+                ...dataset.notes,
+                {
+                    level: 'info',
+                    message: `Treating ${normalizedOptions.missingValues.length} custom missing code${normalizedOptions.missingValues.length === 1 ? '' : 's'} as missing values.`
+                }
+            ]
+            : dataset.notes
+    };
+}
+function getRowWeight(row, weightField) {
+    if (!weightField)
+        return 1;
+    const value = row[weightField];
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+}
+function getWeightTotal(rows, weightField) {
+    return rows.reduce((total, row) => total + getRowWeight(row, weightField), 0);
+}
+function weightedMean(values, weights) {
+    const totalWeight = weights.reduce((total, value) => total + value, 0);
+    if (values.length === 0 || totalWeight <= 0)
+        return null;
+    return values.reduce((total, value, index) => total + (value * weights[index]), 0) / totalWeight;
+}
+function weightedVariance(values, weights) {
+    const mean = weightedMean(values, weights);
+    const totalWeight = weights.reduce((total, value) => total + value, 0);
+    if (mean === null || values.length < 2 || totalWeight <= 0)
+        return null;
+    const variance = values.reduce((total, value, index) => total + (weights[index] * ((value - mean) ** 2)), 0) / totalWeight;
+    return variance;
+}
+function weightedStdDev(values, weights) {
+    const variance = weightedVariance(values, weights);
+    return variance === null ? null : Math.sqrt(variance);
+}
+function effectiveSampleSize(weights) {
+    const sumWeights = weights.reduce((total, value) => total + value, 0);
+    const sumSquares = weights.reduce((total, value) => total + (value ** 2), 0);
+    if (sumWeights <= 0 || sumSquares <= 0)
+        return 0;
+    return (sumWeights ** 2) / sumSquares;
+}
+function analysisRows(dataset, requiredFields, options) {
+    const normalizedOptions = normalizeAnalysisOptions(options);
+    const normalized = normalizeDatasetForAnalysis(dataset, normalizedOptions);
+    const required = new Set([
+        ...requiredFields,
+        normalizedOptions.weightField
+    ].filter(Boolean));
+    return normalized.rows
+        .filter((row) => {
+        if (normalizedOptions.missingStrategy !== 'listwise')
+            return true;
+        return [...required].every((field) => row[field] !== null);
+    })
+        .map((row) => ({
+        row,
+        weight: getRowWeight(row, normalizedOptions.weightField)
+    }));
+}
+function normalCdf(value) {
+    return 0.5 * (1 + erf(value / Math.SQRT2));
+}
+function erf(value) {
+    const sign = value < 0 ? -1 : 1;
+    const x = Math.abs(value);
+    const a1 = 0.254829592;
+    const a2 = -0.284496736;
+    const a3 = 1.421413741;
+    const a4 = -1.453152027;
+    const a5 = 1.061405429;
+    const p = 0.3275911;
+    const t = 1 / (1 + p * x);
+    const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-(x ** 2));
+    return sign * y;
+}
+function normalTwoSidedPValue(zScore) {
+    return 2 * (1 - normalCdf(Math.abs(zScore)));
+}
+function rankValues(values) {
+    const indexed = values.map((value, index) => ({ value, index })).sort((left, right) => left.value - right.value);
+    const ranks = new Array(values.length);
+    let position = 0;
+    while (position < indexed.length) {
+        let end = position + 1;
+        while (end < indexed.length && indexed[end].value === indexed[position].value) {
+            end += 1;
+        }
+        const averageRank = (position + 1 + end) / 2;
+        for (let cursor = position; cursor < end; cursor += 1) {
+            ranks[indexed[cursor].index] = averageRank;
+        }
+        position = end;
+    }
+    return ranks;
+}
+function solveLinearSystem(matrix, vector) {
+    const size = matrix.length;
+    const augmented = matrix.map((row, index) => [...row, vector[index] ?? 0]);
+    for (let pivot = 0; pivot < size; pivot += 1) {
+        let maxRow = pivot;
+        for (let candidate = pivot + 1; candidate < size; candidate += 1) {
+            if (Math.abs(augmented[candidate][pivot]) > Math.abs(augmented[maxRow][pivot])) {
+                maxRow = candidate;
+            }
+        }
+        if (Math.abs(augmented[maxRow][pivot]) < 1e-12) {
+            throw new Error('Regression design matrix is singular.');
+        }
+        if (maxRow !== pivot) {
+            [augmented[pivot], augmented[maxRow]] = [augmented[maxRow], augmented[pivot]];
+        }
+        const pivotValue = augmented[pivot][pivot];
+        for (let column = pivot; column <= size; column += 1) {
+            augmented[pivot][column] /= pivotValue;
+        }
+        for (let row = 0; row < size; row += 1) {
+            if (row === pivot)
+                continue;
+            const factor = augmented[row][pivot];
+            for (let column = pivot; column <= size; column += 1) {
+                augmented[row][column] -= factor * augmented[pivot][column];
+            }
+        }
+    }
+    return augmented.map((row) => row[size]);
+}
+function invertMatrix(matrix) {
+    const size = matrix.length;
+    const augmented = matrix.map((row, rowIndex) => [
+        ...row,
+        ...Array.from({ length: size }, (_unused, columnIndex) => (rowIndex === columnIndex ? 1 : 0))
+    ]);
+    for (let pivot = 0; pivot < size; pivot += 1) {
+        let maxRow = pivot;
+        for (let candidate = pivot + 1; candidate < size; candidate += 1) {
+            if (Math.abs(augmented[candidate][pivot]) > Math.abs(augmented[maxRow][pivot])) {
+                maxRow = candidate;
+            }
+        }
+        if (Math.abs(augmented[maxRow][pivot]) < 1e-12) {
+            throw new Error('Matrix is singular and cannot be inverted.');
+        }
+        if (maxRow !== pivot) {
+            [augmented[pivot], augmented[maxRow]] = [augmented[maxRow], augmented[pivot]];
+        }
+        const pivotValue = augmented[pivot][pivot];
+        for (let column = 0; column < size * 2; column += 1) {
+            augmented[pivot][column] /= pivotValue;
+        }
+        for (let row = 0; row < size; row += 1) {
+            if (row === pivot)
+                continue;
+            const factor = augmented[row][pivot];
+            for (let column = 0; column < size * 2; column += 1) {
+                augmented[row][column] -= factor * augmented[pivot][column];
+            }
+        }
+    }
+    return augmented.map((row) => row.slice(size));
+}
+function logGamma(value) {
+    const coefficients = [
+        76.18009172947146,
+        -86.50532032941677,
+        24.01409824083091,
+        -1.231739572450155,
+        0.001208650973866179,
+        -0.000005395239384953
+    ];
+    let x = value;
+    let y = value;
+    let tmp = x + 5.5;
+    tmp -= (x + 0.5) * Math.log(tmp);
+    let series = 1.000000000190015;
+    for (const coefficient of coefficients) {
+        y += 1;
+        series += coefficient / y;
+    }
+    return -tmp + Math.log(2.5066282746310005 * series / x);
+}
+function logBeta(a, b) {
+    return logGamma(a) + logGamma(b) - logGamma(a + b);
+}
+function betaContinuedFraction(a, b, x) {
+    const maxIterations = 200;
+    const epsilon = 3e-7;
+    const fpMin = 1e-30;
+    let qab = a + b;
+    let qap = a + 1;
+    let qam = a - 1;
+    let c = 1;
+    let d = 1 - (qab * x) / qap;
+    if (Math.abs(d) < fpMin)
+        d = fpMin;
+    d = 1 / d;
+    let h = d;
+    for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
+        const m2 = 2 * iteration;
+        let aa = (iteration * (b - iteration) * x) / ((qam + m2) * (a + m2));
+        d = 1 + (aa * d);
+        if (Math.abs(d) < fpMin)
+            d = fpMin;
+        c = 1 + (aa / c);
+        if (Math.abs(c) < fpMin)
+            c = fpMin;
+        d = 1 / d;
+        h *= d * c;
+        aa = -((a + iteration) * (qab + iteration) * x) / ((a + m2) * (qap + m2));
+        d = 1 + (aa * d);
+        if (Math.abs(d) < fpMin)
+            d = fpMin;
+        c = 1 + (aa / c);
+        if (Math.abs(c) < fpMin)
+            c = fpMin;
+        d = 1 / d;
+        const delta = d * c;
+        h *= delta;
+        if (Math.abs(delta - 1) < epsilon)
+            break;
+    }
+    return h;
+}
+function regularizedBeta(x, a, b) {
+    if (x <= 0)
+        return 0;
+    if (x >= 1)
+        return 1;
+    const front = Math.exp((a * Math.log(x)) + (b * Math.log(1 - x)) - logBeta(a, b)) / a;
+    if (x < (a + 1) / (a + b + 2)) {
+        return front * betaContinuedFraction(a, b, x);
+    }
+    return 1 - (Math.exp((b * Math.log(1 - x)) + (a * Math.log(x)) - logBeta(b, a)) / b) * betaContinuedFraction(b, a, 1 - x);
+}
+function regularizedGammaP(shape, value) {
+    if (value <= 0)
+        return 0;
+    if (value < shape + 1) {
+        let ap = shape;
+        let sum = 1 / shape;
+        let del = sum;
+        for (let iteration = 0; iteration < 100; iteration += 1) {
+            ap += 1;
+            del *= value / ap;
+            sum += del;
+            if (Math.abs(del) < Math.abs(sum) * 1e-8) {
+                return sum * Math.exp(-value + shape * Math.log(value) - logGamma(shape));
+            }
+        }
+    }
+    let b = value + 1 - shape;
+    let c = 1 / 1e-30;
+    let d = 1 / b;
+    let h = d;
+    for (let iteration = 1; iteration < 100; iteration += 1) {
+        const an = -iteration * (iteration - shape);
+        b += 2;
+        d = an * d + b;
+        if (Math.abs(d) < 1e-30)
+            d = 1e-30;
+        c = b + an / c;
+        if (Math.abs(c) < 1e-30)
+            c = 1e-30;
+        d = 1 / d;
+        const del = d * c;
+        h *= del;
+        if (Math.abs(del - 1) < 1e-8) {
+            return 1 - Math.exp(-value + shape * Math.log(value) - logGamma(shape)) * h;
+        }
+    }
+    return 1;
+}
+function chiSquarePValue(statistic, degreesOfFreedom) {
+    if (!(degreesOfFreedom > 0) || statistic < 0)
+        return null;
+    return 1 - regularizedGammaP(degreesOfFreedom / 2, statistic / 2);
+}
+function pearsonCorrelation(valuesA, valuesB) {
+    if (valuesA.length !== valuesB.length || valuesA.length < 2)
+        return null;
+    const meanA = valuesA.reduce((total, value) => total + value, 0) / valuesA.length;
+    const meanB = valuesB.reduce((total, value) => total + value, 0) / valuesB.length;
+    let numerator = 0;
+    let ssA = 0;
+    let ssB = 0;
+    for (let index = 0; index < valuesA.length; index += 1) {
+        const deltaA = valuesA[index] - meanA;
+        const deltaB = valuesB[index] - meanB;
+        numerator += deltaA * deltaB;
+        ssA += deltaA * deltaA;
+        ssB += deltaB * deltaB;
+    }
+    if (ssA <= 0 || ssB <= 0)
+        return null;
+    return numerator / Math.sqrt(ssA * ssB);
+}
+function dotProduct(left, right) {
+    return left.reduce((total, value, index) => total + (value * right[index]), 0);
+}
+function multiplyMatrixVector(matrix, vector) {
+    return matrix.map((row) => dotProduct(row, vector));
+}
+function normalizeVector(vector) {
+    const magnitude = Math.sqrt(vector.reduce((total, value) => total + (value * value), 0));
+    if (!(magnitude > 0))
+        return vector.map(() => 0);
+    return vector.map((value) => value / magnitude);
+}
+function cloneMatrix(matrix) {
+    return matrix.map((row) => [...row]);
+}
+function outerProduct(vector, scale) {
+    return vector.map((left) => vector.map((right) => left * right * scale));
+}
+function deflateMatrix(matrix, component) {
+    return matrix.map((row, rowIndex) => row.map((value, columnIndex) => value - component[rowIndex][columnIndex]));
+}
+function powerIterationSymmetric(matrix, iterations = 100) {
+    const size = matrix.length;
+    let vector = normalizeVector(Array.from({ length: size }, (_, index) => 1 / Math.sqrt(size) + (index * 1e-4)));
+    for (let iteration = 0; iteration < iterations; iteration += 1) {
+        const next = multiplyMatrixVector(matrix, vector);
+        const normalized = normalizeVector(next);
+        const delta = normalized.reduce((total, value, index) => total + Math.abs(value - vector[index]), 0);
+        vector = normalized;
+        if (delta < 1e-8)
+            break;
+    }
+    const projected = multiplyMatrixVector(matrix, vector);
+    const eigenvalue = dotProduct(vector, projected);
+    return { eigenvalue, eigenvector: vector };
+}
+function computeDurbinWatson(values) {
+    if (values.length < 2)
+        return null;
+    let numerator = 0;
+    let denominator = 0;
+    for (let index = 0; index < values.length; index += 1) {
+        const value = values[index];
+        denominator += value * value;
+        if (index > 0) {
+            const delta = value - values[index - 1];
+            numerator += delta * delta;
+        }
+    }
+    return denominator > 0 ? numerator / denominator : null;
+}
+function computeRocAuc(probabilities, outcomes, weights) {
+    const positive = [];
+    const negative = [];
+    for (let index = 0; index < probabilities.length; index += 1) {
+        const entry = {
+            probability: probabilities[index],
+            weight: weights?.[index] ?? 1
+        };
+        if (outcomes[index] === 1)
+            positive.push(entry);
+        else
+            negative.push(entry);
+    }
+    if (positive.length === 0 || negative.length === 0)
+        return null;
+    let concordant = 0;
+    let ties = 0;
+    let totalWeight = 0;
+    for (const left of positive) {
+        for (const right of negative) {
+            const pairWeight = left.weight * right.weight;
+            totalWeight += pairWeight;
+            if (left.probability > right.probability)
+                concordant += pairWeight;
+            else if (left.probability === right.probability)
+                ties += pairWeight;
+        }
+    }
+    return totalWeight > 0 ? (concordant + (0.5 * ties)) / totalWeight : null;
+}
+function computeVifByPredictor(rows, predictorFields) {
+    const result = {};
+    if (predictorFields.length <= 1) {
+        for (const field of predictorFields)
+            result[field] = null;
+        return result;
+    }
+    for (let predictorIndex = 0; predictorIndex < predictorFields.length; predictorIndex += 1) {
+        const dependent = rows.map((row) => row.x[predictorIndex]);
+        const otherIndexes = predictorFields.map((_, index) => index).filter((index) => index !== predictorIndex);
+        const designMatrix = rows.map((row) => [1, ...otherIndexes.map((index) => row.x[index])]);
+        const xtwx = Array.from({ length: designMatrix[0].length }, () => Array.from({ length: designMatrix[0].length }, () => 0));
+        const xtwy = Array.from({ length: designMatrix[0].length }, () => 0);
+        for (let rowIndex = 0; rowIndex < designMatrix.length; rowIndex += 1) {
+            const vector = designMatrix[rowIndex];
+            const y = dependent[rowIndex];
+            const weight = rows[rowIndex].weight;
+            for (let i = 0; i < vector.length; i += 1) {
+                xtwy[i] += vector[i] * y * weight;
+                for (let j = 0; j < vector.length; j += 1) {
+                    xtwx[i][j] += vector[i] * vector[j] * weight;
+                }
+            }
+        }
+        const coefficients = solveLinearSystem(xtwx, xtwy);
+        const predictions = designMatrix.map((vector) => coefficients.reduce((total, coefficient, index) => total + (coefficient * vector[index]), 0));
+        const totalWeight = rows.reduce((total, row) => total + row.weight, 0);
+        const meanY = dependent.reduce((total, value, index) => total + (value * rows[index].weight), 0) / totalWeight;
+        const ssTot = dependent.reduce((total, value, index) => total + (rows[index].weight * ((value - meanY) ** 2)), 0);
+        const ssRes = dependent.reduce((total, value, index) => total + (rows[index].weight * ((value - predictions[index]) ** 2)), 0);
+        const rSquared = ssTot === 0 ? 1 : 1 - (ssRes / ssTot);
+        result[predictorFields[predictorIndex]] = rSquared >= 1 ? null : 1 / Math.max(1e-12, 1 - rSquared);
+    }
+    return result;
+}
+function varimaxObjective(loadings) {
+    if (loadings.length === 0 || (loadings[0]?.length ?? 0) === 0)
+        return 0;
+    const rowCount = loadings.length;
+    const factorCount = loadings[0].length;
+    let score = 0;
+    for (let factorIndex = 0; factorIndex < factorCount; factorIndex += 1) {
+        const columnSquares = loadings.map((row) => (row[factorIndex] ** 2));
+        const meanSquare = columnSquares.reduce((total, value) => total + value, 0) / rowCount;
+        const meanFourth = columnSquares.reduce((total, value) => total + (value ** 2), 0) / rowCount;
+        score += meanFourth - (meanSquare ** 2);
+    }
+    return score;
+}
+function rotateFactorPair(loadings, leftIndex, rightIndex, angle) {
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+    return loadings.map((row) => {
+        const left = row[leftIndex] ?? 0;
+        const right = row[rightIndex] ?? 0;
+        const next = [...row];
+        next[leftIndex] = (left * cosine) + (right * sine);
+        next[rightIndex] = (-left * sine) + (right * cosine);
+        return next;
+    });
+}
+function applyVarimaxRotation(loadings) {
+    if (loadings.length === 0 || (loadings[0]?.length ?? 0) < 2)
+        return loadings.map((row) => [...row]);
+    let rotated = loadings.map((row) => [...row]);
+    let bestScore = varimaxObjective(rotated);
+    const factorCount = rotated[0].length;
+    for (let iteration = 0; iteration < 12; iteration += 1) {
+        let improved = false;
+        for (let leftIndex = 0; leftIndex < factorCount; leftIndex += 1) {
+            for (let rightIndex = leftIndex + 1; rightIndex < factorCount; rightIndex += 1) {
+                let bestPair = rotated;
+                let bestPairScore = bestScore;
+                for (let degree = -45; degree <= 45; degree += 1) {
+                    if (degree === 0)
+                        continue;
+                    const candidate = rotateFactorPair(rotated, leftIndex, rightIndex, degree * (Math.PI / 180));
+                    const candidateScore = varimaxObjective(candidate);
+                    if (candidateScore > bestPairScore + 1e-8) {
+                        bestPair = candidate;
+                        bestPairScore = candidateScore;
+                    }
+                }
+                if (bestPairScore > bestScore + 1e-8) {
+                    rotated = bestPair;
+                    bestScore = bestPairScore;
+                    improved = true;
+                }
+            }
+        }
+        if (!improved)
+            break;
+    }
+    return rotated;
+}
+function fDistributionPValue(statistic, numeratorDf, denominatorDf) {
+    if (!(numeratorDf > 0) || !(denominatorDf > 0) || statistic < 0)
+        return null;
+    const x = (numeratorDf * statistic) / ((numeratorDf * statistic) + denominatorDf);
+    return 1 - regularizedBeta(x, numeratorDf / 2, denominatorDf / 2);
+}
+function studentTPValue(statistic, degreesOfFreedom) {
+    if (!(degreesOfFreedom > 0))
+        return null;
+    const absolute = Math.abs(statistic);
+    if (!Number.isFinite(absolute))
+        return null;
+    const x = degreesOfFreedom / (degreesOfFreedom + (absolute ** 2));
+    return regularizedBeta(x, degreesOfFreedom / 2, 0.5);
+}
+function studentTCritical(confidenceLevel, degreesOfFreedom) {
+    if (!(degreesOfFreedom > 0) || !(confidenceLevel > 0 && confidenceLevel < 1))
+        return null;
+    const alpha = 1 - confidenceLevel;
+    let low = 0;
+    let high = 20;
+    while ((studentTPValue(high, degreesOfFreedom) ?? 0) > alpha && high < 1_000) {
+        high *= 2;
+    }
+    for (let iteration = 0; iteration < 80; iteration += 1) {
+        const mid = (low + high) / 2;
+        const pValue = studentTPValue(mid, degreesOfFreedom) ?? 0;
+        if (pValue > alpha) {
+            low = mid;
+        }
+        else {
+            high = mid;
+        }
+    }
+    return (low + high) / 2;
+}
+function confidenceInterval95(estimate, standardError, degreesOfFreedom) {
+    if (standardError === null || standardError <= 0 || degreesOfFreedom === null || degreesOfFreedom <= 0)
+        return null;
+    const critical = studentTCritical(0.95, degreesOfFreedom);
+    if (critical === null)
+        return null;
+    const margin = critical * standardError;
+    return {
+        level: 0.95,
+        lower: estimate - margin,
+        upper: estimate + margin
+    };
+}
+function buildAssumptionCheck(key, label, status, value, message) {
+    return { key, label, status, value, message };
+}
+function skewness(values) {
+    if (values.length < 3)
+        return null;
+    const mean = values.reduce((total, value) => total + value, 0) / values.length;
+    const sd = sampleStdDev(values);
+    if (!sd || sd === 0)
+        return null;
+    const n = values.length;
+    const thirdMoment = values.reduce((total, value) => total + (((value - mean) / sd) ** 3), 0);
+    return (n / ((n - 1) * (n - 2))) * thirdMoment;
+}
+export function describeDataset(dataset, options) {
+    const normalizedOptions = normalizeAnalysisOptions(options);
+    const prepared = normalizeDatasetForAnalysis(dataset, normalizedOptions);
+    const weightedCaseCount = getWeightTotal(prepared.rows, normalizedOptions.weightField);
+    const summaries = prepared.fields.map((field) => {
+        const values = prepared.rows.map((row) => row[field.key] ?? null);
+        const validValues = values.filter((value) => value !== null);
+        const valueType = inferValueType(values);
+        const frequencies = new Map();
+        let weightedValidCount = 0;
+        prepared.rows.forEach((row, index) => {
+            const value = values[index];
+            if (value === null)
+                return;
+            const formatted = formatValue(value);
+            const weight = getRowWeight(row, normalizedOptions.weightField);
+            frequencies.set(formatted, (frequencies.get(formatted) ?? 0) + weight);
+            weightedValidCount += weight;
+        });
+        const weightedMissingCount = weightedCaseCount - weightedValidCount;
+        const denominator = normalizedOptions.weightField ? weightedValidCount : prepared.caseCount;
+        const numericEntries = prepared.rows
+            .map((row) => ({ value: row[field.key] ?? null, weight: getRowWeight(row, normalizedOptions.weightField) }))
+            .filter((entry) => typeof entry.value === 'number' && entry.weight > 0);
+        const numericValues = numericEntries.map((entry) => entry.value);
+        const numericWeights = numericEntries.map((entry) => entry.weight);
+        const weightedNumericMean = weightedMean(numericValues, numericWeights);
+        const weightedNumericStdDev = weightedStdDev(numericValues, numericWeights);
+        const numericSummary = numericValues.length > 0
+            ? {
+                mean: weightedNumericMean ?? 0,
+                min: Math.min(...numericValues),
+                max: Math.max(...numericValues),
+                stdDev: normalizedOptions.weightField ? weightedNumericStdDev : sampleStdDev(numericValues)
+            }
+            : null;
+        const frequencyList = [...frequencies.entries()]
+            .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+            .map(([value, count]) => ({
+            value,
+            count,
+            proportion: denominator <= 0 ? 0 : count / denominator
+        }));
+        return {
+            key: field.key,
+            label: field.label,
+            source: field.source,
+            valueType,
+            validCount: validValues.length,
+            missingCount: prepared.caseCount - validValues.length,
+            weightedValidCount: normalizedOptions.weightField ? weightedValidCount : null,
+            weightedMissingCount: normalizedOptions.weightField ? weightedMissingCount : null,
+            distinctCount: new Set(validValues.map((value) => JSON.stringify(value))).size,
+            frequencies: frequencyList,
+            numeric: numericSummary
+        };
+    });
+    return {
+        caseCount: prepared.caseCount,
+        fieldCount: prepared.fields.length,
+        summaries,
+        weightedCaseCount: normalizedOptions.weightField ? weightedCaseCount : null,
+        analysis: {
+            weightField: normalizedOptions.weightField || null,
+            missingValues: normalizedOptions.missingValues,
+            missingStrategy: normalizedOptions.missingStrategy
+        }
+    };
+}
+function valuesEqual(left, right) {
+    if (left === null || right === null)
+        return left === right;
+    if (typeof left === 'number' && typeof right === 'number')
+        return left === right;
+    if (typeof left === 'boolean' && typeof right === 'boolean')
+        return left === right;
+    return formatValue(left) === formatValue(right);
+}
+function filterMatches(rowValue, filter) {
+    switch (filter.operator) {
+        case 'equals':
+            return valuesEqual(rowValue, filter.value ?? null);
+        case 'not_equals':
+            return !valuesEqual(rowValue, filter.value ?? null);
+        case 'contains':
+            return rowValue !== null && formatValue(rowValue).toLowerCase().includes(formatValue(filter.value ?? '').toLowerCase());
+        case 'greater_than':
+            return typeof rowValue === 'number' && typeof filter.value === 'number' && rowValue > filter.value;
+        case 'less_than':
+            return typeof rowValue === 'number' && typeof filter.value === 'number' && rowValue < filter.value;
+        case 'is_missing':
+            return rowValue === null;
+        case 'not_missing':
+            return rowValue !== null;
+        default:
+            return true;
+    }
+}
+export function applyDatasetFilters(dataset, filters) {
+    if (filters.length === 0)
+        return dataset;
+    const rows = dataset.rows.filter((row) => filters.every((filter) => filterMatches(row[filter.fieldKey] ?? null, filter)));
+    return {
+        caseCount: rows.length,
+        fields: dataset.fields,
+        rows,
+        notes: [
+            ...dataset.notes,
+            {
+                level: 'info',
+                message: `Applied ${filters.length} dataset filter${filters.length === 1 ? '' : 's'}.`
+            }
+        ]
+    };
+}
+export function applyDatasetRecodes(dataset, recodes) {
+    if (recodes.length === 0)
+        return dataset;
+    const usedKeys = new Set(dataset.fields.map((field) => field.key));
+    const rows = dataset.rows.map((row) => ({ ...row }));
+    const fields = [...dataset.fields];
+    for (const recode of recodes) {
+        const sourceField = fields.find((field) => field.key === recode.sourceFieldKey);
+        if (!sourceField) {
+            throw new Error(`Source field "${recode.sourceFieldKey}" was not found for recode.`);
+        }
+        const outputFieldKey = recode.outputFieldKey && recode.outputFieldKey.trim()
+            ? allocateFieldKey(recode.outputFieldKey, usedKeys, 'recode')
+            : allocateFieldKey(recode.outputLabel, usedKeys, 'recode');
+        fields.push({
+            key: outputFieldKey,
+            label: recode.outputLabel,
+            source: 'variable',
+            valueType: 'null'
+        });
+        for (const row of rows) {
+            const sourceValue = row[recode.sourceFieldKey] ?? null;
+            const formatted = formatValue(sourceValue);
+            const rule = recode.rules.find((candidate) => candidate.from === formatted);
+            row[outputFieldKey] = rule ? rule.to : recode.defaultValue ?? null;
+        }
+    }
+    const fieldValueTypes = new Map();
+    for (const field of fields) {
+        fieldValueTypes.set(field.key, inferValueType(rows.map((row) => row[field.key] ?? null)));
+    }
+    return {
+        caseCount: rows.length,
+        fields: fields.map((field) => ({
+            ...field,
+            valueType: fieldValueTypes.get(field.key) ?? field.valueType
+        })),
+        rows,
+        notes: [
+            ...dataset.notes,
+            {
+                level: 'info',
+                message: `Added ${recodes.length} recoded field${recodes.length === 1 ? '' : 's'} to the dataset view.`
+            }
+        ]
+    };
+}
+export function transformDataset(dataset, options) {
+    const normalized = normalizeDatasetForAnalysis(dataset, options.analysis);
+    const filtered = applyDatasetFilters(normalized, options.filters ?? []);
+    return applyDatasetRecodes(filtered, options.recodes ?? []);
+}
+function requireDatasetField(dataset, fieldKey, purpose) {
+    const field = dataset.fields.find((candidate) => candidate.key === fieldKey);
+    if (!field) {
+        throw new Error(`Selected ${purpose} field "${fieldKey}" was not found in the dataset.`);
+    }
+    return field;
+}
+function mostCommonValue(values) {
+    const counts = new Map();
+    for (const value of values) {
+        if (value === null)
+            continue;
+        const key = JSON.stringify(value);
+        const entry = counts.get(key) ?? { value, count: 0 };
+        entry.count += 1;
+        counts.set(key, entry);
+    }
+    const [top] = [...counts.values()].sort((left, right) => right.count - left.count || formatValue(left.value).localeCompare(formatValue(right.value)));
+    return top?.value ?? null;
+}
+function percentile(sortedValues, proportion) {
+    if (sortedValues.length === 0)
+        return null;
+    if (sortedValues.length === 1)
+        return sortedValues[0];
+    const bounded = Math.min(1, Math.max(0, proportion));
+    const position = bounded * (sortedValues.length - 1);
+    const lowerIndex = Math.floor(position);
+    const upperIndex = Math.ceil(position);
+    if (lowerIndex === upperIndex)
+        return sortedValues[lowerIndex];
+    const lower = sortedValues[lowerIndex];
+    const upper = sortedValues[upperIndex];
+    return lower + ((upper - lower) * (position - lowerIndex));
+}
+function seededRandom(seed = 8675309) {
+    let state = seed >>> 0;
+    return () => {
+        state = (1664525 * state + 1013904223) >>> 0;
+        return state / 0x100000000;
+    };
+}
+export function buildCustomTable(dataset, rowFields, columnField, measureFields = [], options) {
+    const uniqueRowFields = [...new Set(rowFields.map((field) => field.trim()).filter(Boolean))].slice(0, 3);
+    if (uniqueRowFields.length === 0) {
+        throw new Error('Choose at least one row field for a custom table.');
+    }
+    const normalizedColumnField = typeof columnField === 'string' && columnField.trim() ? columnField.trim() : null;
+    const uniqueMeasureFields = [...new Set(measureFields.map((field) => field.trim()).filter(Boolean))].slice(0, 5);
+    const rowMeta = uniqueRowFields.map((field) => requireDatasetField(dataset, field, 'custom table row'));
+    const columnMeta = normalizedColumnField ? requireDatasetField(dataset, normalizedColumnField, 'custom table column') : null;
+    const measureMeta = uniqueMeasureFields.map((field) => requireDatasetField(dataset, field, 'custom table measure'));
+    const requiredFields = [...uniqueRowFields, ...(normalizedColumnField ? [normalizedColumnField] : [])];
+    const preparedRows = analysisRows(dataset, requiredFields, options);
+    const validRows = preparedRows.filter(({ row, weight }) => weight > 0
+        && uniqueRowFields.every((field) => row[field] !== null)
+        && (!normalizedColumnField || row[normalizedColumnField] !== null));
+    const rowCounts = new Map();
+    const columnCounts = new Map();
+    const cells = new Map();
+    for (const { row, weight } of validRows) {
+        const rowValues = uniqueRowFields.map((field) => formatValue(row[field] ?? null));
+        const rowKey = JSON.stringify(rowValues);
+        const columnValue = normalizedColumnField ? formatValue(row[normalizedColumnField] ?? null) : null;
+        const cellKey = `${rowKey}::${columnValue ?? '(total)'}`;
+        const rowEntry = rowCounts.get(rowKey) ?? { values: rowValues, count: 0 };
+        rowEntry.count += weight;
+        rowCounts.set(rowKey, rowEntry);
+        if (columnValue !== null) {
+            columnCounts.set(columnValue, (columnCounts.get(columnValue) ?? 0) + weight);
+        }
+        const cellEntry = cells.get(cellKey) ?? {
+            rowValues,
+            columnValue,
+            count: 0,
+            measures: new Map()
+        };
+        cellEntry.count += weight;
+        for (const field of measureMeta) {
+            const value = row[field.key];
+            if (typeof value !== 'number')
+                continue;
+            const measureEntry = cellEntry.measures.get(field.key) ?? {
+                field: field.key,
+                label: field.label,
+                values: [],
+                weights: []
+            };
+            measureEntry.values.push(value);
+            measureEntry.weights.push(weight);
+            cellEntry.measures.set(field.key, measureEntry);
+        }
+        cells.set(cellKey, cellEntry);
+    }
+    const weightedValidCaseCount = validRows.reduce((total, entry) => total + entry.weight, 0);
+    const rowCategories = [...rowCounts.values()]
+        .sort((left, right) => right.count - left.count || left.values.join(' | ').localeCompare(right.values.join(' | ')))
+        .map((entry) => ({
+        values: entry.values,
+        count: entry.count,
+        proportion: weightedValidCaseCount > 0 ? entry.count / weightedValidCaseCount : 0
+    }));
+    const columnCategories = [...columnCounts.entries()]
+        .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+        .map(([value, count]) => ({
+        value,
+        count,
+        proportion: weightedValidCaseCount > 0 ? count / weightedValidCaseCount : 0
+    }));
+    return {
+        rowFields: uniqueRowFields,
+        rowLabels: rowMeta.map((field) => field.label),
+        columnField: columnMeta?.key ?? null,
+        columnLabel: columnMeta?.label ?? null,
+        measureFields: measureMeta.map((field) => field.key),
+        caseCount: dataset.caseCount,
+        validCaseCount: validRows.length,
+        missingCaseCount: dataset.caseCount - validRows.length,
+        weightedValidCaseCount: normalizeAnalysisOptions(options).weightField ? weightedValidCaseCount : null,
+        rowCategories,
+        columnCategories,
+        cells: [...cells.values()].map((cell) => {
+            const rowCount = rowCounts.get(JSON.stringify(cell.rowValues))?.count ?? 0;
+            const columnCount = cell.columnValue === null ? weightedValidCaseCount : columnCounts.get(cell.columnValue) ?? 0;
+            const measures = [...cell.measures.values()].flatMap((measure) => {
+                const mean = weightedMean(measure.values, measure.weights);
+                const sum = measure.values.reduce((total, value, index) => total + (value * measure.weights[index]), 0);
+                return [
+                    {
+                        field: measure.field,
+                        label: measure.label,
+                        operation: 'mean',
+                        value: mean,
+                        validCount: measure.values.length,
+                        weightedValidCount: normalizeAnalysisOptions(options).weightField
+                            ? measure.weights.reduce((total, value) => total + value, 0)
+                            : null
+                    },
+                    {
+                        field: measure.field,
+                        label: measure.label,
+                        operation: 'sum',
+                        value: sum,
+                        validCount: measure.values.length,
+                        weightedValidCount: normalizeAnalysisOptions(options).weightField
+                            ? measure.weights.reduce((total, value) => total + value, 0)
+                            : null
+                    }
+                ];
+            });
+            return {
+                rowValues: cell.rowValues,
+                columnValue: cell.columnValue,
+                count: cell.count,
+                proportion: weightedValidCaseCount > 0 ? cell.count / weightedValidCaseCount : 0,
+                rowProportion: rowCount > 0 ? cell.count / rowCount : null,
+                columnProportion: columnCount > 0 ? cell.count / columnCount : null,
+                measures
+            };
+        }),
+        notes: [
+            'Custom tables are grouped case-level summaries with counts, proportions, and optional numeric mean/sum measures.',
+            measureMeta.some((field) => field.valueType !== 'number')
+                ? 'Non-numeric measure fields are accepted but only numeric values contribute to measure statistics.'
+                : ''
+        ].filter(Boolean)
+    };
+}
+function isIntegerLike(value) {
+    return Number.isFinite(value) && Math.abs(value - Math.round(value)) < 1e-8;
+}
+function hypergeometricProbability(a, row1, row2, column1, total) {
+    const column2 = total - column1;
+    return Math.exp(logGamma(column1 + 1)
+        - logGamma(a + 1)
+        - logGamma(column1 - a + 1)
+        + logGamma(column2 + 1)
+        - logGamma(row1 - a + 1)
+        - logGamma(column2 - row1 + a + 1)
+        - logGamma(total + 1)
+        + logGamma(row1 + 1)
+        + logGamma(total - row1 + 1));
+}
+export function analyzeExactTest(dataset, rowFieldKey, columnFieldKey, options) {
+    const crosstab = analyzeCrosstab(dataset, rowFieldKey, columnFieldKey, options);
+    const notes = [];
+    const rowValues = crosstab.rowCategories.map((entry) => entry.value);
+    const columnValues = crosstab.columnCategories.map((entry) => entry.value);
+    let fisherExact = null;
+    let method = 'chi_square_only';
+    if (rowValues.length === 2 && columnValues.length === 2) {
+        const counts = rowValues.map((rowValue) => columnValues.map((columnValue) => crosstab.cells.find((cell) => cell.rowValue === rowValue && cell.columnValue === columnValue)?.count ?? 0));
+        const flatCounts = counts.flat();
+        if (flatCounts.every(isIntegerLike)) {
+            const a = Math.round(counts[0][0]);
+            const b = Math.round(counts[0][1]);
+            const c = Math.round(counts[1][0]);
+            const d = Math.round(counts[1][1]);
+            const row1 = a + b;
+            const row2 = c + d;
+            const column1 = a + c;
+            const total = row1 + row2;
+            const minA = Math.max(0, column1 - row2);
+            const maxA = Math.min(row1, column1);
+            const observedProbability = hypergeometricProbability(a, row1, row2, column1, total);
+            let pLeft = 0;
+            let pRight = 0;
+            let pTwo = 0;
+            for (let candidate = minA; candidate <= maxA; candidate += 1) {
+                const probability = hypergeometricProbability(candidate, row1, row2, column1, total);
+                if (candidate <= a)
+                    pLeft += probability;
+                if (candidate >= a)
+                    pRight += probability;
+                if (probability <= observedProbability + 1e-12)
+                    pTwo += probability;
+            }
+            fisherExact = {
+                pValueTwoSided: Math.min(1, pTwo),
+                pValueLeft: Math.min(1, pLeft),
+                pValueRight: Math.min(1, pRight),
+                oddsRatio: b * c === 0 ? null : (a * d) / (b * c)
+            };
+            method = 'fisher_exact_2x2';
+        }
+        else {
+            notes.push('Fisher exact test requires integer-like counts. Weighted or fractional tables use the chi-square output only.');
+        }
+    }
+    else {
+        notes.push('Fisher exact test is currently available for 2x2 crosstabs. Larger tables report the chi-square output only.');
+    }
+    return {
+        rowField: crosstab.rowField,
+        rowLabel: crosstab.rowLabel,
+        columnField: crosstab.columnField,
+        columnLabel: crosstab.columnLabel,
+        caseCount: crosstab.caseCount,
+        validCaseCount: crosstab.validCaseCount,
+        table: {
+            rowValues,
+            columnValues,
+            cells: crosstab.cells.map((cell) => ({
+                rowValue: cell.rowValue,
+                columnValue: cell.columnValue,
+                count: cell.count
+            }))
+        },
+        method,
+        fisherExact,
+        chiSquare: crosstab.chiSquare,
+        notes
+    };
+}
+export function analyzeBootstrap(dataset, procedure, targetFields, iterations = 1000, confidenceLevel = 0.95, options) {
+    const normalizedIterations = Math.min(10000, Math.max(100, Math.floor(iterations)));
+    const normalizedConfidence = Math.min(0.99, Math.max(0.8, confidenceLevel));
+    const fields = targetFields.map((field) => field.trim()).filter(Boolean);
+    const requiredFieldCount = procedure === 'correlation' ? 2 : 1;
+    if (fields.length < requiredFieldCount) {
+        throw new Error(`${procedure} bootstrap requires ${requiredFieldCount} target field${requiredFieldCount === 1 ? '' : 's'}.`);
+    }
+    fields.slice(0, requiredFieldCount).forEach((field) => requireDatasetField(dataset, field, 'bootstrap target'));
+    const rows = analysisRows(dataset, fields.slice(0, requiredFieldCount), options)
+        .map(({ row, weight }) => ({
+        values: fields.slice(0, requiredFieldCount).map((field) => row[field]),
+        weight
+    }))
+        .filter((entry) => entry.weight > 0 && entry.values.every((value) => typeof value === 'number'));
+    if (rows.length < 2) {
+        throw new Error('Not enough usable numeric rows for bootstrapping.');
+    }
+    const computeEstimate = (sample) => {
+        if (procedure === 'mean') {
+            return weightedMean(sample.map((entry) => entry.values[0]), sample.map((entry) => entry.weight));
+        }
+        return pearsonCorrelation(sample.map((entry) => entry.values[0]), sample.map((entry) => entry.values[1]));
+    };
+    const observed = computeEstimate(rows);
+    const random = seededRandom(rows.length * 97 + normalizedIterations);
+    const estimates = [];
+    for (let iteration = 0; iteration < normalizedIterations; iteration += 1) {
+        const sample = Array.from({ length: rows.length }, () => rows[Math.floor(random() * rows.length)]);
+        const estimate = computeEstimate(sample);
+        if (estimate !== null && Number.isFinite(estimate))
+            estimates.push(estimate);
+    }
+    const sorted = [...estimates].sort((left, right) => left - right);
+    const alpha = 1 - normalizedConfidence;
+    const lower = percentile(sorted, alpha / 2);
+    const upper = percentile(sorted, 1 - (alpha / 2));
+    const standardError = sampleStdDev(estimates);
+    return {
+        procedure,
+        targetFields: fields.slice(0, requiredFieldCount),
+        iterationsRequested: normalizedIterations,
+        iterationsUsed: estimates.length,
+        confidenceLevel: normalizedConfidence,
+        caseCount: rows.length,
+        observed,
+        standardError,
+        confidenceInterval: lower === null || upper === null
+            ? null
+            : { level: normalizedConfidence, lower, upper },
+        estimates: estimates.slice(0, 250),
+        notes: [
+            'Bootstrap output uses deterministic seeded resampling for reproducible pilot results.',
+            procedure === 'correlation' && normalizeAnalysisOptions(options).weightField
+                ? 'Correlation bootstrap currently resamples usable rows and does not compute a weighted correlation coefficient.'
+                : ''
+        ].filter(Boolean)
+    };
+}
+export function analyzeMissingValues(dataset, options) {
+    const normalizedOptions = normalizeAnalysisOptions(options);
+    const prepared = normalizeDatasetForAnalysis(dataset, options);
+    const weightedCaseCount = getWeightTotal(prepared.rows, normalizedOptions.weightField);
+    let totalMissingValues = 0;
+    const rowPatternCounts = new Map();
+    const fields = prepared.fields.map((field) => {
+        let validCount = 0;
+        let missingCount = 0;
+        let weightedValidCount = 0;
+        let weightedMissingCount = 0;
+        const values = [];
+        for (const row of prepared.rows) {
+            const value = row[field.key] ?? null;
+            const weight = getRowWeight(row, normalizedOptions.weightField);
+            if (value === null) {
+                missingCount += 1;
+                weightedMissingCount += weight;
+            }
+            else {
+                validCount += 1;
+                weightedValidCount += weight;
+                values.push(value);
+            }
+        }
+        totalMissingValues += missingCount;
+        const numericValues = values.filter((value) => typeof value === 'number');
+        return {
+            field: field.key,
+            label: field.label,
+            valueType: inferValueType(prepared.rows.map((row) => row[field.key] ?? null)),
+            validCount,
+            missingCount,
+            missingPercent: prepared.caseCount > 0 ? missingCount / prepared.caseCount : 0,
+            weightedValidCount: normalizedOptions.weightField ? weightedValidCount : null,
+            weightedMissingCount: normalizedOptions.weightField ? weightedMissingCount : null,
+            recommendedImputation: numericValues.length > 0
+                ? numericValues.reduce((total, value) => total + value, 0) / numericValues.length
+                : mostCommonValue(values)
+        };
+    });
+    for (const row of prepared.rows) {
+        const missingFieldCount = prepared.fields.filter((field) => (row[field.key] ?? null) === null).length;
+        rowPatternCounts.set(missingFieldCount, (rowPatternCounts.get(missingFieldCount) ?? 0) + 1);
+    }
+    return {
+        caseCount: prepared.caseCount,
+        fieldCount: prepared.fields.length,
+        totalMissingValues,
+        missingCellsPercent: prepared.caseCount * prepared.fields.length > 0
+            ? totalMissingValues / (prepared.caseCount * prepared.fields.length)
+            : 0,
+        weightedCaseCount: normalizedOptions.weightField ? weightedCaseCount : null,
+        fields: fields.sort((left, right) => right.missingPercent - left.missingPercent || left.label.localeCompare(right.label)),
+        rowPatterns: [...rowPatternCounts.entries()]
+            .sort((left, right) => left[0] - right[0])
+            .map(([missingFieldCount, caseCount]) => ({
+            missingFieldCount,
+            caseCount,
+            proportion: prepared.caseCount > 0 ? caseCount / prepared.caseCount : 0
+        })),
+        notes: [
+            'Missing-values output treats blank values, nulls, and configured user-missing codes as missing.',
+            'Recommended imputations are simple mean for numeric fields and mode for categorical/text fields.'
+        ]
+    };
+}
+export function buildImputationPlan(dataset, strategies, options) {
+    const prepared = normalizeDatasetForAnalysis(dataset, options);
+    const missing = analyzeMissingValues(prepared, options);
+    const recommendedByField = new Map(missing.fields.map((field) => [field.field, field.recommendedImputation]));
+    const strategyList = strategies
+        .map((strategy) => ({
+        field: strategy.field.trim(),
+        method: strategy.method,
+        value: strategy.value
+    }))
+        .filter((strategy) => strategy.field);
+    if (strategyList.length === 0) {
+        throw new Error('Choose at least one field imputation strategy.');
+    }
+    const rows = prepared.rows.map((row) => ({ ...row }));
+    const applied = [];
+    for (const strategy of strategyList) {
+        const field = requireDatasetField(prepared, strategy.field, 'imputation');
+        const fieldValues = rows.map((row) => row[field.key] ?? null);
+        const numericValues = fieldValues.filter((value) => typeof value === 'number');
+        const nonMissingValues = fieldValues.filter((value) => value !== null);
+        const value = strategy.method === 'constant'
+            ? strategy.value ?? null
+            : strategy.method === 'mean'
+                ? (numericValues.length > 0 ? numericValues.reduce((total, item) => total + item, 0) / numericValues.length : recommendedByField.get(field.key) ?? null)
+                : (mostCommonValue(nonMissingValues) ?? recommendedByField.get(field.key) ?? null);
+        let replacements = 0;
+        for (const row of rows) {
+            if ((row[field.key] ?? null) === null) {
+                row[field.key] = value;
+                replacements += 1;
+            }
+        }
+        applied.push({
+            field: field.key,
+            label: field.label,
+            method: strategy.method,
+            value,
+            replacements
+        });
+    }
+    const fieldValueTypes = new Map();
+    for (const field of prepared.fields) {
+        fieldValueTypes.set(field.key, inferValueType(rows.map((row) => row[field.key] ?? null)));
+    }
+    return {
+        caseCount: prepared.caseCount,
+        strategies: applied,
+        dataset: {
+            ...prepared,
+            fields: prepared.fields.map((field) => ({
+                ...field,
+                valueType: fieldValueTypes.get(field.key) ?? field.valueType
+            })),
+            rows,
+            notes: [
+                ...prepared.notes,
+                {
+                    level: 'info',
+                    message: `Applied ${applied.length} imputation strateg${applied.length === 1 ? 'y' : 'ies'} to a preview dataset.`
+                }
+            ]
+        },
+        notes: [
+            'Imputation currently creates a preview dataset; it does not overwrite stored project cases or attributes.',
+            'Use this as a traceable preprocessing step before formal analysis.'
+        ]
+    };
+}
+function parseTimeValue(value, fallbackIndex) {
+    if (typeof value === 'number' && Number.isFinite(value))
+        return value;
+    if (typeof value === 'string' && value.trim()) {
+        const numeric = Number(value);
+        if (Number.isFinite(numeric))
+            return numeric;
+        const timestamp = Date.parse(value);
+        if (Number.isFinite(timestamp))
+            return timestamp;
+    }
+    return Number.isFinite(fallbackIndex) ? fallbackIndex : null;
+}
+export function analyzeForecast(dataset, timeFieldKey, valueFieldKey, horizon = 3, options) {
+    if (timeFieldKey === valueFieldKey) {
+        throw new Error('Choose different time and value fields for forecasting.');
+    }
+    const timeField = requireDatasetField(dataset, timeFieldKey, 'forecast time');
+    const valueField = requireDatasetField(dataset, valueFieldKey, 'forecast value');
+    const rows = analysisRows(dataset, [timeFieldKey, valueFieldKey], options)
+        .map(({ row }, index) => ({
+        caseId: typeof row.case_id === 'string' ? row.case_id : null,
+        timeValue: row[timeFieldKey] ?? null,
+        timeIndex: parseTimeValue(row[timeFieldKey] ?? null, index),
+        actual: row[valueFieldKey]
+    }))
+        .filter((entry) => entry.timeIndex !== null && typeof entry.actual === 'number')
+        .sort((left, right) => left.timeIndex - right.timeIndex);
+    if (rows.length < 3) {
+        throw new Error('Forecasting requires at least three usable time/value rows.');
+    }
+    const firstTimeIndex = rows[0].timeIndex;
+    const normalizedTimes = rows.map((row) => row.timeIndex - firstTimeIndex);
+    const values = rows.map((row) => row.actual);
+    const timeMean = normalizedTimes.reduce((total, value) => total + value, 0) / normalizedTimes.length;
+    const valueMean = values.reduce((total, value) => total + value, 0) / values.length;
+    const ssTime = normalizedTimes.reduce((total, value) => total + ((value - timeMean) ** 2), 0);
+    const covariance = normalizedTimes.reduce((total, value, index) => total + ((value - timeMean) * (values[index] - valueMean)), 0);
+    const slope = ssTime > 0 ? covariance / ssTime : 0;
+    const intercept = valueMean - (slope * timeMean);
+    const fitted = normalizedTimes.map((value) => intercept + (slope * value));
+    const residuals = values.map((value, index) => value - fitted[index]);
+    const mae = residuals.reduce((total, value) => total + Math.abs(value), 0) / residuals.length;
+    const rmse = Math.sqrt(residuals.reduce((total, value) => total + (value ** 2), 0) / residuals.length);
+    const ssTotal = values.reduce((total, value) => total + ((value - valueMean) ** 2), 0);
+    const ssResidual = residuals.reduce((total, value) => total + (value ** 2), 0);
+    const rSquared = ssTotal > 0 ? 1 - (ssResidual / ssTotal) : null;
+    const normalizedHorizon = Math.min(24, Math.max(1, Math.floor(horizon)));
+    const sortedGaps = rows.slice(1).map((row, index) => row.timeIndex - rows[index].timeIndex).filter((value) => value > 0);
+    const typicalGap = sortedGaps.length > 0
+        ? sortedGaps.sort((left, right) => left - right)[Math.floor(sortedGaps.length / 2)]
+        : 1;
+    const lastTime = rows[rows.length - 1].timeIndex;
+    const residualStdDev = sampleStdDev(residuals) ?? 0;
+    const critical = 1.96;
+    return {
+        timeField: timeField.key,
+        timeLabel: timeField.label,
+        valueField: valueField.key,
+        valueLabel: valueField.label,
+        method: 'linear_trend',
+        caseCount: rows.length,
+        horizon: normalizedHorizon,
+        intercept,
+        slope,
+        metrics: {
+            meanAbsoluteError: mae,
+            rootMeanSquaredError: rmse,
+            rSquared
+        },
+        observations: rows.map((row, index) => ({
+            caseId: row.caseId,
+            timeValue: typeof row.timeValue === 'number' ? row.timeValue : formatValue(row.timeValue),
+            timeIndex: row.timeIndex,
+            actual: row.actual,
+            fitted: fitted[index],
+            residual: residuals[index]
+        })),
+        forecast: Array.from({ length: normalizedHorizon }, (_unused, index) => {
+            const timeIndex = lastTime + (typicalGap * (index + 1));
+            const normalizedTime = timeIndex - firstTimeIndex;
+            const forecast = intercept + (slope * normalizedTime);
+            const margin = residualStdDev > 0 ? critical * residualStdDev : 0;
+            return {
+                step: index + 1,
+                timeIndex,
+                forecast,
+                lower: margin > 0 ? forecast - margin : null,
+                upper: margin > 0 ? forecast + margin : null
+            };
+        }),
+        notes: [
+            'Forecasting is a first-pass linear trend procedure for pilot planning, not a full ARIMA/exponential-smoothing module.',
+            'Date-like time fields are internally converted to timestamps before fitting.'
+        ]
+    };
+}
+function euclideanDistance(left, right) {
+    return Math.sqrt(left.reduce((total, value, index) => total + ((value - right[index]) ** 2), 0));
+}
+function meanVector(points, size) {
+    if (points.length === 0)
+        return new Array(size).fill(0);
+    return Array.from({ length: size }, (_unused, index) => points.reduce((total, point) => total + point[index], 0) / points.length);
+}
+export function analyzeClusterAnalysis(dataset, fields, requestedClusterCount = 3, options) {
+    const uniqueFields = [...new Set(fields.map((field) => field.trim()).filter(Boolean))];
+    if (uniqueFields.length < 2) {
+        throw new Error('Choose at least two numeric fields for cluster analysis.');
+    }
+    const fieldMeta = uniqueFields.map((field) => requireDatasetField(dataset, field, 'cluster'));
+    const rows = analysisRows(dataset, uniqueFields, options)
+        .map(({ row }) => ({
+        caseId: typeof row.case_id === 'string' ? row.case_id : null,
+        caseLabel: typeof row.case_label === 'string' ? row.case_label : null,
+        values: uniqueFields.map((field) => row[field])
+    }))
+        .filter((entry) => entry.values.every((value) => typeof value === 'number'));
+    if (rows.length < 2) {
+        throw new Error('Not enough usable numeric rows for cluster analysis.');
+    }
+    const clusterCount = Math.min(Math.max(2, Math.floor(requestedClusterCount)), Math.min(8, rows.length));
+    const means = uniqueFields.map((_field, fieldIndex) => rows.reduce((total, row) => total + row.values[fieldIndex], 0) / rows.length);
+    const stdDevs = uniqueFields.map((_field, fieldIndex) => sampleStdDev(rows.map((row) => row.values[fieldIndex])) || 1);
+    const standardized = rows.map((row) => row.values.map((value, index) => (value - means[index]) / stdDevs[index]));
+    let centroids = Array.from({ length: clusterCount }, (_unused, index) => standardized[Math.floor(index * standardized.length / clusterCount)].slice());
+    let assignments = new Array(rows.length).fill(0);
+    let iterations = 0;
+    for (; iterations < 100; iterations += 1) {
+        let changed = false;
+        assignments = standardized.map((point, rowIndex) => {
+            const distances = centroids.map((centroid) => euclideanDistance(point, centroid));
+            const nearest = distances.indexOf(Math.min(...distances));
+            if (nearest !== assignments[rowIndex])
+                changed = true;
+            return nearest;
+        });
+        centroids = centroids.map((centroid, clusterIndex) => {
+            const points = standardized.filter((_point, rowIndex) => assignments[rowIndex] === clusterIndex);
+            return points.length > 0 ? meanVector(points, uniqueFields.length) : centroid;
+        });
+        if (!changed && iterations > 0)
+            break;
+    }
+    const totalWithinClusterSumSquares = standardized.reduce((total, point, index) => {
+        const centroid = centroids[assignments[index]];
+        const distance = euclideanDistance(point, centroid);
+        return total + (distance ** 2);
+    }, 0);
+    const silhouetteValues = standardized.map((point, index) => {
+        const cluster = assignments[index];
+        const sameCluster = standardized.filter((_candidate, candidateIndex) => assignments[candidateIndex] === cluster && candidateIndex !== index);
+        const a = sameCluster.length > 0
+            ? sameCluster.reduce((total, candidate) => total + euclideanDistance(point, candidate), 0) / sameCluster.length
+            : 0;
+        const otherDistances = centroids
+            .map((_centroid, clusterIndex) => {
+            if (clusterIndex === cluster)
+                return null;
+            const points = standardized.filter((_candidate, candidateIndex) => assignments[candidateIndex] === clusterIndex);
+            if (points.length === 0)
+                return null;
+            return points.reduce((total, candidate) => total + euclideanDistance(point, candidate), 0) / points.length;
+        })
+            .filter((value) => value !== null);
+        const b = otherDistances.length > 0 ? Math.min(...otherDistances) : 0;
+        return Math.max(a, b) > 0 ? (b - a) / Math.max(a, b) : null;
+    }).filter((value) => value !== null);
+    return {
+        fields: uniqueFields,
+        fieldLabels: fieldMeta.map((field) => field.label),
+        clusterCount,
+        caseCount: rows.length,
+        iterations: iterations + 1,
+        clusters: centroids.map((centroid, index) => {
+            const members = rows.filter((_row, rowIndex) => assignments[rowIndex] === index);
+            const originalCenter = Object.fromEntries(uniqueFields.map((field, fieldIndex) => [
+                field,
+                (centroid[fieldIndex] * stdDevs[fieldIndex]) + means[fieldIndex]
+            ]));
+            return {
+                cluster: index + 1,
+                count: members.length,
+                proportion: rows.length > 0 ? members.length / rows.length : 0,
+                center: originalCenter
+            };
+        }),
+        assignments: rows.map((row, index) => ({
+            caseId: row.caseId,
+            caseLabel: row.caseLabel,
+            cluster: assignments[index] + 1,
+            distance: euclideanDistance(standardized[index], centroids[assignments[index]])
+        })).slice(0, 100),
+        metrics: {
+            totalWithinClusterSumSquares,
+            averageSilhouette: silhouetteValues.length > 0
+                ? silhouetteValues.reduce((total, value) => total + value, 0) / silhouetteValues.length
+                : null
+        },
+        notes: [
+            'Cluster analysis uses deterministic k-means over standardized numeric fields.',
+            'Assignments are previewed for the first 100 usable cases.'
+        ]
+    };
+}
+function giniImpurity(rows) {
+    if (rows.length === 0)
+        return 0;
+    const counts = new Map();
+    for (const row of rows)
+        counts.set(row.target, (counts.get(row.target) ?? 0) + 1);
+    return 1 - [...counts.values()].reduce((total, count) => {
+        const proportion = count / rows.length;
+        return total + (proportion ** 2);
+    }, 0);
+}
+function targetDistribution(rows) {
+    const counts = new Map();
+    for (const row of rows)
+        counts.set(row.target, (counts.get(row.target) ?? 0) + 1);
+    return [...counts.entries()]
+        .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+        .map(([value, count]) => ({ value, count, proportion: rows.length > 0 ? count / rows.length : 0 }));
+}
+function bestTreeSplit(rows, predictorFields, fieldLabels) {
+    const parentImpurity = giniImpurity(rows);
+    let best = null;
+    for (const field of predictorFields) {
+        const values = rows.map((row) => row.predictors[field]).filter((value) => value !== null);
+        const numericValues = values.filter((value) => typeof value === 'number').sort((left, right) => left - right);
+        const candidates = [];
+        if (numericValues.length >= 2) {
+            for (let index = 1; index < numericValues.length; index += 1) {
+                if (numericValues[index] !== numericValues[index - 1]) {
+                    candidates.push({ operator: '<=', value: (numericValues[index] + numericValues[index - 1]) / 2 });
+                }
+            }
+        }
+        else {
+            const distinct = [...new Set(values.map((value) => formatValue(value)))].slice(0, 12);
+            distinct.forEach((value) => candidates.push({ operator: 'in', value }));
+        }
+        for (const candidate of candidates) {
+            const leftRows = rows.filter((row) => {
+                const value = row.predictors[field] ?? null;
+                return candidate.operator === '<='
+                    ? typeof value === 'number' && value <= Number(candidate.value)
+                    : formatValue(value) === candidate.value;
+            });
+            const rightRows = rows.filter((row) => !leftRows.includes(row));
+            if (leftRows.length === 0 || rightRows.length === 0)
+                continue;
+            const weightedImpurity = ((leftRows.length / rows.length) * giniImpurity(leftRows))
+                + ((rightRows.length / rows.length) * giniImpurity(rightRows));
+            const gain = parentImpurity - weightedImpurity;
+            if (!best || gain > best.gain) {
+                best = {
+                    field,
+                    label: fieldLabels.get(field) ?? field,
+                    operator: candidate.operator,
+                    value: candidate.value,
+                    leftRows,
+                    rightRows,
+                    gain
+                };
+            }
+        }
+    }
+    return best;
+}
+function buildTreeNode(rows, predictorFields, fieldLabels, depth, maxDepth, id) {
+    const distribution = targetDistribution(rows);
+    const prediction = distribution[0]?.value ?? 'Missing';
+    if (depth >= maxDepth || rows.length < 4 || distribution.length <= 1) {
+        return { id, depth, prediction, count: rows.length, distribution, split: null };
+    }
+    const split = bestTreeSplit(rows, predictorFields, fieldLabels);
+    if (!split || split.gain <= 0) {
+        return { id, depth, prediction, count: rows.length, distribution, split: null };
+    }
+    return {
+        id,
+        depth,
+        prediction,
+        count: rows.length,
+        distribution,
+        split: {
+            field: split.field,
+            label: split.label,
+            operator: split.operator,
+            value: split.value
+        },
+        left: buildTreeNode(split.leftRows, predictorFields, fieldLabels, depth + 1, maxDepth, `${id}L`),
+        right: buildTreeNode(split.rightRows, predictorFields, fieldLabels, depth + 1, maxDepth, `${id}R`)
+    };
+}
+function predictTree(node, row) {
+    if (!node.split || !node.left || !node.right)
+        return node.prediction;
+    const value = row.predictors[node.split.field] ?? null;
+    const goLeft = node.split.operator === '<='
+        ? typeof value === 'number' && value <= Number(node.split.value)
+        : formatValue(value) === node.split.value;
+    return predictTree(goLeft ? node.left : node.right, row);
+}
+export function analyzeDecisionTree(dataset, targetFieldKey, predictorFields, maxDepth = 3, options) {
+    const uniquePredictors = [...new Set(predictorFields.map((field) => field.trim()).filter(Boolean))]
+        .filter((field) => field !== targetFieldKey);
+    if (uniquePredictors.length === 0) {
+        throw new Error('Choose at least one predictor field for the decision tree.');
+    }
+    const targetField = requireDatasetField(dataset, targetFieldKey, 'decision-tree target');
+    const predictorMeta = uniquePredictors.map((field) => requireDatasetField(dataset, field, 'decision-tree predictor'));
+    const rows = analysisRows(dataset, [targetFieldKey, ...uniquePredictors], options)
+        .map(({ row }) => ({
+        target: row[targetFieldKey] === null || row[targetFieldKey] === undefined ? null : formatValue(row[targetFieldKey] ?? null),
+        predictors: Object.fromEntries(uniquePredictors.map((field) => [field, row[field] ?? null]))
+    }))
+        .filter((entry) => entry.target !== null);
+    if (rows.length < 4) {
+        throw new Error('Decision tree requires at least four usable rows with a target value.');
+    }
+    const normalizedMaxDepth = Math.min(6, Math.max(1, Math.floor(maxDepth)));
+    const fieldLabels = new Map(predictorMeta.map((field) => [field.key, field.label]));
+    const tree = buildTreeNode(rows, uniquePredictors, fieldLabels, 0, normalizedMaxDepth, 'N');
+    const predictions = rows.map((row) => ({ actual: row.target, predicted: predictTree(tree, row) }));
+    const correct = predictions.filter((entry) => entry.actual === entry.predicted).length;
+    const confusionCounts = new Map();
+    for (const entry of predictions) {
+        const key = `${entry.actual}::${entry.predicted}`;
+        confusionCounts.set(key, (confusionCounts.get(key) ?? 0) + 1);
+    }
+    return {
+        targetField: targetField.key,
+        targetLabel: targetField.label,
+        predictorFields: uniquePredictors,
+        predictorLabels: predictorMeta.map((field) => field.label),
+        caseCount: rows.length,
+        maxDepth: normalizedMaxDepth,
+        tree,
+        accuracy: rows.length > 0 ? correct / rows.length : null,
+        confusionMatrix: [...confusionCounts.entries()].map(([key, count]) => {
+            const [actual, predicted] = key.split('::');
+            return { actual: actual ?? '', predicted: predicted ?? '', count };
+        }),
+        notes: [
+            'Decision trees are first-pass classification trees using Gini impurity.',
+            'The current output is intended for exploratory modeling and teaching, not audited production prediction.'
+        ]
+    };
+}
+export function analyzeCrosstab(dataset, rowFieldKey, columnFieldKey, options) {
+    if (rowFieldKey === columnFieldKey) {
+        throw new Error('Choose two different fields for the crosstab.');
+    }
+    const rowField = dataset.fields.find((field) => field.key === rowFieldKey);
+    const columnField = dataset.fields.find((field) => field.key === columnFieldKey);
+    if (!rowField || !columnField) {
+        throw new Error('Selected crosstab field was not found in the dataset.');
+    }
+    const rows = analysisRows(dataset, [rowFieldKey, columnFieldKey], options);
+    const validRows = rows.filter(({ row }) => row[rowFieldKey] !== null && row[columnFieldKey] !== null);
+    const rowCounts = new Map();
+    const columnCounts = new Map();
+    const cellCounts = new Map();
+    for (const { row, weight } of validRows) {
+        if (weight <= 0)
+            continue;
+        const rowValue = formatValue(row[rowFieldKey] ?? null);
+        const columnValue = formatValue(row[columnFieldKey] ?? null);
+        rowCounts.set(rowValue, (rowCounts.get(rowValue) ?? 0) + weight);
+        columnCounts.set(columnValue, (columnCounts.get(columnValue) ?? 0) + weight);
+        const cellKey = `${rowValue}::${columnValue}`;
+        cellCounts.set(cellKey, (cellCounts.get(cellKey) ?? 0) + weight);
+    }
+    const sortCategoryEntries = (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]);
+    const validCaseCount = validRows.length;
+    const weightedValidCaseCount = [...rowCounts.values()].reduce((total, value) => total + value, 0);
+    const rowCategories = [...rowCounts.entries()]
+        .sort(sortCategoryEntries)
+        .map(([value, count]) => ({
+        value,
+        count,
+        proportion: weightedValidCaseCount === 0 ? 0 : count / weightedValidCaseCount
+    }));
+    const columnCategories = [...columnCounts.entries()]
+        .sort(sortCategoryEntries)
+        .map(([value, count]) => ({
+        value,
+        count,
+        proportion: weightedValidCaseCount === 0 ? 0 : count / weightedValidCaseCount
+    }));
+    const cells = [];
+    let chiSquareStatistic = 0;
+    for (const rowCategory of rowCategories) {
+        for (const columnCategory of columnCategories) {
+            const count = cellCounts.get(`${rowCategory.value}::${columnCategory.value}`) ?? 0;
+            const expected = weightedValidCaseCount === 0 ? 0 : (rowCategory.count * columnCategory.count) / weightedValidCaseCount;
+            if (expected > 0) {
+                chiSquareStatistic += ((count - expected) ** 2) / expected;
+            }
+            cells.push({
+                rowValue: rowCategory.value,
+                columnValue: columnCategory.value,
+                count,
+                rowProportion: rowCategory.count === 0 ? 0 : count / rowCategory.count,
+                columnProportion: columnCategory.count === 0 ? 0 : count / columnCategory.count,
+                totalProportion: weightedValidCaseCount === 0 ? 0 : count / weightedValidCaseCount
+            });
+        }
+    }
+    const degreesOfFreedom = Math.max(0, (rowCategories.length - 1) * (columnCategories.length - 1));
+    const pValue = degreesOfFreedom > 0 ? chiSquarePValue(chiSquareStatistic, degreesOfFreedom) : null;
+    const minDimension = Math.min(rowCategories.length - 1, columnCategories.length - 1);
+    const cramersV = weightedValidCaseCount > 0 && minDimension > 0
+        ? Math.sqrt(chiSquareStatistic / (weightedValidCaseCount * minDimension))
+        : null;
+    return {
+        rowField: rowField.key,
+        rowLabel: rowField.label,
+        columnField: columnField.key,
+        columnLabel: columnField.label,
+        caseCount: dataset.caseCount,
+        validCaseCount,
+        missingCaseCount: dataset.caseCount - validCaseCount,
+        weightedCaseCount: normalizeAnalysisOptions(options).weightField ? getWeightTotal(normalizeDatasetForAnalysis(dataset, options).rows, normalizeAnalysisOptions(options).weightField) : null,
+        weightedValidCaseCount: normalizeAnalysisOptions(options).weightField ? weightedValidCaseCount : null,
+        rowCategories,
+        columnCategories,
+        cells,
+        chiSquare: degreesOfFreedom > 0
+            ? {
+                statistic: chiSquareStatistic,
+                degreesOfFreedom,
+                pValue,
+                cramersV
+            }
+            : null
+    };
+}
+export function analyzeRegression(dataset, dependentField, predictorField, model, options) {
+    const predictorFields = (Array.isArray(predictorField) ? predictorField : [predictorField])
+        .map((field) => field.trim())
+        .filter(Boolean);
+    if (predictorFields.length === 0) {
+        throw new Error('At least one predictor field is required for regression.');
+    }
+    if (new Set(predictorFields).size !== predictorFields.length) {
+        throw new Error('Predictor fields must be unique.');
+    }
+    if (predictorFields.includes(dependentField)) {
+        throw new Error('Dependent and predictor fields must be different.');
+    }
+    const rows = analysisRows(dataset, [dependentField, ...predictorFields], options)
+        .map(({ row, weight }) => ({
+        caseId: typeof row.case_id === 'string' ? row.case_id : null,
+        caseLabel: typeof row.case_label === 'string' ? row.case_label : null,
+        x: predictorFields.map((field) => row[field]),
+        y: row[dependentField],
+        weight
+    }))
+        .filter((entry) => typeof entry.y === 'number'
+        && entry.x.every((value) => typeof value === 'number')
+        && entry.weight > 0);
+    if (rows.length < predictorFields.length + 1) {
+        throw new Error('Not enough usable numeric rows for the requested regression.');
+    }
+    const weightedCaseCount = rows.reduce((total, entry) => total + entry.weight, 0);
+    const xMatrix = rows.map((entry) => [1, ...entry.x]);
+    const yVector = rows.map((entry) => model === 'logistic' ? (entry.y >= 0.5 ? 1 : 0) : entry.y);
+    const weights = rows.map((entry) => entry.weight);
+    if (model === 'linear') {
+        const xtwx = Array.from({ length: predictorFields.length + 1 }, () => Array.from({ length: predictorFields.length + 1 }, () => 0));
+        const xtwy = Array.from({ length: predictorFields.length + 1 }, () => 0);
+        for (let rowIndex = 0; rowIndex < xMatrix.length; rowIndex += 1) {
+            const vector = xMatrix[rowIndex];
+            const y = yVector[rowIndex];
+            const weight = weights[rowIndex];
+            for (let i = 0; i < vector.length; i += 1) {
+                xtwy[i] += vector[i] * y * weight;
+                for (let j = 0; j < vector.length; j += 1) {
+                    xtwx[i][j] += vector[i] * vector[j] * weight;
+                }
+            }
+        }
+        const coefficients = solveLinearSystem(xtwx, xtwy);
+        const intercept = coefficients[0];
+        const slopes = coefficients.slice(1);
+        const predictions = xMatrix.map((vector) => coefficients.reduce((total, coefficient, index) => total + (coefficient * vector[index]), 0));
+        const yMean = yVector.reduce((total, value, index) => total + (value * weights[index]), 0) / weightedCaseCount;
+        const ssTot = yVector.reduce((total, value, index) => total + (weights[index] * ((value - yMean) ** 2)), 0);
+        const ssRes = yVector.reduce((total, value, index) => total + (weights[index] * ((value - predictions[index]) ** 2)), 0);
+        const rSquared = ssTot === 0 ? 1 : 1 - (ssRes / ssTot);
+        const meanSquaredError = weightedCaseCount > 0 ? ssRes / weightedCaseCount : null;
+        const degreesOfFreedom = Math.max(1, rows.length - predictorFields.length - 1);
+        const residualStdError = meanSquaredError === null ? null : Math.sqrt(meanSquaredError);
+        const fStatistic = predictorFields.length > 0 && degreesOfFreedom > 0 && rSquared < 1
+            ? (rSquared / predictorFields.length) / ((1 - rSquared) / degreesOfFreedom)
+            : null;
+        const fPValue = fStatistic === null ? null : fDistributionPValue(fStatistic, predictorFields.length, degreesOfFreedom);
+        const covarianceMatrix = meanSquaredError === null ? null : invertMatrix(xtwx).map((row) => row.map((value) => value * meanSquaredError));
+        const coefficientStats = coefficients.map((coefficient, index) => {
+            const standardError = covarianceMatrix ? Math.sqrt(Math.max(0, covarianceMatrix[index][index])) : null;
+            const statistic = standardError && standardError > 0 ? coefficient / standardError : null;
+            const pValue = statistic === null ? null : studentTPValue(statistic, degreesOfFreedom);
+            return {
+                field: index === 0 ? '(Intercept)' : predictorFields[index - 1],
+                coefficient,
+                standardError,
+                statistic,
+                pValue,
+                confidenceInterval: standardError === null ? null : confidenceInterval95(coefficient, standardError, degreesOfFreedom),
+                oddsRatio: null
+            };
+        });
+        const assumptions = [
+            buildAssumptionCheck('sample_size', 'Sample size', rows.length > predictorFields.length + 1 ? 'pass' : 'fail', rows.length, rows.length > predictorFields.length + 1 ? 'Enough rows for linear regression.' : 'Need more rows than predictors.'),
+            buildAssumptionCheck('residual_df', 'Residual degrees of freedom', degreesOfFreedom >= 5 ? 'pass' : 'warn', degreesOfFreedom, degreesOfFreedom >= 5 ? 'Residual degrees of freedom are acceptable.' : 'Residual degrees of freedom are low.')
+        ];
+        const residuals = yVector.map((value, index) => value - predictions[index]);
+        const standardizedResiduals = residualStdError && residualStdError > 0
+            ? residuals.map((residual) => residual / residualStdError)
+            : residuals.map(() => null);
+        const observations = rows.map((entry, index) => ({
+            caseId: entry.caseId,
+            caseLabel: entry.caseLabel,
+            actual: yVector[index],
+            predicted: predictions[index],
+            residual: residuals[index],
+            standardizedResidual: standardizedResiduals[index],
+            leverage: null,
+            cooksDistance: null,
+            devianceResidual: null,
+            predictedClass: null,
+            outlier: standardizedResiduals[index] !== null && Math.abs(standardizedResiduals[index]) >= 2.5
+        }));
+        const inverseXtWX = invertMatrix(xtwx);
+        const parameterCount = predictorFields.length + 1;
+        const leverageValues = rows.map((entry) => {
+            const vector = [1, ...entry.x];
+            const projected = inverseXtWX.map((row) => row.reduce((total, value, index) => total + (value * vector[index]), 0));
+            const leverage = entry.weight * vector.reduce((total, value, index) => total + (value * projected[index]), 0);
+            return Number.isFinite(leverage) ? leverage : null;
+        });
+        const cooksValues = observations.map((observation, index) => {
+            const h = leverageValues[index];
+            const stdResidual = observation.standardizedResidual;
+            if (h === null || stdResidual === null || stdResidual === undefined || !(h >= 0) || h >= 1 || parameterCount <= 0)
+                return null;
+            const numericResidual = stdResidual;
+            return ((numericResidual ** 2) * h) / (parameterCount * Math.max(1e-12, 1 - h));
+        });
+        observations.forEach((observation, index) => {
+            observation.leverage = leverageValues[index];
+            observation.cooksDistance = cooksValues[index];
+        });
+        const outlierCount = observations.filter((item) => item.outlier).length;
+        const maxAbsStandardizedResidual = standardizedResiduals.reduce((max, value) => {
+            if (value === null)
+                return max;
+            const numericValue = value;
+            return Math.max(max, Math.abs(numericValue));
+        }, 0);
+        const maxLeverage = leverageValues.reduce((max, value) => value === null ? max : Math.max(max, value), 0);
+        const maxCooksDistance = cooksValues.reduce((max, value) => value === null ? max : Math.max(max, value), 0);
+        const leverageThreshold = (2 * parameterCount) / Math.max(rows.length, 1);
+        const highLeverageCount = leverageValues.filter((value) => value !== null && value > leverageThreshold).length;
+        const influentialCount = cooksValues.filter((value) => value !== null && value > (4 / Math.max(rows.length, 1))).length;
+        const durbinWatson = computeDurbinWatson(residuals);
+        const meanAbsoluteError = residuals.reduce((total, value, index) => total + (Math.abs(value) * weights[index]), 0) / weightedCaseCount;
+        const vifByPredictor = computeVifByPredictor(rows, predictorFields);
+        const vifValues = Object.values(vifByPredictor).filter((value) => typeof value === 'number' && Number.isFinite(value));
+        return {
+            model,
+            dependentField,
+            predictorField: predictorFields[0],
+            predictorFields,
+            caseCount: rows.length,
+            intercept,
+            slope: slopes[0] ?? 0,
+            coefficients: coefficientStats,
+            metrics: {
+                rSquared,
+                adjustedRSquared: rows.length > predictorFields.length + 1
+                    ? 1 - ((1 - rSquared) * ((rows.length - 1) / degreesOfFreedom))
+                    : null,
+                meanSquaredError,
+                residualStdError,
+                fStatistic,
+                fPValue
+            },
+            diagnostics: {
+                weightedCaseCount,
+                residualSumSquares: ssRes,
+                totalSumSquares: ssTot,
+                outlierCount,
+                maxAbsStandardizedResidual,
+                maxLeverage,
+                maxCooksDistance,
+                highLeverageCount,
+                influentialCount,
+                meanAbsoluteError,
+                durbinWatson,
+                maxVif: vifValues.length > 0 ? Math.max(...vifValues) : null,
+                meanVif: vifValues.length > 0 ? vifValues.reduce((total, value) => total + value, 0) / vifValues.length : null,
+                ...Object.fromEntries(Object.entries(vifByPredictor).map(([field, value]) => [`vif_${field}`, value]))
+            },
+            observations: observations.slice(0, 50),
+            assumptions
+        };
+    }
+    const coefficients = new Array(predictorFields.length + 1).fill(0);
+    const learningRate = 0.05;
+    for (let iteration = 0; iteration < 5000; iteration += 1) {
+        const gradients = new Array(coefficients.length).fill(0);
+        for (let rowIndex = 0; rowIndex < xMatrix.length; rowIndex += 1) {
+            const linear = coefficients.reduce((total, coefficient, index) => total + (coefficient * xMatrix[rowIndex][index]), 0);
+            const prediction = 1 / (1 + Math.exp(-linear));
+            const error = prediction - yVector[rowIndex];
+            for (let coefficientIndex = 0; coefficientIndex < coefficients.length; coefficientIndex += 1) {
+                gradients[coefficientIndex] += error * xMatrix[rowIndex][coefficientIndex] * weights[rowIndex];
+            }
+        }
+        for (let coefficientIndex = 0; coefficientIndex < coefficients.length; coefficientIndex += 1) {
+            coefficients[coefficientIndex] -= (learningRate * gradients[coefficientIndex]) / weightedCaseCount;
+        }
+    }
+    const probabilities = xMatrix.map((vector) => 1 / (1 + Math.exp(-coefficients.reduce((total, coefficient, index) => total + (coefficient * vector[index]), 0))));
+    const predictedClasses = probabilities.map((probability) => probability >= 0.5 ? 1 : 0);
+    const weightedAccuracy = yVector.reduce((total, value, index) => total + ((predictedClasses[index] === value ? 1 : 0) * weights[index]), 0) / weightedCaseCount;
+    const logLikelihood = yVector.reduce((total, value, index) => {
+        const probability = Math.min(0.999999, Math.max(0.000001, probabilities[index]));
+        return total + (weights[index] * ((value * Math.log(probability)) + ((1 - value) * Math.log(1 - probability))));
+    }, 0);
+    const meanY = yVector.reduce((total, value, index) => total + (value * weights[index]), 0) / weightedCaseCount;
+    const boundedMeanY = Math.min(0.999999, Math.max(0.000001, meanY));
+    const nullLogLikelihood = yVector.reduce((total, value, index) => total + (weights[index] * ((value * Math.log(boundedMeanY)) + ((1 - value) * Math.log(1 - boundedMeanY)))), 0);
+    const truePositive = yVector.reduce((total, value, index) => total + ((value === 1 && predictedClasses[index] === 1 ? 1 : 0) * weights[index]), 0);
+    const trueNegative = yVector.reduce((total, value, index) => total + ((value === 0 && predictedClasses[index] === 0 ? 1 : 0) * weights[index]), 0);
+    const falsePositive = yVector.reduce((total, value, index) => total + ((value === 0 && predictedClasses[index] === 1 ? 1 : 0) * weights[index]), 0);
+    const falseNegative = yVector.reduce((total, value, index) => total + ((value === 1 && predictedClasses[index] === 0 ? 1 : 0) * weights[index]), 0);
+    const precision = (truePositive + falsePositive) > 0 ? truePositive / (truePositive + falsePositive) : null;
+    const recall = (truePositive + falseNegative) > 0 ? truePositive / (truePositive + falseNegative) : null;
+    const specificity = (trueNegative + falsePositive) > 0 ? trueNegative / (trueNegative + falsePositive) : null;
+    const f1Score = precision !== null && recall !== null && (precision + recall) > 0 ? (2 * precision * recall) / (precision + recall) : null;
+    const brierScore = probabilities.reduce((total, probability, index) => total + (weights[index] * ((probability - yVector[index]) ** 2)), 0) / weightedCaseCount;
+    const deviance = -2 * logLikelihood;
+    const nullDeviance = -2 * nullLogLikelihood;
+    const rocAuc = computeRocAuc(probabilities, yVector, weights);
+    const hessian = Array.from({ length: coefficients.length }, () => Array.from({ length: coefficients.length }, () => 0));
+    for (let rowIndex = 0; rowIndex < xMatrix.length; rowIndex += 1) {
+        const p = probabilities[rowIndex];
+        const variance = p * (1 - p) * weights[rowIndex];
+        const vector = xMatrix[rowIndex];
+        for (let i = 0; i < vector.length; i += 1) {
+            for (let j = 0; j < vector.length; j += 1) {
+                hessian[i][j] += vector[i] * vector[j] * variance;
+            }
+        }
+    }
+    const covarianceMatrix = invertMatrix(hessian);
+    const coefficientStats = coefficients.map((coefficient, index) => {
+        const standardError = Math.sqrt(Math.max(0, covarianceMatrix[index][index]));
+        const statistic = standardError > 0 ? coefficient / standardError : null;
+        const pValue = statistic === null ? null : studentTPValue(statistic, Math.max(1, rows.length - coefficients.length));
+        return {
+            field: index === 0 ? '(Intercept)' : predictorFields[index - 1],
+            coefficient,
+            standardError,
+            statistic,
+            pValue,
+            confidenceInterval: standardError > 0 ? {
+                level: 0.95,
+                lower: coefficient - (1.959963984540054 * standardError),
+                upper: coefficient + (1.959963984540054 * standardError)
+            } : null,
+            oddsRatio: Math.exp(coefficient)
+        };
+    });
+    const hosmerGroupCount = Math.min(10, Math.max(2, Math.floor(rows.length / 2)));
+    const probabilityGroups = probabilities
+        .map((probability, index) => ({ probability, observed: yVector[index], weight: weights[index] }))
+        .sort((left, right) => left.probability - right.probability);
+    const groupSize = Math.ceil(probabilityGroups.length / hosmerGroupCount);
+    let hosmerLemeshowStatistic = 0;
+    let realizedGroupCount = 0;
+    for (let groupIndex = 0; groupIndex < hosmerGroupCount; groupIndex += 1) {
+        const group = probabilityGroups.slice(groupIndex * groupSize, (groupIndex + 1) * groupSize);
+        if (group.length === 0)
+            continue;
+        realizedGroupCount += 1;
+        const observed = group.reduce((total, item) => total + (item.observed * item.weight), 0);
+        const expected = group.reduce((total, item) => total + (item.probability * item.weight), 0);
+        const totalWeight = group.reduce((total, item) => total + item.weight, 0);
+        if (expected > 0 && expected < totalWeight) {
+            hosmerLemeshowStatistic += (((observed - expected) ** 2) / expected) + ((((totalWeight - observed) - (totalWeight - expected)) ** 2) / (totalWeight - expected));
+        }
+    }
+    const hosmerLemeshowDf = Math.max(1, realizedGroupCount - 2);
+    const hosmerLemeshowPValue = chiSquarePValue(hosmerLemeshowStatistic, hosmerLemeshowDf);
+    const assumptions = [
+        buildAssumptionCheck('binary_outcome', 'Binary outcome', new Set(yVector).size <= 2 ? 'pass' : 'fail', new Set(yVector).size, new Set(yVector).size <= 2 ? 'Outcome is binary.' : 'Logistic regression requires a binary outcome.'),
+        buildAssumptionCheck('sample_size', 'Sample size', rows.length >= (predictorFields.length * 5) ? 'pass' : 'warn', rows.length, rows.length >= (predictorFields.length * 5) ? 'Sample size is acceptable for this first-pass model.' : 'Sample size is small relative to predictor count.')
+    ];
+    const pearsonResiduals = probabilities.map((probability, index) => {
+        const denominator = Math.sqrt(Math.max(1e-12, probability * (1 - probability)));
+        return (yVector[index] - probability) / denominator;
+    });
+    const observations = rows.map((entry, index) => ({
+        caseId: entry.caseId,
+        caseLabel: entry.caseLabel,
+        actual: yVector[index],
+        predicted: probabilities[index],
+        residual: yVector[index] - probabilities[index],
+        standardizedResidual: pearsonResiduals[index],
+        leverage: null,
+        cooksDistance: null,
+        devianceResidual: null,
+        predictedClass: predictedClasses[index],
+        outlier: Math.abs(pearsonResiduals[index]) >= 2.5
+    }));
+    const leverageValues = rows.map((entry, index) => {
+        const vector = [1, ...entry.x];
+        const variance = probabilities[index] * (1 - probabilities[index]) * weights[index];
+        const projected = covarianceMatrix.map((row) => row.reduce((total, value, innerIndex) => total + (value * vector[innerIndex]), 0));
+        const leverage = variance * vector.reduce((total, value, innerIndex) => total + (value * projected[innerIndex]), 0);
+        return Number.isFinite(leverage) ? leverage : null;
+    });
+    const devianceResiduals = probabilities.map((probability, index) => {
+        const y = yVector[index];
+        const boundedProbability = Math.min(0.999999, Math.max(0.000001, probability));
+        const term = (y === 1)
+            ? (2 * Math.log(1 / boundedProbability))
+            : (2 * Math.log(1 / (1 - boundedProbability)));
+        return (y - boundedProbability >= 0 ? 1 : -1) * Math.sqrt(Math.max(0, term));
+    });
+    observations.forEach((observation, index) => {
+        observation.leverage = leverageValues[index];
+        observation.devianceResidual = devianceResiduals[index];
+    });
+    const outlierCount = observations.filter((item) => item.outlier).length;
+    const maxAbsPearsonResidual = pearsonResiduals.reduce((max, value) => Math.max(max, Math.abs(value)), 0);
+    const maxLeverage = leverageValues.reduce((max, value) => value === null ? max : Math.max(max, value), 0);
+    const maxAbsDevianceResidual = devianceResiduals.reduce((max, value) => Math.max(max, Math.abs(value)), 0);
+    const leverageThreshold = (2 * (predictorFields.length + 1)) / Math.max(rows.length, 1);
+    const highLeverageCount = leverageValues.filter((value) => value !== null && value > leverageThreshold).length;
+    return {
+        model,
+        dependentField,
+        predictorField: predictorFields[0],
+        predictorFields,
+        caseCount: rows.length,
+        intercept: coefficients[0],
+        slope: coefficients[1] ?? 0,
+        coefficients: coefficientStats,
+        metrics: {
+            accuracy: weightedAccuracy,
+            meanPredictedProbability: probabilities.reduce((total, value, index) => total + (value * weights[index]), 0) / weightedCaseCount,
+            pseudoRSquared: nullLogLikelihood === 0 ? null : 1 - (logLikelihood / nullLogLikelihood),
+            precision,
+            recall,
+            specificity,
+            f1Score,
+            brierScore,
+            rocAuc
+        },
+        diagnostics: {
+            weightedCaseCount,
+            logLikelihood,
+            nullLogLikelihood,
+            deviance,
+            nullDeviance,
+            aic: (2 * coefficients.length) - (2 * logLikelihood),
+            bic: (Math.log(rows.length) * coefficients.length) - (2 * logLikelihood),
+            truePositive,
+            trueNegative,
+            falsePositive,
+            falseNegative,
+            hosmerLemeshowStatistic,
+            hosmerLemeshowPValue,
+            outlierCount,
+            maxAbsPearsonResidual,
+            maxLeverage,
+            maxAbsDevianceResidual,
+            highLeverageCount,
+            rocAuc
+        },
+        observations: observations.slice(0, 50),
+        assumptions
+    };
+}
+export function analyzeCorrelation(dataset, xField, yField, options) {
+    if (xField === yField) {
+        throw new Error('Choose two different numeric fields for correlation.');
+    }
+    const pairs = analysisRows(dataset, [xField, yField], options)
+        .map(({ row, weight }) => ({
+        x: row[xField],
+        y: row[yField],
+        weight
+    }))
+        .filter((row) => typeof row.x === 'number' && typeof row.y === 'number' && row.weight > 0);
+    if (pairs.length < 2) {
+        throw new Error('At least two numeric rows are required for correlation.');
+    }
+    const totalWeight = pairs.reduce((total, pair) => total + pair.weight, 0);
+    const xMean = pairs.reduce((total, pair) => total + (pair.x * pair.weight), 0) / totalWeight;
+    const yMean = pairs.reduce((total, pair) => total + (pair.y * pair.weight), 0) / totalWeight;
+    const ssxx = pairs.reduce((total, pair) => total + (pair.weight * ((pair.x - xMean) ** 2)), 0);
+    const ssyy = pairs.reduce((total, pair) => total + (pair.weight * ((pair.y - yMean) ** 2)), 0);
+    const ssxy = pairs.reduce((total, pair) => total + (pair.weight * ((pair.x - xMean) * (pair.y - yMean))), 0);
+    if (ssxx === 0 || ssyy === 0) {
+        throw new Error('Both correlation fields must vary across the selected cases.');
+    }
+    const pearsonR = ssxy / Math.sqrt(ssxx * ssyy);
+    const xStdDev = Math.sqrt(ssxx / totalWeight);
+    const yStdDev = Math.sqrt(ssyy / totalWeight);
+    const covariance = ssxy / totalWeight;
+    const slope = ssxy / ssxx;
+    const intercept = yMean - (slope * xMean);
+    const degreesOfFreedom = Math.max(1, pairs.length - 2);
+    const tStatistic = pearsonR === 1 || pearsonR === -1
+        ? Number.POSITIVE_INFINITY
+        : pearsonR * Math.sqrt(degreesOfFreedom / Math.max(1e-12, 1 - (pearsonR ** 2)));
+    const pValue = studentTPValue(tStatistic, degreesOfFreedom);
+    const fisherZ = Math.atanh(Math.max(-0.999999, Math.min(0.999999, pearsonR)));
+    const fisherStandardError = pairs.length > 3 ? 1 / Math.sqrt(pairs.length - 3) : null;
+    const confidenceInterval = fisherStandardError === null
+        ? null
+        : {
+            level: 0.95,
+            lower: Math.tanh(fisherZ - (1.959963984540054 * fisherStandardError)),
+            upper: Math.tanh(fisherZ + (1.959963984540054 * fisherStandardError))
+        };
+    return {
+        xField,
+        yField,
+        caseCount: pairs.length,
+        pearsonR,
+        rSquared: pearsonR ** 2,
+        covariance,
+        xMean,
+        yMean,
+        xStdDev,
+        yStdDev,
+        slope,
+        intercept,
+        pValue,
+        confidenceInterval
+    };
+}
+export function analyzeCompareMeans(dataset, outcomeField, groupField, options) {
+    if (outcomeField === groupField) {
+        throw new Error('Choose different outcome and grouping fields.');
+    }
+    const outcome = dataset.fields.find((field) => field.key === outcomeField);
+    const group = dataset.fields.find((field) => field.key === groupField);
+    if (!outcome || !group) {
+        throw new Error('Selected compare-means field was not found in the dataset.');
+    }
+    const validPairs = analysisRows(dataset, [outcomeField, groupField], options)
+        .map(({ row, weight }) => ({
+        outcome: row[outcomeField],
+        group: row[groupField],
+        weight
+    }))
+        .filter((row) => typeof row.outcome === 'number' && row.group !== null && row.weight > 0);
+    if (validPairs.length < 2) {
+        throw new Error('At least two valid grouped numeric rows are required.');
+    }
+    const groupedValues = new Map();
+    for (const pair of validPairs) {
+        const key = formatValue(pair.group);
+        const values = groupedValues.get(key) ?? [];
+        values.push({ value: pair.outcome, weight: pair.weight });
+        groupedValues.set(key, values);
+    }
+    const groups = [...groupedValues.entries()]
+        .map(([groupValue, values]) => {
+        const numericValues = values.map((entry) => entry.value);
+        const weights = values.map((entry) => entry.weight);
+        const mean = weightedMean(numericValues, weights);
+        if (mean === null) {
+            throw new Error('Unable to summarize grouped values.');
+        }
+        return {
+            groupValue,
+            count: values.length,
+            mean,
+            stdDev: normalizeAnalysisOptions(options).weightField ? weightedStdDev(numericValues, weights) : sampleStdDev(numericValues),
+            min: Math.min(...numericValues),
+            max: Math.max(...numericValues)
+        };
+    })
+        .sort((left, right) => right.count - left.count || left.groupValue.localeCompare(right.groupValue));
+    const totalWeight = validPairs.reduce((total, pair) => total + pair.weight, 0);
+    const overallMean = validPairs.reduce((total, pair) => total + (pair.outcome * pair.weight), 0) / totalWeight;
+    const ssBetween = groups.reduce((total, item) => {
+        const values = groupedValues.get(item.groupValue) ?? [];
+        const groupWeight = values.reduce((inner, entry) => inner + entry.weight, 0);
+        return total + (groupWeight * ((item.mean - overallMean) ** 2));
+    }, 0);
+    const ssWithin = groups.reduce((total, item) => {
+        const values = groupedValues.get(item.groupValue) ?? [];
+        return total + values.reduce((inner, value) => inner + (value.weight * ((value.value - item.mean) ** 2)), 0);
+    }, 0);
+    const ssTotal = ssBetween + ssWithin;
+    const dfBetween = Math.max(0, groups.length - 1);
+    const dfWithin = Math.max(0, validPairs.length - groups.length);
+    const msBetween = dfBetween > 0 ? ssBetween / dfBetween : null;
+    const msWithin = dfWithin > 0 ? ssWithin / dfWithin : null;
+    const fStatistic = msBetween !== null && msWithin !== null && msWithin > 0
+        ? msBetween / msWithin
+        : null;
+    const pValue = fStatistic !== null ? fDistributionPValue(fStatistic, dfBetween, dfWithin) : null;
+    const etaSquared = ssTotal > 0 ? ssBetween / ssTotal : null;
+    const omegaSquared = msWithin !== null && ssTotal > 0
+        ? Math.max(0, (ssBetween - (dfBetween * msWithin)) / (ssTotal + msWithin))
+        : null;
+    const assumptions = [
+        buildAssumptionCheck('group_count', 'At least two groups', groups.length > 1 ? 'pass' : 'fail', groups.length, groups.length > 1 ? 'Enough groups for ANOVA.' : 'ANOVA requires at least two non-empty groups.'),
+        buildAssumptionCheck('minimum_group_size', 'Minimum group size', groups.every((group) => group.count >= 2) ? 'pass' : 'warn', Math.min(...groups.map((group) => group.count)), groups.every((group) => group.count >= 2) ? 'Each group has at least two cases.' : 'One or more groups have fewer than two cases.')
+    ];
+    const pairwiseComparisons = [];
+    for (let leftIndex = 0; leftIndex < groups.length; leftIndex += 1) {
+        for (let rightIndex = leftIndex + 1; rightIndex < groups.length; rightIndex += 1) {
+            const leftGroup = groups[leftIndex];
+            const rightGroup = groups[rightIndex];
+            const leftEntries = groupedValues.get(leftGroup.groupValue) ?? [];
+            const rightEntries = groupedValues.get(rightGroup.groupValue) ?? [];
+            const leftWeights = leftEntries.map((entry) => entry.weight);
+            const rightWeights = rightEntries.map((entry) => entry.weight);
+            const leftNumeric = leftEntries.map((entry) => entry.value);
+            const rightNumeric = rightEntries.map((entry) => entry.value);
+            const leftVariance = weightedVariance(leftNumeric, leftWeights);
+            const rightVariance = weightedVariance(rightNumeric, rightWeights);
+            const leftN = normalizeAnalysisOptions(options).weightField ? effectiveSampleSize(leftWeights) : leftNumeric.length;
+            const rightN = normalizeAnalysisOptions(options).weightField ? effectiveSampleSize(rightWeights) : rightNumeric.length;
+            let standardError = null;
+            let statistic = null;
+            let degreesOfFreedom = null;
+            let pValue = null;
+            let confidenceInterval = null;
+            let effectSize = null;
+            if (leftVariance !== null && rightVariance !== null && leftN > 1 && rightN > 1) {
+                standardError = Math.sqrt((leftVariance / leftN) + (rightVariance / rightN));
+                statistic = standardError > 0 ? (leftGroup.mean - rightGroup.mean) / standardError : null;
+                const numerator = ((leftVariance / leftN) + (rightVariance / rightN)) ** 2;
+                const denominator = (((leftVariance / leftN) ** 2) / Math.max(1, leftN - 1)) + (((rightVariance / rightN) ** 2) / Math.max(1, rightN - 1));
+                degreesOfFreedom = denominator > 0 ? numerator / denominator : null;
+                pValue = statistic === null || degreesOfFreedom === null ? null : studentTPValue(statistic, degreesOfFreedom);
+                confidenceInterval = confidenceInterval95(leftGroup.mean - rightGroup.mean, standardError, degreesOfFreedom);
+                const pooledVariance = ((Math.max(1, leftN - 1) * leftVariance) + (Math.max(1, rightN - 1) * rightVariance)) / Math.max(1, leftN + rightN - 2);
+                effectSize = pooledVariance > 0 ? (leftGroup.mean - rightGroup.mean) / Math.sqrt(pooledVariance) : null;
+            }
+            pairwiseComparisons.push({
+                leftGroupValue: leftGroup.groupValue,
+                rightGroupValue: rightGroup.groupValue,
+                meanDifference: leftGroup.mean - rightGroup.mean,
+                standardError,
+                statistic,
+                degreesOfFreedom,
+                pValue,
+                adjustedPValue: null,
+                confidenceInterval,
+                effectSize
+            });
+        }
+    }
+    const adjustmentFactor = Math.max(1, pairwiseComparisons.length);
+    pairwiseComparisons.forEach((comparison) => {
+        comparison.adjustedPValue = comparison.pValue === null ? null : Math.min(1, comparison.pValue * adjustmentFactor);
+    });
+    return {
+        outcomeField: outcome.key,
+        outcomeLabel: outcome.label,
+        groupField: group.key,
+        groupLabel: group.label,
+        caseCount: dataset.caseCount,
+        validCaseCount: validPairs.length,
+        missingCaseCount: dataset.caseCount - validPairs.length,
+        weightedValidCaseCount: normalizeAnalysisOptions(options).weightField ? totalWeight : null,
+        groups,
+        anova: groups.length > 1
+            ? {
+                fStatistic,
+                dfBetween,
+                dfWithin,
+                pValue,
+                ssBetween,
+                ssWithin,
+                msBetween,
+                msWithin,
+                etaSquared,
+                omegaSquared
+            }
+            : null,
+        postHocComparisons: pairwiseComparisons,
+        assumptions
+    };
+}
+export function analyzeTTest(dataset, outcomeField, groupField, options) {
+    const compareMeans = analyzeCompareMeans(dataset, outcomeField, groupField, options);
+    if (compareMeans.groups.length !== 2) {
+        throw new Error('T-tests require exactly two groups.');
+    }
+    const normalizedOptions = normalizeAnalysisOptions(options);
+    const validPairs = analysisRows(dataset, [outcomeField, groupField], options)
+        .map(({ row, weight }) => ({
+        outcome: row[outcomeField],
+        group: row[groupField],
+        weight
+    }))
+        .filter((row) => typeof row.outcome === 'number' && row.group !== null && row.weight > 0);
+    const grouped = new Map();
+    for (const pair of validPairs) {
+        const key = formatValue(pair.group);
+        const values = grouped.get(key) ?? [];
+        values.push({ value: pair.outcome, weight: pair.weight });
+        grouped.set(key, values);
+    }
+    const left = compareMeans.groups[0];
+    const right = compareMeans.groups[1];
+    const leftValues = grouped.get(left.groupValue) ?? [];
+    const rightValues = grouped.get(right.groupValue) ?? [];
+    const leftWeights = leftValues.map((entry) => entry.weight);
+    const rightWeights = rightValues.map((entry) => entry.weight);
+    const leftNumeric = leftValues.map((entry) => entry.value);
+    const rightNumeric = rightValues.map((entry) => entry.value);
+    const leftVariance = weightedVariance(leftNumeric, leftWeights);
+    const rightVariance = weightedVariance(rightNumeric, rightWeights);
+    const leftN = normalizedOptions.weightField ? effectiveSampleSize(leftWeights) : leftNumeric.length;
+    const rightN = normalizedOptions.weightField ? effectiveSampleSize(rightWeights) : rightNumeric.length;
+    let statistic = null;
+    let degreesOfFreedom = null;
+    let pValue = null;
+    let cohensD = null;
+    let confidenceInterval = null;
+    let standardError = null;
+    if (leftVariance !== null && rightVariance !== null && leftN > 1 && rightN > 1) {
+        standardError = Math.sqrt((leftVariance / leftN) + (rightVariance / rightN));
+        statistic = standardError > 0 ? (left.mean - right.mean) / standardError : null;
+        const numerator = ((leftVariance / leftN) + (rightVariance / rightN)) ** 2;
+        const denominator = (((leftVariance / leftN) ** 2) / Math.max(1, leftN - 1)) + (((rightVariance / rightN) ** 2) / Math.max(1, rightN - 1));
+        degreesOfFreedom = denominator > 0 ? numerator / denominator : null;
+        pValue = statistic === null || degreesOfFreedom === null ? null : studentTPValue(statistic, degreesOfFreedom);
+        const pooledVariance = ((Math.max(1, leftN - 1) * leftVariance) + (Math.max(1, rightN - 1) * rightVariance)) / Math.max(1, leftN + rightN - 2);
+        cohensD = pooledVariance > 0 ? (left.mean - right.mean) / Math.sqrt(pooledVariance) : null;
+        confidenceInterval = confidenceInterval95(left.mean - right.mean, standardError, degreesOfFreedom);
+    }
+    const varianceRatio = leftVariance !== null && rightVariance !== null && leftVariance > 0 && rightVariance > 0
+        ? Math.max(leftVariance, rightVariance) / Math.min(leftVariance, rightVariance)
+        : null;
+    const assumptions = [
+        buildAssumptionCheck('two_groups', 'Exactly two groups', compareMeans.groups.length === 2 ? 'pass' : 'fail', compareMeans.groups.length, compareMeans.groups.length === 2 ? 'Two groups selected.' : 'Independent t-tests require exactly two groups.'),
+        buildAssumptionCheck('group_size', 'Group size', compareMeans.groups.every((group) => group.count >= 2) ? 'pass' : 'warn', Math.min(...compareMeans.groups.map((group) => group.count)), compareMeans.groups.every((group) => group.count >= 2) ? 'Each group has at least two cases.' : 'One or more groups have fewer than two cases.'),
+        buildAssumptionCheck('variance_ratio', 'Variance ratio', varianceRatio === null || varianceRatio <= 4 ? 'pass' : 'warn', varianceRatio, varianceRatio === null || varianceRatio <= 4 ? 'Group variances are reasonably similar.' : 'Group variances differ notably.')
+    ];
+    return {
+        outcomeField: compareMeans.outcomeField,
+        outcomeLabel: compareMeans.outcomeLabel,
+        groupField: compareMeans.groupField,
+        groupLabel: compareMeans.groupLabel,
+        caseCount: compareMeans.caseCount,
+        validCaseCount: compareMeans.validCaseCount,
+        weightedValidCaseCount: compareMeans.weightedValidCaseCount ?? null,
+        groups: compareMeans.groups.map((group) => ({
+            ...group,
+            weightedCount: normalizedOptions.weightField
+                ? (grouped.get(group.groupValue) ?? []).reduce((total, entry) => total + entry.weight, 0)
+                : null
+        })),
+        statistic,
+        degreesOfFreedom,
+        pValue,
+        meanDifference: left.mean - right.mean,
+        cohensD,
+        confidenceInterval,
+        assumptions
+    };
+}
+export function analyzePairedTTest(dataset, beforeField, afterField, options) {
+    if (beforeField === afterField) {
+        throw new Error('Choose two different fields for a paired t-test.');
+    }
+    const beforeLabel = dataset.fields.find((field) => field.key === beforeField)?.label ?? beforeField;
+    const afterLabel = dataset.fields.find((field) => field.key === afterField)?.label ?? afterField;
+    const normalizedOptions = normalizeAnalysisOptions(options);
+    const pairs = analysisRows(dataset, [beforeField, afterField], options)
+        .map(({ row, weight }) => ({
+        before: row[beforeField],
+        after: row[afterField],
+        weight
+    }))
+        .filter((entry) => typeof entry.before === 'number' && typeof entry.after === 'number' && entry.weight > 0);
+    if (pairs.length < 2) {
+        throw new Error('At least two paired numeric rows are required.');
+    }
+    const differences = pairs.map((entry) => entry.after - entry.before);
+    const weights = pairs.map((entry) => entry.weight);
+    const weightedPairCount = weights.reduce((total, value) => total + value, 0);
+    const effectiveN = normalizedOptions.weightField ? effectiveSampleSize(weights) : pairs.length;
+    const meanDifference = weightedMean(differences, weights);
+    const variance = weightedVariance(differences, weights);
+    const stdDevDifference = variance === null ? null : Math.sqrt(variance);
+    const standardError = meanDifference === null || stdDevDifference === null || effectiveN <= 0
+        ? null
+        : stdDevDifference / Math.sqrt(effectiveN);
+    const degreesOfFreedom = effectiveN > 1 ? effectiveN - 1 : null;
+    const statistic = meanDifference !== null && standardError !== null && standardError > 0 ? meanDifference / standardError : null;
+    const pValue = statistic === null || degreesOfFreedom === null ? null : studentTPValue(statistic, degreesOfFreedom);
+    const confidenceInterval = meanDifference === null ? null : confidenceInterval95(meanDifference, standardError, degreesOfFreedom);
+    const beforeValues = pairs.map((entry) => entry.before);
+    const afterValues = pairs.map((entry) => entry.after);
+    const pairedCorrelation = beforeValues.length < 2
+        ? null
+        : analyzeCorrelation({
+            caseCount: pairs.length,
+            fields: [
+                { key: 'before', label: beforeLabel, source: 'attribute', valueType: 'number' },
+                { key: 'after', label: afterLabel, source: 'attribute', valueType: 'number' },
+                { key: 'pair_weight', label: 'Pair Weight', source: 'attribute', valueType: 'number' }
+            ],
+            rows: pairs.map((entry) => ({ before: entry.before, after: entry.after, pair_weight: entry.weight })),
+            notes: []
+        }, 'before', 'after', normalizedOptions.weightField ? { weightField: 'pair_weight' } : undefined).pearsonR;
+    const cohensDz = meanDifference !== null && stdDevDifference && stdDevDifference > 0 ? meanDifference / stdDevDifference : null;
+    const differenceSkewness = skewness(differences);
+    const assumptions = [
+        buildAssumptionCheck('pair_count', 'Paired rows', pairs.length >= 2 ? 'pass' : 'fail', pairs.length, pairs.length >= 2 ? 'Enough paired rows for analysis.' : 'Paired t-tests require at least two rows with both values.'),
+        buildAssumptionCheck('difference_variation', 'Difference variation', stdDevDifference !== null && stdDevDifference > 0 ? 'pass' : 'fail', stdDevDifference, stdDevDifference !== null && stdDevDifference > 0 ? 'Paired differences vary across cases.' : 'Paired differences do not vary.'),
+        buildAssumptionCheck('difference_skewness', 'Difference skewness', differenceSkewness === null || Math.abs(differenceSkewness) <= 1 ? 'pass' : 'warn', differenceSkewness, differenceSkewness === null || Math.abs(differenceSkewness) <= 1 ? 'Difference distribution is not heavily skewed.' : 'Differences are notably skewed.')
+    ];
+    return {
+        beforeField,
+        beforeLabel,
+        afterField,
+        afterLabel,
+        pairCount: pairs.length,
+        weightedPairCount: normalizedOptions.weightField ? weightedPairCount : null,
+        meanDifference,
+        stdDevDifference,
+        standardError,
+        statistic,
+        degreesOfFreedom,
+        pValue,
+        confidenceInterval,
+        cohensDz,
+        correlation: pairedCorrelation,
+        assumptions
+    };
+}
+export function analyzeNonparametricComparison(dataset, outcomeField, groupField, options) {
+    const normalizedOptions = normalizeAnalysisOptions(options);
+    const pairs = analysisRows(dataset, [outcomeField, groupField], options)
+        .map(({ row, weight }) => ({
+        outcome: row[outcomeField],
+        group: row[groupField],
+        weight
+    }))
+        .filter((row) => typeof row.outcome === 'number' && row.group !== null && row.weight > 0);
+    if (pairs.length < 2) {
+        throw new Error('At least two valid rows are required for a nonparametric test.');
+    }
+    const groupValues = [...new Set(pairs.map((pair) => formatValue(pair.group)))].sort((left, right) => left.localeCompare(right));
+    const sortedPairs = pairs
+        .map((pair, index) => ({ ...pair, index }))
+        .sort((left, right) => left.outcome - right.outcome);
+    const weightedRanks = new Array(pairs.length);
+    let cumulativeWeight = 0;
+    let position = 0;
+    while (position < sortedPairs.length) {
+        let end = position + 1;
+        while (end < sortedPairs.length && sortedPairs[end].outcome === sortedPairs[position].outcome) {
+            end += 1;
+        }
+        const blockWeight = sortedPairs.slice(position, end).reduce((total, item) => total + item.weight, 0);
+        const startRank = cumulativeWeight + 1;
+        const endRank = cumulativeWeight + blockWeight;
+        const meanRank = (startRank + endRank) / 2;
+        for (let cursor = position; cursor < end; cursor += 1) {
+            weightedRanks[sortedPairs[cursor].index] = meanRank;
+        }
+        cumulativeWeight += blockWeight;
+        position = end;
+    }
+    const rankGroups = new Map();
+    for (let index = 0; index < pairs.length; index += 1) {
+        const key = formatValue(pairs[index].group);
+        const values = rankGroups.get(key) ?? [];
+        values.push({ rank: weightedRanks[index], weight: pairs[index].weight });
+        rankGroups.set(key, values);
+    }
+    const groups = groupValues.map((groupValue) => {
+        const values = rankGroups.get(groupValue) ?? [];
+        const weightTotal = values.reduce((total, value) => total + value.weight, 0);
+        const rankTotal = values.reduce((total, value) => total + (value.rank * value.weight), 0);
+        return {
+            groupValue,
+            count: values.length,
+            weightedCount: normalizedOptions.weightField ? weightTotal : null,
+            meanRank: weightTotal === 0 ? 0 : rankTotal / weightTotal
+        };
+    });
+    const weightedValidCaseCount = normalizedOptions.weightField ? pairs.reduce((total, pair) => total + pair.weight, 0) : null;
+    const assumptions = [
+        buildAssumptionCheck('group_count', 'Group count', groupValues.length >= 2 ? 'pass' : 'fail', groupValues.length, groupValues.length >= 2 ? 'Enough groups for the selected rank test.' : 'Need at least two groups.')
+    ];
+    if (groupValues.length === 2) {
+        const left = groups[0];
+        const right = groups[1];
+        const leftPairs = pairs.filter((pair) => formatValue(pair.group) === left.groupValue);
+        const rightPairs = pairs.filter((pair) => formatValue(pair.group) === right.groupValue);
+        let u1 = 0;
+        for (const leftPair of leftPairs) {
+            for (const rightPair of rightPairs) {
+                if (leftPair.outcome > rightPair.outcome) {
+                    u1 += leftPair.weight * rightPair.weight;
+                }
+                else if (leftPair.outcome === rightPair.outcome) {
+                    u1 += 0.5 * leftPair.weight * rightPair.weight;
+                }
+            }
+        }
+        const leftWeight = leftPairs.reduce((total, pair) => total + pair.weight, 0);
+        const rightWeight = rightPairs.reduce((total, pair) => total + pair.weight, 0);
+        const u2 = (leftWeight * rightWeight) - u1;
+        const statistic = Math.min(u1, u2);
+        const meanU = (leftWeight * rightWeight) / 2;
+        const stdU = Math.sqrt((leftWeight * rightWeight * (leftWeight + rightWeight + 1)) / 12);
+        const zScore = stdU > 0 ? (statistic - meanU) / stdU : 0;
+        const effectSize = pairs.length > 0 ? Math.abs(zScore) / Math.sqrt(pairs.length) : null;
+        return {
+            method: 'mann_whitney_u',
+            outcomeField,
+            outcomeLabel: dataset.fields.find((field) => field.key === outcomeField)?.label ?? outcomeField,
+            groupField,
+            groupLabel: dataset.fields.find((field) => field.key === groupField)?.label ?? groupField,
+            caseCount: dataset.caseCount,
+            validCaseCount: pairs.length,
+            weightedValidCaseCount,
+            statistic,
+            pValue: stdU > 0 ? normalTwoSidedPValue(zScore) : null,
+            effectSize,
+            groups,
+            notes: normalizedOptions.weightField
+                ? ['Weighted rank handling is enabled for the Mann-Whitney comparison.']
+                : [],
+            assumptions
+        };
+    }
+    const totalWeight = pairs.reduce((total, pair) => total + pair.weight, 0);
+    const weightedRankSums = groups.map((group) => (rankGroups.get(group.groupValue) ?? []).reduce((total, value) => total + (value.rank * value.weight), 0));
+    const statistic = (12 / (totalWeight * (totalWeight + 1)))
+        * groups.reduce((total, group, index) => {
+            const groupWeight = (rankGroups.get(group.groupValue) ?? []).reduce((inner, value) => inner + value.weight, 0);
+            return total + ((weightedRankSums[index] ** 2) / Math.max(groupWeight, 1e-12));
+        }, 0)
+        - (3 * (totalWeight + 1));
+    const degreesOfFreedom = Math.max(1, groups.length - 1);
+    return {
+        method: 'kruskal_wallis',
+        outcomeField,
+        outcomeLabel: dataset.fields.find((field) => field.key === outcomeField)?.label ?? outcomeField,
+        groupField,
+        groupLabel: dataset.fields.find((field) => field.key === groupField)?.label ?? groupField,
+        caseCount: dataset.caseCount,
+        validCaseCount: pairs.length,
+        weightedValidCaseCount,
+        statistic,
+        pValue: chiSquarePValue(statistic, degreesOfFreedom),
+        effectSize: totalWeight > 1 ? Math.max(0, (statistic - groups.length + 1) / (totalWeight - groups.length)) : null,
+        groups,
+        notes: normalizedOptions.weightField
+            ? ['Weighted rank handling is enabled for the Kruskal-Wallis comparison.']
+            : [],
+        assumptions
+    };
+}
+export function analyzeReliability(dataset, fields, options, subscales) {
+    const uniqueFields = [...new Set(fields.map((field) => field.trim()).filter(Boolean))];
+    if (uniqueFields.length < 2) {
+        throw new Error('Choose at least two numeric fields for reliability analysis.');
+    }
+    const fieldMeta = uniqueFields.map((field) => {
+        const meta = dataset.fields.find((item) => item.key === field);
+        if (!meta)
+            throw new Error(`Field not found: ${field}`);
+        return meta;
+    });
+    const rows = analysisRows(dataset, uniqueFields, {
+        ...options,
+        missingStrategy: 'listwise'
+    })
+        .map(({ row }) => uniqueFields.map((field) => row[field]))
+        .filter((values) => values.every((value) => typeof value === 'number'));
+    if (rows.length < 2) {
+        throw new Error('At least two complete cases are required for reliability analysis.');
+    }
+    const itemColumns = uniqueFields.map((_, fieldIndex) => rows.map((row) => row[fieldIndex]));
+    const itemVariances = itemColumns.map((column) => weightedVariance(column, new Array(column.length).fill(1)) ?? 0);
+    const totalScores = rows.map((row) => row.reduce((total, value) => total + value, 0));
+    const totalVariance = weightedVariance(totalScores, new Array(totalScores.length).fill(1));
+    const itemCount = uniqueFields.length;
+    const alpha = totalVariance !== null && totalVariance > 0 && itemCount > 1
+        ? (itemCount / (itemCount - 1)) * (1 - (itemVariances.reduce((total, value) => total + value, 0) / totalVariance))
+        : null;
+    const pairwiseCorrelations = [];
+    for (let leftIndex = 0; leftIndex < itemColumns.length; leftIndex += 1) {
+        for (let rightIndex = leftIndex + 1; rightIndex < itemColumns.length; rightIndex += 1) {
+            const correlation = pearsonCorrelation(itemColumns[leftIndex], itemColumns[rightIndex]);
+            if (correlation !== null)
+                pairwiseCorrelations.push(correlation);
+        }
+    }
+    const averageInterItemCorrelation = pairwiseCorrelations.length > 0
+        ? pairwiseCorrelations.reduce((total, value) => total + value, 0) / pairwiseCorrelations.length
+        : null;
+    const standardizedAlpha = averageInterItemCorrelation === null
+        ? null
+        : (itemCount * averageInterItemCorrelation) / (1 + ((itemCount - 1) * averageInterItemCorrelation));
+    const midpoint = Math.ceil(itemCount / 2);
+    const splitHalfLeft = rows.map((row) => row.slice(0, midpoint).reduce((total, value) => total + value, 0));
+    const splitHalfRight = rows.map((row) => row.slice(midpoint).reduce((total, value) => total + value, 0));
+    const splitHalfCorrelation = midpoint < itemCount ? pearsonCorrelation(splitHalfLeft, splitHalfRight) : null;
+    const spearmanBrown = splitHalfCorrelation === null || splitHalfCorrelation <= -1
+        ? null
+        : (2 * splitHalfCorrelation) / (1 + splitHalfCorrelation);
+    const scaleMean = weightedMean(totalScores, new Array(totalScores.length).fill(1));
+    const items = uniqueFields.map((field, fieldIndex) => {
+        const values = itemColumns[fieldIndex];
+        const remainingScores = rows.map((row) => row.reduce((total, value, index) => total + (index === fieldIndex ? 0 : value), 0));
+        const remainingVariance = weightedVariance(remainingScores, new Array(remainingScores.length).fill(1));
+        const alphaIfDeleted = uniqueFields.length <= 2
+            ? null
+            : remainingVariance !== null && remainingVariance > 0
+                ? ((itemCount - 1) / (itemCount - 2)) * (1 - (itemVariances
+                    .filter((_, index) => index !== fieldIndex)
+                    .reduce((total, value) => total + value, 0) / remainingVariance))
+                : null;
+        return {
+            field,
+            label: fieldMeta[fieldIndex].label,
+            mean: weightedMean(values, new Array(values.length).fill(1)),
+            stdDev: sampleStdDev(values),
+            itemTotalCorrelation: pearsonCorrelation(values, remainingScores),
+            alphaIfDeleted
+        };
+    });
+    return {
+        fields: uniqueFields,
+        fieldLabels: fieldMeta.map((field) => field.label),
+        caseCount: dataset.caseCount,
+        validCaseCount: rows.length,
+        alpha,
+        standardizedAlpha,
+        splitHalfCorrelation,
+        spearmanBrown,
+        scaleMean,
+        scaleVariance: totalVariance,
+        items,
+        subscales: Array.isArray(subscales)
+            ? subscales
+                .map((subscale) => ({
+                label: String(subscale?.label ?? '').trim(),
+                fields: Array.isArray(subscale?.fields) ? subscale.fields.map((field) => String(field ?? '').trim()).filter(Boolean) : []
+            }))
+                .filter((subscale) => subscale.label && subscale.fields.length >= 2)
+                .map((subscale) => {
+                const filteredFields = subscale.fields.filter((field) => uniqueFields.includes(field));
+                if (filteredFields.length < 2)
+                    return null;
+                const subscaleResult = analyzeReliability(dataset, filteredFields, options);
+                return {
+                    label: subscale.label,
+                    fields: filteredFields,
+                    fieldLabels: subscaleResult.fieldLabels,
+                    validCaseCount: subscaleResult.validCaseCount,
+                    alpha: subscaleResult.alpha,
+                    standardizedAlpha: subscaleResult.standardizedAlpha,
+                    splitHalfCorrelation: subscaleResult.splitHalfCorrelation,
+                    spearmanBrown: subscaleResult.spearmanBrown
+                };
+            })
+                .filter((subscale) => subscale !== null)
+            : [],
+        notes: [
+            'Reliability is computed as Cronbach alpha over complete numeric cases.',
+            'Current implementation uses listwise complete rows across the selected fields.',
+            'Standardized alpha and split-half reliability are also reported for quick scale review.'
+        ]
+    };
+}
+export function analyzeFactorAnalysis(dataset, fields, requestedFactorCount, options, rotation = 'none') {
+    const uniqueFields = [...new Set(fields.map((field) => field.trim()).filter(Boolean))];
+    if (uniqueFields.length < 2) {
+        throw new Error('Choose at least two numeric fields for factor analysis.');
+    }
+    const fieldMeta = uniqueFields.map((field) => {
+        const meta = dataset.fields.find((item) => item.key === field);
+        if (!meta)
+            throw new Error(`Field not found: ${field}`);
+        return meta;
+    });
+    const rows = analysisRows(dataset, uniqueFields, {
+        ...options,
+        missingStrategy: 'listwise'
+    })
+        .map(({ row }) => uniqueFields.map((field) => row[field]))
+        .filter((values) => values.every((value) => typeof value === 'number'));
+    if (rows.length < 3) {
+        throw new Error('At least three complete cases are required for factor analysis.');
+    }
+    const columns = uniqueFields.map((_, fieldIndex) => rows.map((row) => row[fieldIndex]));
+    const correlationMatrix = columns.map((columnA, rowIndex) => columns.map((columnB, columnIndex) => {
+        if (rowIndex === columnIndex)
+            return 1;
+        const correlation = pearsonCorrelation(columnA, columnB);
+        return correlation ?? 0;
+    }));
+    const matrixSize = correlationMatrix.length;
+    const workingMatrix = cloneMatrix(correlationMatrix);
+    const extracted = [];
+    for (let index = 0; index < matrixSize; index += 1) {
+        const component = powerIterationSymmetric(workingMatrix);
+        if (!(component.eigenvalue > 1e-6))
+            break;
+        extracted.push(component);
+        const deflationComponent = outerProduct(component.eigenvector, component.eigenvalue);
+        const nextMatrix = deflateMatrix(workingMatrix, deflationComponent);
+        for (let rowIndex = 0; rowIndex < nextMatrix.length; rowIndex += 1) {
+            for (let columnIndex = 0; columnIndex < nextMatrix.length; columnIndex += 1) {
+                workingMatrix[rowIndex][columnIndex] = nextMatrix[rowIndex][columnIndex];
+            }
+        }
+    }
+    const eigenvalues = extracted.map((component) => component.eigenvalue);
+    const recommendedFactorCount = Math.max(1, eigenvalues.filter((value) => value >= 1).length || Math.min(1, extracted.length));
+    let factorCount = Math.min(Math.max(1, Math.floor(requestedFactorCount ?? Math.min(recommendedFactorCount, matrixSize))), extracted.length);
+    if (factorCount === 0) {
+        throw new Error('Factor extraction did not converge on a usable component.');
+    }
+    const totalEigenvalue = matrixSize;
+    const baseLoadingMatrix = uniqueFields.map((field, fieldIndex) => extracted.slice(0, factorCount).map((component) => component.eigenvector[fieldIndex] * Math.sqrt(Math.max(component.eigenvalue, 0))));
+    const rotatedLoadingMatrix = rotation === 'varimax'
+        ? applyVarimaxRotation(baseLoadingMatrix)
+        : baseLoadingMatrix.map((row) => [...row]);
+    const communalities = new Array(matrixSize).fill(0);
+    for (let fieldIndex = 0; fieldIndex < matrixSize; fieldIndex += 1) {
+        communalities[fieldIndex] = rotatedLoadingMatrix[fieldIndex].reduce((total, value) => total + (value ** 2), 0);
+    }
+    let cumulativeVarianceExplained = 0;
+    const factors = Array.from({ length: factorCount }, (_unused, factorIndex) => {
+        const eigenvalue = rotatedLoadingMatrix.reduce((total, row) => total + ((row[factorIndex] ?? 0) ** 2), 0);
+        const varianceExplained = eigenvalue / totalEigenvalue;
+        cumulativeVarianceExplained += varianceExplained;
+        const loadings = uniqueFields.map((field, fieldIndex) => ({
+            field,
+            label: fieldMeta[fieldIndex].label,
+            loading: rotatedLoadingMatrix[fieldIndex][factorIndex] ?? 0,
+            communality: communalities[fieldIndex],
+            uniqueness: Math.max(0, 1 - communalities[fieldIndex])
+        }));
+        return {
+            factor: factorIndex + 1,
+            eigenvalue,
+            varianceExplained,
+            cumulativeVarianceExplained,
+            loadings
+        };
+    });
+    return {
+        fields: uniqueFields,
+        fieldLabels: fieldMeta.map((field) => field.label),
+        caseCount: dataset.caseCount,
+        validCaseCount: rows.length,
+        factorCount,
+        recommendedFactorCount,
+        extraction: 'principal_components',
+        rotation,
+        eigenvalues,
+        factors,
+        correlationMatrix: correlationMatrix.map((values, index) => ({
+            field: uniqueFields[index],
+            values
+        })),
+        notes: [
+            'Current factor analysis is a first-pass principal-components extraction.',
+            'Kaiser-style factor count recommendation is based on eigenvalues greater than or equal to 1.',
+            rotation === 'varimax'
+                ? 'Varimax rotation is applied as a first-pass orthogonal rotation.'
+                : 'Rotation is not applied in this version.'
+        ]
+    };
+}
+//# sourceMappingURL=index.js.map

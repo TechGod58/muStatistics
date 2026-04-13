@@ -1,0 +1,17 @@
+{
+  "name": "mu-statisics",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "doctor": "node ./scripts/doctor.mjs",
+    "dev": "pnpm --parallel --filter @mu/api --filter @mu/web dev",
+    "dev:api": "pnpm --filter @mu/api dev",
+    "dev:web": "pnpm --filter @mu/web dev",
+    "build": "pnpm -r build",
+    "build:portable": "powershell -ExecutionPolicy Bypass -File ./scripts/portable/build-portable.ps1",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:e2e:smoke": "node ./scripts/e2e-smoke.mjs"
+  }
+}

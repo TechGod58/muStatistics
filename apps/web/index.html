@@ -1,0 +1,2599 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>muStatistics</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+
+    <!-- Login overlay -->
+    <div id="login-overlay">
+      <div class="login-box">
+        <p class="eyebrow">muStatistics</p>
+        <h2 id="login-title">Sign In</h2>
+        <p id="login-help" class="login-help">Sign in with your MU username and password. Student accounts stay active for five years. Professor accounts do not auto-delete.</p>
+        <div class="login-mode-switch" role="tablist" aria-label="Account access mode">
+          <button id="login-mode-signin" class="login-mode-btn active" type="button">Sign In</button>
+          <button id="login-mode-setup" class="login-mode-btn" type="button">Set Up Account</button>
+        </div>
+        <form id="login-form" class="stack gap-12">
+          <label class="field">
+            <span>MU Username</span>
+            <input id="login-username" type="text" autocomplete="username" placeholder="your MU username" required />
+          </label>
+          <label class="field">
+            <span id="login-password-label">Password</span>
+            <input id="login-password" type="password" autocomplete="current-password" placeholder="Enter your password" required />
+          </label>
+          <div id="login-role-row" class="field" style="display:none">
+            <span>Role</span>
+            <select id="login-role">
+              <option value="student" selected>Student</option>
+              <option value="professor">Professor</option>
+            </select>
+          </div>
+          <div class="login-error" id="login-error"></div>
+          <button type="button" id="login-oidc-btn" class="secondary-action" style="display:none">Use MU Single Sign-On</button>
+          <button type="submit" id="login-submit-btn">Sign in</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Main app -->
+    <main class="shell app-shell">
+      <section class="panel hero masthead">
+        <div class="masthead-copy">
+          <p class="eyebrow">Mixed-methods scaffold</p>
+          <h1>muStatistics</h1>
+          <p class="lede">Qualitative coding and quantitative variables — connected by traceable evidence.</p>
+        </div>
+        <div class="hero-right masthead-meta">
+          <span class="pill" id="health-pill">Checking API…</span>
+          <div class="user-bar">
+            <span>Signed in as <strong id="current-username">—</strong></span>
+            <span class="badge" id="current-role-badge">—</span>
+            <span class="small-muted" id="current-account-expiry"></span>
+            <button class="small" id="logout-btn">Sign out</button>
+          </div>
+        </div>
+      </section>
+      <section class="workspace-strip">
+        <article class="workspace-status">
+          <div>
+            <p class="eyebrow">Active project</p>
+            <h2 id="shell-project-name">No project selected</h2>
+            <p id="shell-project-description" class="small-muted">Create a project or select one to unlock the workspace.</p>
+          </div>
+          <div class="workspace-chip-row">
+            <span class="workspace-chip" id="shell-project-mode">No workspace</span>
+          </div>
+        </article>
+        <article class="workspace-metric">
+          <span class="workspace-label">Sources</span>
+          <strong id="shell-source-count">0</strong>
+        </article>
+        <article class="workspace-metric">
+          <span class="workspace-label">Codes</span>
+          <strong id="shell-code-count">0</strong>
+        </article>
+        <article class="workspace-metric">
+          <span class="workspace-label">Cases</span>
+          <strong id="shell-case-count">0</strong>
+        </article>
+        <article class="workspace-metric">
+          <span class="workspace-label">Variables</span>
+          <strong id="shell-variable-count">0</strong>
+        </article>
+      </section>
+      <section id="presence-banner" class="presence-banner" style="display:none"></section>
+
+      <!-- Tab bar -->
+      <div class="tab-shell">
+        <nav class="tab-bar">
+          <button class="tab-btn active" data-tab="collaboration">Collaboration</button>
+          <button class="tab-btn" data-tab="projects">Projects</button>
+          <button class="tab-btn" data-tab="qualitative">Qualitative</button>
+          <button class="tab-btn" data-tab="quantitative">Quantitative</button>
+          <button class="tab-btn" data-tab="status">Status</button>
+        </nav>
+        <button id="global-chat-btn" class="secondary-action" type="button">Open chat</button>
+      </div>
+
+      <!-- ── Projects tab ── -->
+      <section class="surface-note interaction-status-bar" aria-live="polite">
+        <div class="interaction-status-grid">
+          <div class="interaction-status-item">
+            <span class="workspace-label">Selected project</span>
+            <strong id="interaction-selected-project">None</strong>
+          </div>
+          <div class="interaction-status-item">
+            <span class="workspace-label">Popup chat</span>
+            <strong id="interaction-popup-eligibility">Unavailable</strong>
+          </div>
+          <div class="interaction-status-item">
+            <span class="workspace-label">Active menu</span>
+            <strong id="interaction-active-menu">Collaboration</strong>
+          </div>
+          <div class="interaction-status-item">
+            <span class="workspace-label">Active subtab</span>
+            <strong id="interaction-active-subtab">None</strong>
+          </div>
+          <div class="interaction-status-item">
+            <span class="workspace-label">SQL mode</span>
+            <strong id="interaction-sql-mode">Checking</strong>
+          </div>
+          <div class="interaction-status-item">
+            <span class="workspace-label">Office launch</span>
+            <strong id="interaction-office-launch">Checking</strong>
+          </div>
+        </div>
+      </section>
+      <div class="tab-panel active" id="tab-collaboration">
+        <section class="tab-intro">
+          <div>
+            <p class="eyebrow">Collaboration</p>
+            <h2>Share membership, set the workspace mode, and monitor live activity.</h2>
+          </div>
+          <p class="small-muted">This is the operational layer for ownership, professor presence, and day-to-day coordination.</p>
+        </section>
+        <section class="tab-overview">
+          <article class="panel overview-card">
+            <span class="workspace-label">Projects</span>
+            <strong id="project-count">0</strong>
+            <p class="small-muted">Projects available to your account.</p>
+          </article>
+          <article class="panel overview-card">
+            <span class="workspace-label">Members</span>
+            <strong id="member-count">0</strong>
+            <p class="small-muted">Users attached to the selected workspace.</p>
+          </article>
+          <article class="panel overview-card">
+            <span class="workspace-label">Active now</span>
+            <strong id="active-user-count">0</strong>
+            <p class="small-muted">Live presence in the current project.</p>
+          </article>
+          <article class="panel overview-card">
+            <span class="workspace-label">Recent chat</span>
+            <strong id="message-preview-count">0</strong>
+            <p class="small-muted">Popup chat is available for the selected project.</p>
+          </article>
+        </section>
+        <section class="tab-layout tab-layout-wide">
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Workspace selection</h2>
+                <p class="small-muted" style="margin:0">Choose the project you want to coordinate, then manage membership and mode around it.</p>
+              </div>
+            </div>
+            <ul id="projects-list" class="interactive-list" style="margin-top:16px"></ul>
+          </article>
+
+          <div class="stack gap-12">
+            <article class="panel">
+              <h2>Share project</h2>
+              <form id="member-form" class="stack gap-12">
+                <label class="field">
+                  <span>Selected project</span>
+                  <input id="share-project-name" type="text" value="No project selected" disabled />
+                </label>
+                <label class="field">
+                  <span>Add collaborator (username)</span>
+                  <input id="member-username" type="text" placeholder="student2" />
+                </label>
+                <label class="field">
+                  <span>Role</span>
+                  <select id="member-role">
+                    <option value="collaborator" selected>Collaborator</option>
+                    <option value="owner">Owner</option>
+                  </select>
+                </label>
+                <button type="submit">Add member</button>
+              </form>
+            </article>
+
+            <article class="panel">
+              <h2>Collaboration settings</h2>
+              <div class="stack gap-12">
+                <label class="field">
+                  <span>Selected project</span>
+                  <input id="selected-project-collaboration" type="text" value="No project selected" disabled />
+                </label>
+                <label class="field">
+                  <span>Workspace mode</span>
+                  <select id="collaboration-workspace-mode">
+                    <option value="solo">solo</option>
+                    <option value="collaborative">collaborative</option>
+                  </select>
+                </label>
+                <button type="button" id="save-workspace-mode-btn">Save collaboration mode</button>
+                <p class="small-muted" id="collaboration-mode-help">Collaborative projects support professor presence alerts and popup project chat.</p>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="tab-layout">
+          <article class="panel">
+            <div class="section-header">
+              <h2>Members of selected project</h2>
+              <span class="small-muted">Owners and collaborators</span>
+            </div>
+            <ul id="members-list" class="interactive-list" style="margin-top:16px"></ul>
+          </article>
+
+          <div class="stack gap-12">
+            <article class="panel">
+              <div class="section-header">
+                <h2>Active now</h2>
+                <span class="small-muted">Live presence</span>
+              </div>
+              <ul id="active-users-list" class="interactive-list" style="margin-top:16px"></ul>
+            </article>
+            <article class="panel">
+              <div class="section-header">
+                <h2>Project chat</h2>
+                <span class="small-muted">Popup only</span>
+              </div>
+              <p class="small-muted" style="margin:16px 0 0">
+                Use the popup chat window for project conversation. Saved history remains exportable without pinning the text thread inside this tab.
+              </p>
+              <div class="inline-actions" style="margin-top:16px">
+                <button id="collaboration-chat-btn" type="button" class="small">Open popup chat</button>
+              </div>
+            </article>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- ── Qualitative tab ── -->
+      <div class="tab-panel" id="tab-projects">
+        <section class="tab-intro">
+          <div>
+            <p class="eyebrow">Project setup</p>
+            <h2>Create, select, and manage the project shell before you start coding or analysis.</h2>
+          </div>
+          <p class="small-muted">Project history and saved chat stay anchored here even if the interaction layout changes later.</p>
+        </section>
+        <section class="tab-overview">
+          <article class="panel overview-card">
+            <span class="workspace-label">Projects</span>
+            <strong id="project-secondary-count">0</strong>
+            <p class="small-muted">Project shells available for work.</p>
+          </article>
+          <article class="panel overview-card">
+            <span class="workspace-label">Selected</span>
+            <strong id="project-selection-status">None</strong>
+            <p class="small-muted">Current active project shell.</p>
+          </article>
+          <article class="panel overview-card">
+            <span class="workspace-label">Saved chat</span>
+            <strong id="project-chat-history-count">0</strong>
+            <p class="small-muted">Stored chat remains available through popup chat and export.</p>
+          </article>
+        </section>
+        <section class="tab-layout tab-layout-wide">
+          <div class="stack gap-12">
+            <article class="panel">
+              <h2>Create project</h2>
+              <form id="project-form" class="stack gap-12">
+                <label class="field">
+                  <span>Project name</span>
+                  <input id="project-name" type="text" placeholder="Customer interviews Q2" required />
+                </label>
+                <label class="field">
+                  <span>Description</span>
+                  <textarea id="project-description" rows="2" placeholder="Short description"></textarea>
+                </label>
+                <label class="field">
+                  <span>Workspace mode</span>
+                  <select id="project-workspace-mode">
+                    <option value="solo" selected>solo</option>
+                    <option value="collaborative">collaborative</option>
+                  </select>
+                </label>
+                <button type="submit">Save project</button>
+              </form>
+              <p class="small-muted">Start here. After you save a project, the collaboration, qualitative, and quantitative tools will unlock for that project.</p>
+            </article>
+            <article class="panel stat-card">
+              <h2>Selected project</h2>
+              <div id="project-hub-card">Create a project here, or select an existing one from the list.</div>
+              <div class="stack gap-12" style="margin-top:16px">
+                <button id="delete-project-btn" type="button" class="secondary-action">Delete selected project</button>
+                <p class="small-muted">Only project owners can delete a project. Deletion removes its project data and stored artifacts.</p>
+              </div>
+            </article>
+          </div>
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2>Project list</h2>
+                <p class="small-muted" style="margin:0">Select the project shell you want to open across the rest of the app.</p>
+              </div>
+            </div>
+            <ul id="projects-secondary-list" class="interactive-list" style="margin-top:16px"></ul>
+          </article>
+        </section>
+        <section>
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Project chat tools</h2>
+                <p class="small-muted" style="margin:0">
+                  Chat entry stays in the popup window. Use this panel for launch and export only.
+                </p>
+              </div>
+              <span class="small-muted" id="project-chat-tools-count">0 saved messages</span>
+            </div>
+            <div class="inline-actions" style="margin-top:14px">
+              <button id="project-chat-popup-btn" type="button" class="small">Open popup chat</button>
+              <button id="export-chat-history-word-btn" type="button" class="small">Chat history Word</button>
+              <button id="export-chat-history-excel-btn" type="button" class="small">Chat history Excel</button>
+              <button id="export-chat-history-json-btn" type="button" class="small">Chat history JSON</button>
+            </div>
+            <p class="small-muted" style="margin-top:14px">The text thread itself is no longer fixed inside the Projects tab.</p>
+          </article>
+        </section>
+      </div>
+
+      <div class="tab-panel" id="tab-qualitative">
+        <section class="tab-intro">
+          <div>
+            <p class="eyebrow">Qualitative workspace</p>
+            <h2>Explore sources, code in context, and keep evidence, memos, and segments in one continuous workflow.</h2>
+          </div>
+          <p class="small-muted">Use the menu to move between source libraries, coding, capture tools, and evidence review without squeezing the workspace into side rails.</p>
+        </section>
+
+        <section class="workspace-menu">
+          <button type="button" class="workspace-menu-btn" data-qual-menu="library">
+            <span class="menu-kicker">Qualitative</span>
+            <span class="menu-label">Library</span>
+            <span class="menu-copy">Browse sources and code structures</span>
+          </button>
+          <button type="button" class="workspace-menu-btn" data-qual-menu="coding">
+            <span class="menu-kicker">Qualitative</span>
+            <span class="menu-label">Coding</span>
+            <span class="menu-copy">Read, highlight, and code active material</span>
+          </button>
+          <button type="button" class="workspace-menu-btn" data-qual-menu="capture">
+            <span class="menu-kicker">Qualitative</span>
+            <span class="menu-label">Capture</span>
+            <span class="menu-copy">Create sources, segments, and memos</span>
+          </button>
+          <button type="button" class="workspace-menu-btn" data-qual-menu="evidence">
+            <span class="menu-kicker">Qualitative</span>
+            <span class="menu-label">Evidence</span>
+            <span class="menu-copy">Review segments, applications, and notes</span>
+          </button>
+        </section>
+
+        <section class="workspace-submenu" data-qual-submenu="library">
+          <button type="button" class="workspace-submenu-btn" data-qual-parent="library" data-qual-subtab="sources">Source library</button>
+          <button type="button" class="workspace-submenu-btn" data-qual-parent="library" data-qual-subtab="codes">Codebook</button>
+        </section>
+        <section class="workspace-submenu" data-qual-submenu="coding" hidden>
+          <button type="button" class="workspace-submenu-btn" data-qual-parent="coding" data-qual-subtab="reader">Document reader</button>
+          <button type="button" class="workspace-submenu-btn" data-qual-parent="coding" data-qual-subtab="media">Media segments</button>
+        </section>
+        <section class="workspace-submenu" data-qual-submenu="capture" hidden>
+          <button type="button" class="workspace-submenu-btn" data-qual-parent="capture" data-qual-subtab="setup">Sources and codes</button>
+          <button type="button" class="workspace-submenu-btn" data-qual-parent="capture" data-qual-subtab="annotate">Segments and memos</button>
+        </section>
+        <section class="workspace-submenu" data-qual-submenu="evidence" hidden>
+          <button type="button" class="workspace-submenu-btn" data-qual-parent="evidence" data-qual-subtab="record">Segments, coding, memos</button>
+          <button type="button" class="workspace-submenu-btn" data-qual-parent="evidence" data-qual-subtab="queries">Queries and reports</button>
+        </section>
+
+        <section class="grid grid-2 qualitative-setup workspace-section" data-qual-section="capture">
+          <div class="workspace-banner">
+            <p class="eyebrow">Capture</p>
+            <h3>Bring material into the project and define the coding language before analysis starts.</h3>
+          </div>
+          <article class="panel" data-qual-parent="capture" data-qual-subsection="setup">
+            <h2>Create source</h2>
+            <form id="source-form" class="stack gap-12">
+              <label class="field">
+                <span>Selected project</span>
+                <input id="selected-project-source" type="text" value="No project selected" disabled />
+              </label>
+              <label class="field">
+                <span>Source title</span>
+                <input id="source-title" type="text" placeholder="Interview 002" required />
+              </label>
+              <div class="grid grid-2 compact-grid">
+                <label class="field">
+                  <span>Kind</span>
+                  <select id="source-kind">
+                    <option value="document">document</option>
+                    <option value="transcript" selected>transcript</option>
+                    <option value="audio">audio</option>
+                    <option value="video">video</option>
+                    <option value="pdf">pdf</option>
+                    <option value="dataset">dataset</option>
+                    <option value="survey">survey</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Content type</span>
+                  <input id="source-content-type" type="text" value="text/plain" />
+                </label>
+              </div>
+              <label class="field">
+                <span>Media URL (audio/video sources)</span>
+                <input id="source-content-url" type="url" placeholder="https://example.edu/interview-01.mp3" />
+              </label>
+              <label class="field">
+                <span>Source text</span>
+                <textarea id="source-content-text" rows="6" placeholder="Paste transcript text, open-ended responses, or document content here"></textarea>
+              </label>
+              <button type="submit">Save source</button>
+            </form>
+          </article>
+
+          <article class="panel" data-qual-parent="capture" data-qual-subsection="setup">
+            <h2>Create code</h2>
+            <form id="code-form" class="stack gap-12">
+              <label class="field">
+                <span>Selected project</span>
+                <input id="selected-project-code" type="text" value="No project selected" disabled />
+              </label>
+              <label class="field">
+                <span>Code name</span>
+                <input id="code-name" type="text" placeholder="Trust concern" required />
+              </label>
+              <label class="field">
+                <span>Description</span>
+                <textarea id="code-description" rows="2" placeholder="What the code means"></textarea>
+              </label>
+              <div class="grid grid-2 compact-grid">
+                <label class="field">
+                  <span>Parent code ID (optional)</span>
+                  <input id="code-parent-id" type="text" placeholder="code-..." />
+                </label>
+                <label class="field">
+                  <span>Color token</span>
+                  <input id="code-color-token" type="text" value="blue" />
+                </label>
+              </div>
+              <button type="submit">Save code</button>
+            </form>
+          </article>
+        </section>
+
+        <section class="qualitative-main workspace-section" data-qual-section="coding">
+          <div class="workspace-banner">
+            <p class="eyebrow">Coding</p>
+            <h3>Work inside one active source, keep the code in view, and apply decisions in context.</h3>
+          </div>
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Source coding workspace</h2>
+                <p class="small-muted" style="margin:0">
+                  Open a source, review passages or PDF pages in context, and apply codes directly.
+                </p>
+              </div>
+              <button id="refresh-workspace-btn" type="button" class="small">Refresh workspace</button>
+            </div>
+            <div class="workspace-toolbar" style="margin-top:14px">
+              <label class="field">
+                <span>Active source</span>
+                <select id="workspace-source-select"></select>
+              </label>
+              <label class="field">
+                <span>Active code</span>
+                <select id="workspace-code-select"></select>
+              </label>
+              <label class="field">
+                <span>Active case (optional)</span>
+                <select id="workspace-case-select"></select>
+              </label>
+            </div>
+            <div id="workspace-media-panel" data-qual-parent="coding" data-qual-subsection="media" style="margin-top:16px; display:none">
+              <div id="workspace-media-player"></div>
+              <div class="grid grid-2 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Transcript source ID</span>
+                  <input id="workspace-transcript-source-id" type="text" placeholder="source-... transcript target" />
+                </label>
+                <label class="field">
+                  <span>Transcription note</span>
+                  <input id="workspace-transcription-note" type="text" placeholder="Segment assembly transcript" />
+                </label>
+              </div>
+              <div class="grid grid-4 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Start seconds</span>
+                  <input id="workspace-media-start" type="number" min="0" step="0.1" value="0" />
+                </label>
+                <label class="field">
+                  <span>End seconds</span>
+                  <input id="workspace-media-end" type="number" min="0" step="0.1" value="0" />
+                </label>
+                <button id="workspace-capture-start-btn" type="button" class="small">Use current as start</button>
+                <button id="workspace-capture-end-btn" type="button" class="small">Use current as end</button>
+              </div>
+              <label class="field" style="margin-top:12px">
+                <span>Segment transcript</span>
+                <textarea id="workspace-media-text" rows="3" placeholder="Transcript excerpt or observed media note"></textarea>
+              </label>
+              <div class="inline-actions" style="margin-top:12px">
+                <button id="workspace-save-media-segment-btn" type="button" class="small">Save media segment and code it</button>
+                <button id="workspace-refresh-media-timeline-btn" type="button" class="small">Refresh timeline</button>
+                <button id="workspace-queue-transcription-btn" type="button" class="small">Queue transcription job</button>
+              </div>
+              <div id="workspace-media-timeline" style="margin-top:14px">No media timeline yet.</div>
+              <div id="workspace-transcription-jobs" style="margin-top:14px"></div>
+            </div>
+            <div id="workspace-status" class="surface-note" data-qual-parent="coding" data-qual-subsection="reader" style="margin-top:14px">Select a source to start coding.</div>
+            <div class="workspace-canvas" data-qual-parent="coding" data-qual-subsection="reader">
+              <div class="coding-workbench">
+                <aside class="coding-sidebar">
+                  <div class="coding-pane-head">
+                    <span class="menu-kicker">Document map</span>
+                    <h3>Passages</h3>
+                  </div>
+                  <div id="workspace-document-outline" class="coding-outline-list"></div>
+                </aside>
+                <div class="coding-reader">
+                  <div class="coding-pane-head">
+                    <span class="menu-kicker">Reading surface</span>
+                    <h3>Selected passage</h3>
+                  </div>
+                  <div id="source-workspace-view" class="workspace-list coding-reader-view"></div>
+                </div>
+                <aside class="coding-inspector">
+                  <div class="coding-pane-head">
+                    <span class="menu-kicker">Inspector</span>
+                    <h3>Context</h3>
+                  </div>
+                  <div id="workspace-inspector-view" class="coding-inspector-view"></div>
+                </aside>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section class="grid grid-3 qualitative-inspector workspace-section" data-qual-section="capture">
+          <article class="panel" data-qual-parent="capture" data-qual-subsection="annotate">
+            <h2>Create segment</h2>
+            <form id="segment-form" class="stack gap-12">
+              <label class="field">
+                <span>Source ID</span>
+                <input id="segment-source-id" type="text" placeholder="source-... (click a source above)" required />
+              </label>
+              <label class="field">
+                <span>Quoted text</span>
+                <textarea id="segment-text" rows="3" placeholder="Paste the exact text passage" required></textarea>
+              </label>
+              <div class="grid grid-3c compact-grid">
+                <label class="field">
+                  <span>Kind</span>
+                  <select id="segment-kind">
+                    <option value="text_range" selected>text_range</option>
+                    <option value="time_range">time_range</option>
+                    <option value="page_region">page_region</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Start</span>
+                  <input id="segment-start" type="number" min="0" value="0" />
+                </label>
+                <label class="field">
+                  <span>End</span>
+                  <input id="segment-end" type="number" min="0" value="0" />
+                </label>
+              </div>
+              <button type="submit">Save segment</button>
+            </form>
+          </article>
+
+          <article class="panel" data-qual-parent="capture" data-qual-subsection="annotate">
+            <h2>Apply code to segment</h2>
+            <form id="code-application-form" class="stack gap-12">
+              <div class="grid grid-2 compact-grid">
+                <label class="field">
+                  <span>Segment ID</span>
+                  <input id="ca-segment-id" type="text" placeholder="segment-... (click a segment)" required />
+                </label>
+                <label class="field">
+                  <span>Code ID</span>
+                  <input id="ca-code-id" type="text" placeholder="code-... (click a code)" required />
+                </label>
+              </div>
+              <div class="grid grid-2 compact-grid">
+                <label class="field">
+                  <span>Case ID (optional)</span>
+                  <input id="ca-case-id" type="text" placeholder="case-... (click a case in Quantitative)" />
+                </label>
+                <label class="field">
+                  <span>Confidence (0–1)</span>
+                  <input id="ca-confidence" type="number" min="0" max="1" step="0.05" value="1" />
+                </label>
+              </div>
+              <button type="submit">Apply code</button>
+            </form>
+          </article>
+
+          <article class="panel" data-qual-parent="capture" data-qual-subsection="annotate">
+            <h2>Write memo</h2>
+            <form id="memo-form" class="stack gap-12">
+              <label class="field">
+                <span>Selected project</span>
+                <input id="selected-project-memo" type="text" value="No project selected" disabled />
+              </label>
+              <div class="grid grid-2 compact-grid">
+                <label class="field">
+                  <span>Target type</span>
+                  <select id="memo-target-type">
+                    <option value="project" selected>project</option>
+                    <option value="source">source</option>
+                    <option value="segment">segment</option>
+                    <option value="code">code</option>
+                    <option value="case">case</option>
+                    <option value="analysis_run">analysis_run</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Target ID</span>
+                  <input id="memo-target-id" type="text" placeholder="project id or clicked entity id" />
+                </label>
+              </div>
+              <label class="field">
+                <span>Memo title</span>
+                <input id="memo-title" type="text" placeholder="What stands out in this evidence?" required />
+              </label>
+              <label class="field">
+                <span>Memo body</span>
+                <textarea id="memo-body" rows="5" placeholder="Interpretation, rationale, coding notes, or analytic next steps"></textarea>
+              </label>
+              <button type="submit">Save memo</button>
+            </form>
+          </article>
+          <article class="panel" data-qual-parent="capture" data-qual-subsection="annotate">
+            <h2>Add annotation</h2>
+            <form id="annotation-form" class="stack gap-12">
+              <div class="grid grid-2 compact-grid">
+                <label class="field">
+                  <span>Target type</span>
+                  <select id="annotation-target-type">
+                    <option value="segment" selected>segment</option>
+                    <option value="source">source</option>
+                    <option value="code">code</option>
+                    <option value="case">case</option>
+                    <option value="project">project</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Target ID</span>
+                  <input id="annotation-target-id" type="text" placeholder="segment-..." required />
+                </label>
+              </div>
+              <label class="field">
+                <span>Quoted text (optional)</span>
+                <textarea id="annotation-quote-text" rows="2" placeholder="Short quoted excerpt"></textarea>
+              </label>
+              <label class="field">
+                <span>Annotation note</span>
+                <textarea id="annotation-note" rows="3" placeholder="Interpretive note, reviewer remark, or coding instruction" required></textarea>
+              </label>
+              <div class="grid grid-3 compact-grid">
+                <label class="field">
+                  <span>Start offset</span>
+                  <input id="annotation-start-offset" type="number" min="0" placeholder="0" />
+                </label>
+                <label class="field">
+                  <span>End offset</span>
+                  <input id="annotation-end-offset" type="number" min="0" placeholder="24" />
+                </label>
+                <label class="field">
+                  <span>Color token</span>
+                  <input id="annotation-color-token" type="text" value="amber" />
+                </label>
+              </div>
+              <button type="submit">Save annotation</button>
+            </form>
+          </article>
+          <article class="panel" data-qual-parent="capture" data-qual-subsection="annotate">
+            <h2>Add see-also link</h2>
+            <form id="relationship-form" class="stack gap-12">
+              <div class="grid grid-3 compact-grid">
+                <label class="field">
+                  <span>Relationship</span>
+                  <select id="relationship-type">
+                    <option value="see_also" selected>see_also</option>
+                    <option value="supports">supports</option>
+                    <option value="contradicts">contradicts</option>
+                    <option value="follows_up">follows_up</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Left target type</span>
+                  <select id="relationship-left-target-type">
+                    <option value="segment" selected>segment</option>
+                    <option value="source">source</option>
+                    <option value="code">code</option>
+                    <option value="case">case</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Left target ID</span>
+                  <input id="relationship-left-target-id" type="text" placeholder="segment-..." required />
+                </label>
+              </div>
+              <div class="grid grid-2 compact-grid">
+                <label class="field">
+                  <span>Right target type</span>
+                  <select id="relationship-right-target-type">
+                    <option value="segment" selected>segment</option>
+                    <option value="source">source</option>
+                    <option value="code">code</option>
+                    <option value="case">case</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Right target ID</span>
+                  <input id="relationship-right-target-id" type="text" placeholder="segment-..." required />
+                </label>
+              </div>
+              <label class="field">
+                <span>Link note</span>
+                <textarea id="relationship-note" rows="2" placeholder="Why these two items belong together"></textarea>
+              </label>
+              <button type="submit">Save link</button>
+            </form>
+          </article>
+        </section>
+
+        <section class="grid grid-2 qualitative-rail workspace-section" data-qual-section="library">
+          <div class="workspace-banner">
+            <p class="eyebrow">Library</p>
+            <h3>Use the project library to move between raw material and the code system without leaving the workspace.</h3>
+          </div>
+          <article class="panel overview-card" data-qual-parent="library" data-qual-subsection="sources">
+            <span class="workspace-label">Sources in project</span>
+            <strong id="qual-library-source-count">0</strong>
+            <p class="small-muted">Available source material for reading and coding.</p>
+          </article>
+          <article class="panel overview-card" data-qual-parent="library" data-qual-subsection="codes">
+            <span class="workspace-label">Codes in project</span>
+            <strong id="qual-library-code-count">0</strong>
+            <p class="small-muted">Current code system available to the workspace.</p>
+          </article>
+          <article class="panel" data-qual-parent="library" data-qual-subsection="sources">
+            <div class="section-header">
+              <h2>Sources</h2>
+              <span class="small-muted" id="source-count">0</span>
+            </div>
+            <ul id="sources-list" class="interactive-list"></ul>
+          </article>
+          <article class="panel" data-qual-parent="library" data-qual-subsection="codes">
+            <div class="section-header">
+              <h2>Codes</h2>
+              <span class="small-muted" id="code-count">0</span>
+            </div>
+            <ul id="codes-list" class="interactive-list"></ul>
+          </article>
+        </section>
+
+        <section class="grid grid-3 qualitative-evidence workspace-section" data-qual-section="evidence">
+          <div class="workspace-banner">
+            <p class="eyebrow">Evidence</p>
+            <h3>Inspect the coded record directly: segments, applied codes, and the analytic memos that explain them.</h3>
+          </div>
+          <article class="panel" data-qual-parent="evidence" data-qual-subsection="record">
+            <div class="section-header">
+              <h2>Segments</h2>
+              <span class="small-muted" id="segment-count">0</span>
+            </div>
+            <ul id="segments-list" class="interactive-list"></ul>
+          </article>
+          <article class="panel" data-qual-parent="evidence" data-qual-subsection="record">
+            <div class="section-header">
+              <h2>Code applications</h2>
+              <span class="small-muted" id="ca-count">0</span>
+            </div>
+            <ul id="ca-list" class="interactive-list"></ul>
+          </article>
+          <article class="panel" data-qual-parent="evidence" data-qual-subsection="record">
+            <div class="section-header">
+              <h2>Memos</h2>
+              <span class="small-muted" id="memo-count">0</span>
+            </div>
+            <ul id="memos-list" class="interactive-list"></ul>
+          </article>
+          <article class="panel" data-qual-parent="evidence" data-qual-subsection="record">
+            <div class="section-header">
+              <h2>Annotations</h2>
+              <span class="small-muted" id="annotation-count">0</span>
+            </div>
+            <ul id="annotations-list" class="interactive-list"></ul>
+          </article>
+            <article class="panel" data-qual-parent="evidence" data-qual-subsection="record">
+              <div class="section-header">
+                <h2>See-also links</h2>
+              </div>
+              <ul id="relationships-list" class="interactive-list"></ul>
+            </article>
+            <article class="panel" data-qual-parent="evidence" data-qual-subsection="record">
+              <div class="section-header">
+                <h2>References</h2>
+                <span class="small-muted" id="reference-count">0</span>
+              </div>
+              <div id="reference-summary" class="small-muted">0 project references.</div>
+              <div class="grid grid-3 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Import format</span>
+                  <select id="reference-import-format">
+                    <option value="ris" selected>RIS</option>
+                    <option value="bibtex">BibTeX</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Related source</span>
+                  <select id="reference-related-source-id">
+                    <option value="">No source link</option>
+                  </select>
+                </label>
+                <div class="field" style="justify-content:end">
+                  <span>&nbsp;</span>
+                  <button id="import-references-btn" type="button" class="small">Import references</button>
+                </div>
+              </div>
+              <label class="field" style="margin-top:12px">
+                <span>RIS or BibTeX text</span>
+                <textarea id="reference-import-text" rows="5" placeholder="@article{...} or TY  - JOUR ..."></textarea>
+              </label>
+              <div id="reference-import-result" class="small-muted" style="margin-top:12px">Import RIS or BibTeX records and keep them attached to the project.</div>
+              <ul id="reference-list" class="interactive-list" style="margin-top:12px"></ul>
+            </article>
+            <article class="panel evidence-query-panel" data-qual-parent="evidence" data-qual-subsection="queries">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Evidence retrieval</h2>
+                <p class="small-muted" style="margin:0">
+                  Pull coded passages by source, code, case, coder, or search text and build qualitative query views.
+                </p>
+              </div>
+              <button id="run-retrieval-btn" type="button" class="small">Run retrieval</button>
+            </div>
+            <div class="grid grid-5 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Source ID</span>
+                <input id="retrieval-source-id" type="text" placeholder="source-..." />
+              </label>
+              <label class="field">
+                <span>Source kind</span>
+                <select id="retrieval-source-kind">
+                  <option value="">any</option>
+                  <option value="document">document</option>
+                  <option value="transcript">transcript</option>
+                  <option value="audio">audio</option>
+                  <option value="video">video</option>
+                  <option value="pdf">pdf</option>
+                  <option value="dataset">dataset</option>
+                  <option value="survey">survey</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Segment kind</span>
+                <select id="retrieval-segment-kind">
+                  <option value="">any</option>
+                  <option value="text_range">text_range</option>
+                  <option value="time_range">time_range</option>
+                  <option value="page_region">page_region</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Code ID</span>
+                <input id="retrieval-code-id" type="text" placeholder="code-..." />
+              </label>
+              <label class="field">
+                <span>Co-coded with</span>
+                <input id="retrieval-cocode-id" type="text" placeholder="second code id" />
+              </label>
+            </div>
+            <div class="grid grid-4 compact-grid" style="margin-top:12px">
+              <label class="field">
+                <span>Case ID</span>
+                <input id="retrieval-case-id" type="text" placeholder="case-..." />
+              </label>
+              <label class="field">
+                <span>Coder ID</span>
+                <input id="retrieval-coder-id" type="text" placeholder="username" />
+              </label>
+              <label class="field">
+                <span>Search text</span>
+                <input id="retrieval-search-text" type="text" placeholder="trust concern" />
+              </label>
+              <label class="field">
+                <span>Memo-backed only</span>
+                <select id="retrieval-memo-only">
+                  <option value="false" selected>no</option>
+                  <option value="true">yes</option>
+                </select>
+              </label>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:12px">
+              <label class="field">
+                <span>Text search mode</span>
+                <select id="text-search-mode">
+                  <option value="contains" selected>contains</option>
+                  <option value="phrase">phrase</option>
+                  <option value="whole_word">whole_word</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Case sensitive</span>
+                <select id="text-search-case-sensitive">
+                  <option value="false" selected>no</option>
+                  <option value="true">yes</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Context window</span>
+                <input id="text-search-context-window" type="number" min="10" max="200" value="40" />
+              </label>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:12px">
+              <label class="field">
+                <span>Word frequency top N</span>
+                <input id="word-frequency-top-n" type="number" min="5" max="200" value="30" />
+              </label>
+              <label class="field">
+                <span>Minimum word length</span>
+                <input id="word-frequency-min-length" type="number" min="2" max="20" value="4" />
+              </label>
+              <label class="field">
+                <span>Exclude stop words</span>
+                <select id="word-frequency-exclude-stop-words">
+                  <option value="true" selected>yes</option>
+                  <option value="false">no</option>
+                </select>
+              </label>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:12px">
+              <label class="field">
+                <span>Comparison code</span>
+                <input id="comparison-code-id" type="text" placeholder="code-..." />
+              </label>
+              <label class="field">
+                <span>Coder A</span>
+                <input id="comparison-coder-a" type="text" placeholder="username" />
+              </label>
+              <label class="field">
+                <span>Coder B</span>
+                <input id="comparison-coder-b" type="text" placeholder="username" />
+              </label>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:12px">
+              <label class="field">
+                <span>Autocode keywords</span>
+                <textarea id="autocode-keywords" rows="3" placeholder="trust&#10;fairness&#10;admissions"></textarea>
+              </label>
+              <div class="small-muted">
+                Keyword autocoding uses the current qualitative filters as scope, then applies the selected code to matching segments for the signed-in user.
+              </div>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:12px">
+              <label class="field">
+                <span>Pattern autocode phrases or concepts</span>
+                <textarea id="autocode-patterns" rows="3" placeholder="trust in process&#10;fair treatment&#10;biased review"></textarea>
+              </label>
+              <div class="stack gap-12">
+                <label class="field">
+                  <span>Pattern match mode</span>
+                  <select id="autocode-match-mode">
+                    <option value="phrase" selected>phrase</option>
+                    <option value="contains">contains</option>
+                    <option value="whole_word">whole_word</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Expand common synonyms</span>
+                  <select id="autocode-expand-synonyms">
+                    <option value="true" selected>yes</option>
+                    <option value="false">no</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div class="panel" style="margin-top:14px">
+              <div class="section-header">
+                <div>
+                  <h3 style="margin-bottom:6px">Compound query</h3>
+                  <p class="small-muted" style="margin:0">Combine text, code, case, source, coder, memo, and kind clauses with all/any/none logic.</p>
+                </div>
+                <button id="run-compound-query-btn" type="button" class="small">Run compound query</button>
+              </div>
+              <div class="grid grid-4 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Clause logic</span>
+                  <select id="compound-query-operator">
+                    <option value="all" selected>all clauses</option>
+                    <option value="any">any clause</option>
+                    <option value="none">none of the clauses</option>
+                  </select>
+                </label>
+              </div>
+              <div class="grid grid-3 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Clause 1 field</span>
+                  <select id="compound-clause-1-field">
+                    <option value="text" selected>text</option>
+                    <option value="code">code</option>
+                    <option value="case">case</option>
+                    <option value="source">source</option>
+                    <option value="coder">coder</option>
+                    <option value="memo">memo</option>
+                    <option value="source_kind">source_kind</option>
+                    <option value="segment_kind">segment_kind</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 1 operator</span>
+                  <select id="compound-clause-1-operator">
+                    <option value="contains" selected>contains</option>
+                    <option value="equals">equals</option>
+                    <option value="whole_word">whole_word</option>
+                    <option value="phrase">phrase</option>
+                    <option value="present">present</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 1 value</span>
+                  <input id="compound-clause-1-value" type="text" placeholder="trust" />
+                </label>
+              </div>
+              <div class="grid grid-3 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Clause 2 field</span>
+                  <select id="compound-clause-2-field">
+                    <option value="text" selected>text</option>
+                    <option value="code">code</option>
+                    <option value="case">case</option>
+                    <option value="source">source</option>
+                    <option value="coder">coder</option>
+                    <option value="memo">memo</option>
+                    <option value="source_kind">source_kind</option>
+                    <option value="segment_kind">segment_kind</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 2 operator</span>
+                  <select id="compound-clause-2-operator">
+                    <option value="contains" selected>contains</option>
+                    <option value="equals">equals</option>
+                    <option value="whole_word">whole_word</option>
+                    <option value="phrase">phrase</option>
+                    <option value="present">present</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 2 value</span>
+                  <input id="compound-clause-2-value" type="text" placeholder="code-trust" />
+                </label>
+              </div>
+              <div class="grid grid-3 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Clause 3 field</span>
+                  <select id="compound-clause-3-field">
+                    <option value="text" selected>text</option>
+                    <option value="code">code</option>
+                    <option value="case">case</option>
+                    <option value="source">source</option>
+                    <option value="coder">coder</option>
+                    <option value="memo">memo</option>
+                    <option value="source_kind">source_kind</option>
+                    <option value="segment_kind">segment_kind</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 3 operator</span>
+                  <select id="compound-clause-3-operator">
+                    <option value="contains" selected>contains</option>
+                    <option value="equals">equals</option>
+                    <option value="whole_word">whole_word</option>
+                    <option value="phrase">phrase</option>
+                    <option value="present">present</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 3 value</span>
+                  <input id="compound-clause-3-value" type="text" placeholder="student1" />
+                </label>
+              </div>
+            </div>
+            <div id="retrieval-summary" class="surface-note" style="margin-top:14px">Run a retrieval to inspect coded evidence.</div>
+            <ul id="retrieval-results-list" class="interactive-list" style="margin-top:12px"></ul>
+              <div class="inline-actions export-shelf" style="margin-top:16px">
+                <button id="run-text-search-btn" type="button" class="small">Run text search</button>
+                <button id="run-sentiment-analysis-btn" type="button" class="small">Run sentiment analysis</button>
+                <button id="run-word-frequency-btn" type="button" class="small">Run word frequency</button>
+                <button id="run-word-cloud-btn" type="button" class="small">Build word cloud</button>
+                <button id="run-keyword-autocode-btn" type="button" class="small">Run keyword autocode</button>
+                <button id="run-pattern-autocode-btn" type="button" class="small">Run pattern autocode</button>
+                <button id="run-map-visualization-btn" type="button" class="small">Build map view</button>
+                <button id="run-code-hierarchy-btn" type="button" class="small">Build code hierarchy</button>
+                <button id="run-concept-map-btn" type="button" class="small">Build concept map</button>
+                <button id="run-framework-matrix-btn" type="button" class="small">Build framework matrix</button>
+                <button id="run-code-cooccurrence-btn" type="button" class="small">Build co-occurrence view</button>
+              <button id="run-matrix-coding-btn" type="button" class="small">Build matrix coding view</button>
+              <button id="run-code-code-matrix-btn" type="button" class="small">Build code x code matrix</button>
+              <button id="run-code-by-case-btn" type="button" class="small">Build code-by-case view</button>
+              <button id="run-query-report-btn" type="button" class="small">Build query report</button>
+              <button id="run-coding-comparison-btn" type="button" class="small">Run coding comparison</button>
+              <button id="run-inter-rater-summary-btn" type="button" class="small">Run inter-rater summary</button>
+            </div>
+            <div class="inline-actions" style="margin-top:12px">
+              <button id="export-framework-word-btn" type="button" class="small">Framework Word</button>
+              <button id="export-framework-excel-btn" type="button" class="small">Framework Excel</button>
+              <button id="export-matrix-word-btn" type="button" class="small">Matrix Word</button>
+              <button id="export-matrix-excel-btn" type="button" class="small">Matrix Excel</button>
+              <button id="export-code-code-word-btn" type="button" class="small">Code x code Word</button>
+              <button id="export-code-code-excel-btn" type="button" class="small">Code x code Excel</button>
+              <button id="export-cooccurrence-word-btn" type="button" class="small">Co-occurrence Word</button>
+              <button id="export-query-report-word-btn" type="button" class="small">Query report Word</button>
+              <button id="export-coding-comparison-word-btn" type="button" class="small">Coding comparison Word</button>
+              <button id="export-inter-rater-word-btn" type="button" class="small">Inter-rater Word</button>
+            </div>
+            <div id="autocode-summary" class="small-muted" style="margin-top:14px">Keyword autocoding scopes the current qualitative filters and applies the selected code to matching segments.</div>
+            <div id="autocode-result" style="margin-top:12px">No autocoding run yet.</div>
+            <div id="text-search-summary" class="small-muted" style="margin-top:14px">Run a text search to inspect matching snippets inside the current qualitative scope.</div>
+            <div id="text-search-result" style="margin-top:12px">No text search yet.</div>
+              <div id="sentiment-summary" class="small-muted" style="margin-top:14px">Run sentiment analysis to classify the current qualitative scope.</div>
+              <div id="sentiment-result" style="margin-top:12px">No sentiment analysis yet.</div>
+              <div id="word-frequency-summary" class="small-muted" style="margin-top:14px">Run word frequency to inspect the most common terms in the current qualitative scope.</div>
+              <div id="word-frequency-result" style="margin-top:12px">No word frequency view yet.</div>
+              <div id="word-cloud-summary" class="small-muted" style="margin-top:14px">Build a word cloud to inspect dominant qualitative terms in the current scope.</div>
+              <div id="word-cloud-result" style="margin-top:12px">No word cloud yet.</div>
+              <div id="compound-query-summary" class="small-muted" style="margin-top:14px">Run a compound query to combine multiple qualitative clauses in one retrieval.</div>
+              <div id="compound-query-result" style="margin-top:12px">No compound query yet.</div>
+              <div id="map-visualization-summary" class="small-muted" style="margin-top:14px">Build a map view to aggregate qualitative evidence by location-like case attributes.</div>
+              <div id="map-visualization-result" style="margin-top:12px">No map view yet.</div>
+              <div id="code-hierarchy-summary" class="small-muted" style="margin-top:14px">Build a code hierarchy view to inspect parent-child structure against coded volume.</div>
+              <div id="code-hierarchy-result" style="margin-top:12px">No code hierarchy yet.</div>
+              <div id="concept-map-summary" class="small-muted" style="margin-top:14px">Build a concept map to inspect code relationships and co-occurrence links.</div>
+              <div id="concept-map-result" style="margin-top:12px">No concept map yet.</div>
+              <div id="code-cluster-summary" class="small-muted" style="margin-top:14px">Build clusters to inspect which codes travel together in the current scope.</div>
+              <div id="code-cluster-result" style="margin-top:12px">No code clusters yet.</div>
+              <div id="framework-matrix-summary" class="small-muted" style="margin-top:14px">Build a framework matrix to summarize cases by code with excerpt summaries.</div>
+              <div id="framework-matrix-result" style="margin-top:12px">No framework matrix yet.</div>
+            <div id="cooccurrence-summary" class="small-muted" style="margin-top:14px">Build a co-occurrence view to inspect code pairs.</div>
+            <div id="cooccurrence-result" style="margin-top:12px">No co-occurrence view yet.</div>
+            <div id="matrix-coding-summary" class="small-muted" style="margin-top:14px">Build a matrix view to summarize coding by case.</div>
+            <div id="matrix-coding-result" style="margin-top:12px">No matrix coding view yet.</div>
+            <div id="code-code-matrix-summary" class="small-muted" style="margin-top:16px">Build a code-by-code matrix from the current qualitative filters.</div>
+            <div id="code-code-matrix-result" style="margin-top:12px">No code-by-code matrix yet.</div>
+            <div id="code-by-case-summary" class="small-muted" style="margin-top:16px">Build a grouped case view to inspect qualitative evidence by case and code.</div>
+            <div id="code-by-case-result" style="margin-top:12px">No code-by-case view yet.</div>
+            <div id="query-report-summary" class="small-muted" style="margin-top:16px">Build a qualitative query report across sources and cases.</div>
+            <div id="query-report-result" style="margin-top:12px">No qualitative query report yet.</div>
+            <div id="coding-comparison-summary" class="small-muted" style="margin-top:16px">Run coding comparison to inspect coder agreement for a selected code.</div>
+            <div id="coding-comparison-result" style="margin-top:12px">No coding comparison yet.</div>
+            <div id="inter-rater-summary-summary" class="small-muted" style="margin-top:16px">Run an inter-rater summary to compare agreement across codes in the current scope.</div>
+            <div id="inter-rater-summary-result" style="margin-top:12px">No inter-rater summary yet.</div>
+            <div class="inline-actions" style="margin-top:16px">
+              <button id="run-merge-review-btn" type="button" class="small">Run merge review</button>
+            </div>
+            <div id="merge-review-summary" class="small-muted" style="margin-top:12px">Run merge review to inspect coder overlap and merge candidates.</div>
+            <div id="merge-review-result" style="margin-top:12px">No merge review yet.</div>
+            <div class="grid grid-3 compact-grid" style="margin-top:16px">
+              <label class="field">
+                <span>Qualitative query label</span>
+                <input id="qual-query-label" type="text" placeholder="Trust concern case view" />
+              </label>
+              <label class="field">
+                <span>Saved mode</span>
+                <select id="qual-query-mode">
+                  <option value="retrieval" selected>retrieval</option>
+                  <option value="cooccurrence">cooccurrence</option>
+                  <option value="matrix_code_case">matrix_code_case</option>
+                  <option value="matrix_code_code">matrix_code_code</option>
+                  <option value="framework_matrix">framework_matrix</option>
+                  <option value="code_by_case">code_by_case</option>
+                  <option value="coding_comparison">coding_comparison</option>
+                  <option value="inter_rater_summary">inter_rater_summary</option>
+                    <option value="query_report">query_report</option>
+                    <option value="text_search">text_search</option>
+                    <option value="sentiment">sentiment</option>
+                    <option value="word_frequency">word_frequency</option>
+                    <option value="word_cloud">word_cloud</option>
+                    <option value="compound_query">compound_query</option>
+                    <option value="map_visualization">map_visualization</option>
+                    <option value="code_hierarchy">code_hierarchy</option>
+                    <option value="concept_map">concept_map</option>
+                    <option value="pattern_autocode">pattern_autocode</option>
+                  </select>
+                </label>
+              <button id="save-qual-query-btn" type="button" class="small">Save qualitative query</button>
+            </div>
+            <ul id="saved-qualitative-queries-list" class="interactive-list" style="margin-top:12px"></ul>
+          </article>
+        </section>
+
+      </div>
+
+      <!-- ── Quantitative tab ── -->
+      <div class="tab-panel" id="tab-quantitative">
+        <section class="tab-intro">
+          <div>
+            <p class="eyebrow">Quantitative workspace</p>
+            <h2>Define the dataset, choose a procedure, and review output in a denser analysis desk.</h2>
+          </div>
+          <p class="small-muted">Use the menu to move between data management, transforms, descriptive output, tests, and models in a full-width workspace.</p>
+        </section>
+
+        <section class="workspace-menu">
+          <button type="button" class="workspace-menu-btn" data-quant-menu="data">
+            <span class="menu-kicker">Quantitative</span>
+            <span class="menu-label">Data</span>
+            <span class="menu-copy">Import files and define cases, variables, attributes</span>
+          </button>
+          <button type="button" class="workspace-menu-btn" data-quant-menu="transform">
+            <span class="menu-kicker">Quantitative</span>
+            <span class="menu-label">Transform</span>
+            <span class="menu-copy">Derive trace links, filters, recodes, and saved setups</span>
+          </button>
+          <button type="button" class="workspace-menu-btn" data-quant-menu="describe">
+            <span class="menu-kicker">Quantitative</span>
+            <span class="menu-label">Describe</span>
+            <span class="menu-copy">Inspect distributions, summaries, and variable detail</span>
+          </button>
+          <button type="button" class="workspace-menu-btn" data-quant-menu="test">
+            <span class="menu-kicker">Quantitative</span>
+            <span class="menu-label">Tests</span>
+            <span class="menu-copy">Run comparisons, crosstabs, and inferential procedures</span>
+          </button>
+          <button type="button" class="workspace-menu-btn" data-quant-menu="model">
+            <span class="menu-kicker">Quantitative</span>
+            <span class="menu-label">Models</span>
+            <span class="menu-copy">Correlation and regression on the active dataset</span>
+          </button>
+        </section>
+
+        <section class="workspace-submenu" data-quant-submenu="data">
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="data" data-quant-subtab="import">Import and export</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="data" data-quant-subtab="design">Variables, cases, attributes</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="data" data-quant-subtab="browser">Data browser</button>
+        </section>
+        <section class="workspace-submenu" data-quant-submenu="transform" hidden>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="transform" data-quant-subtab="derive">Derive variables</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="transform" data-quant-subtab="reshape">Filters, recodes, weights</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="transform" data-quant-subtab="trace">Trace links</button>
+        </section>
+        <section class="workspace-submenu" data-quant-submenu="describe" hidden>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="describe" data-quant-subtab="summary">Descriptive summary</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="describe" data-quant-subtab="frequency">Frequency tables</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="describe" data-quant-subtab="missing">Missing values</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="describe" data-quant-subtab="inspect">Variable inspector</button>
+        </section>
+        <section class="workspace-submenu" data-quant-submenu="test" hidden>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="test" data-quant-subtab="compare">Compare means</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="test" data-quant-subtab="ttests">T-tests</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="test" data-quant-subtab="rank">Rank tests</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="test" data-quant-subtab="crosstab">Crosstabs</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="test" data-quant-subtab="tables">Custom tables</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="test" data-quant-subtab="exact">Exact tests</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="test" data-quant-subtab="bootstrap">Bootstrap</button>
+        </section>
+        <section class="workspace-submenu" data-quant-submenu="model" hidden>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="correlation">Correlation</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="regression">Regression</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="reliability">Reliability</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="factor">Factor analysis</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="forecast">Forecasting</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="cluster">Cluster</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="tree">Decision tree</button>
+        </section>
+
+        <section class="quantitative-output-desk workspace-section">
+          <div class="workspace-banner">
+            <p class="eyebrow">Output viewer</p>
+            <h3>Keep procedures on the left and read results from one output navigator, instead of scanning separate inline boxes.</h3>
+          </div>
+          <article class="panel quant-output-nav-panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Output navigator</h2>
+                <p class="small-muted" style="margin:0">Choose the active output page or reopen a saved analysis run.</p>
+              </div>
+            </div>
+            <div class="quant-output-nav-list" style="margin-top:14px">
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="descriptives">Descriptives</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="frequency">Frequency</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="compare-means">Compare means</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="ttest">T-test</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="paired-ttest">Paired t-test</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="nonparametric">Nonparametric</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="crosstab">Crosstab</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="custom-table">Custom table</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="exact-test">Exact test</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="bootstrap">Bootstrap</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="missing-values">Missing values</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="correlation">Correlation</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="regression">Regression</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="reliability">Reliability</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="factor-analysis">Factor analysis</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="forecasting">Forecasting</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="cluster-analysis">Cluster analysis</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="decision-tree">Decision tree</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="saved-analyses">Saved analyses</button>
+            </div>
+            <div class="quant-output-history" style="margin-top:18px">
+              <div class="section-header">
+                <div>
+                  <h2 style="margin-bottom:6px">Output tree</h2>
+                  <p class="small-muted" style="margin:0">Open pages, recent output, and saved procedures in one navigable tree.</p>
+                </div>
+              </div>
+              <ul id="quant-output-tree-list" class="interactive-list" style="margin-top:14px"></ul>
+            </div>
+            <div class="quant-output-save" style="margin-top:18px">
+              <label class="field">
+                <span>Analysis label</span>
+                <input id="analysis-job-label" type="text" placeholder="Trust by campus regression" />
+              </label>
+              <div class="inline-actions">
+                <button id="save-analysis-job-btn" type="button" class="small">Save current analysis</button>
+                <button id="open-compiled-report-btn" type="button" class="small">Open compiled report</button>
+                <button id="export-compiled-report-btn" type="button" class="small">Export report HTML</button>
+                <button id="print-output-btn" type="button" class="small">Print active output</button>
+              </div>
+              <div class="small-muted" id="analysis-job-help">Run a statistical procedure first, then save it here.</div>
+            </div>
+            <div class="quant-output-history" style="margin-top:18px">
+              <div class="section-header">
+                <div>
+                  <h2 style="margin-bottom:6px">Compiled report sections</h2>
+                  <p class="small-muted" style="margin:0">Choose which output pages should be included when opening or exporting the compiled report.</p>
+                </div>
+              </div>
+              <div class="inline-actions" style="margin-top:14px">
+                <button id="report-select-all-btn" type="button" class="small">Select all</button>
+                <button id="report-clear-all-btn" type="button" class="small">Reset default</button>
+                <button id="report-committee-pack-btn" type="button" class="small">Default committee pack</button>
+              </div>
+              <div id="compiled-report-controls" class="report-include-grid" style="margin-top:14px"></div>
+              <div class="stack gap-12" style="margin-top:16px">
+                <label class="field">
+                  <span>Preset label</span>
+                  <input id="compiled-report-preset-label" type="text" placeholder="Committee packet" />
+                </label>
+                <button id="save-report-preset-btn" type="button" class="small">Save report preset</button>
+              </div>
+              <ul id="compiled-report-presets-list" class="interactive-list" style="margin-top:14px"></ul>
+            </div>
+            <div class="quant-output-history" style="margin-top:18px">
+              <div class="section-header">
+                <div>
+                  <h2 style="margin-bottom:6px">Recent output</h2>
+                  <p class="small-muted" style="margin:0">This stack keeps the last result pages you opened in the viewer.</p>
+                </div>
+              </div>
+              <ul id="quant-output-history-list" class="interactive-list" style="margin-top:14px"></ul>
+            </div>
+          </article>
+          <article class="panel quant-output-stage">
+            <section class="quant-output-panel" data-quant-output="descriptives">
+              <div class="section-header">
+                <div>
+                  <h2 style="margin-bottom:6px">Descriptive output</h2>
+                  <p class="small-muted" style="margin:0">Dataset overview and field-level summaries.</p>
+                </div>
+                <div class="inline-actions">
+                  <span class="small-muted" id="descriptive-case-count">0 cases</span>
+                  <span class="small-muted" id="descriptive-field-count">0 fields</span>
+                </div>
+              </div>
+              <div id="descriptive-overview" style="margin-top:16px">Select a project to build a case-level dataset.</div>
+              <ul id="descriptives-list" class="interactive-list" style="margin-top:16px"></ul>
+            </section>
+            <section class="quant-output-panel" data-quant-output="frequency" hidden>
+              <div class="section-header">
+                <div>
+                  <h2 style="margin-bottom:6px">Frequency output</h2>
+                  <p class="small-muted" style="margin:0">Distribution, percentages, and cumulative totals for one field.</p>
+                </div>
+              </div>
+              <div id="frequency-summary" class="small-muted" style="margin-top:14px">Choose a field to inspect its frequency table.</div>
+              <div id="frequency-table-result" style="margin-top:16px">No frequency table selected.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="compare-means" hidden>
+              <div id="compare-means-result">Choose a numeric outcome and a grouping field.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="ttest" hidden>
+              <div id="ttest-result">Choose a numeric outcome and a two-group field, then run a t-test.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="paired-ttest" hidden>
+              <div id="paired-ttest-result">Choose two numeric fields measured on the same cases, then run a paired t-test.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="nonparametric" hidden>
+              <div id="nonparametric-result">Choose a numeric outcome and grouping field to run a nonparametric test.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="crosstab" hidden>
+              <div id="crosstab-result">Select two fields to build a crosstab.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="custom-table" hidden>
+              <div id="custom-table-result">Choose table fields and build a custom table.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="exact-test" hidden>
+              <div id="exact-test-result">Choose a 2x2 crosstab when Fisher exact output is needed.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="bootstrap" hidden>
+              <div id="bootstrap-result">Choose a bootstrap procedure and target fields.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="missing-values" hidden>
+              <div id="missing-values-result">Run missing-values analysis to review missingness and imputation recommendations.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="correlation" hidden>
+              <div id="correlation-result">Choose two numeric fields and run a correlation.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="regression" hidden>
+              <div id="regression-result">Choose fields and run a regression.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="reliability" hidden>
+              <div id="reliability-result">Choose at least two numeric fields and run reliability analysis.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="factor-analysis" hidden>
+              <div id="factor-analysis-result">Choose numeric fields and run factor analysis.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="forecasting" hidden>
+              <div id="forecasting-result">Choose a time/order field and numeric value field, then run forecasting.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="cluster-analysis" hidden>
+              <div id="cluster-analysis-result">Choose numeric fields and run cluster analysis.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="decision-tree" hidden>
+              <div id="decision-tree-result">Choose a target and predictors, then run a decision tree.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="saved-analyses" hidden>
+              <div class="section-header">
+                <div>
+                  <h2 style="margin-bottom:6px">Saved analyses</h2>
+                  <p class="small-muted" style="margin:0">Stored procedures can be reopened from here and rerun against the active project.</p>
+                </div>
+              </div>
+              <ul id="saved-analysis-jobs-list" class="interactive-list" style="margin-top:16px"></ul>
+            </section>
+          </article>
+        </section>
+
+        <section class="quantitative-ribbon workspace-section" data-quant-section="data" data-quant-parent="data" data-quant-subsection="import">
+          <div class="workspace-banner">
+            <p class="eyebrow">Data</p>
+            <h3>Start with the dataset itself: import, export, and define the project structure that analysis will use.</h3>
+          </div>
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Import files</h2>
+                <p class="small-muted" style="margin:0">
+                  Drop Word, PDF, or text files to create sources. Drop Excel or CSV files to create cases and case attributes.
+                </p>
+              </div>
+              <button id="import-browse-btn" type="button" class="small">Browse files</button>
+            </div>
+            <input id="import-file-input" type="file" accept=".txt,.md,.docx,.pdf,.csv,.xls,.xlsx" multiple hidden />
+            <div id="import-dropzone" class="dropzone" tabindex="0">
+              <strong>Drop accepted files here</strong>
+              <span class="small-muted">Accepted: .txt, .md, .docx, .pdf, .csv, .xls, .xlsx</span>
+            </div>
+            <div id="import-result" class="small-muted" style="margin-top:14px">No files imported yet.</div>
+                <div class="button-row export-shelf" style="margin-top:14px">
+                  <button id="export-csv-btn" type="button" class="small">Export CSV</button>
+                  <button id="export-xlsx-btn" type="button" class="small">Export Excel</button>
+                  <button id="export-json-btn" type="button" class="small">Export JSON</button>
+                  <button id="open-recent-word-btn" type="button" class="small">Open recent Word</button>
+                  <button id="open-recent-excel-btn" type="button" class="small">Open recent Excel</button>
+                  <button id="export-evidence-btn" type="button" class="small">Export evidence JSON</button>
+                  <button id="export-evidence-docx-btn" type="button" class="small">Export evidence Word</button>
+                  <button id="export-evidence-xlsx-btn" type="button" class="small">Export evidence Excel</button>
+                <button id="export-evidence-pdf-btn" type="button" class="small">Export evidence PDF</button>
+                <button id="export-codebook-docx-btn" type="button" class="small">Codebook Word</button>
+                <button id="export-codebook-xlsx-btn" type="button" class="small">Codebook Excel</button>
+                <button id="export-codebook-pdf-btn" type="button" class="small">Codebook PDF</button>
+                <button id="export-case-summaries-docx-btn" type="button" class="small">Case summaries Word</button>
+                <button id="export-case-summaries-xlsx-btn" type="button" class="small">Case summaries Excel</button>
+                <button id="export-case-summaries-pdf-btn" type="button" class="small">Case summaries PDF</button>
+                  <button id="export-appendix-docx-btn" type="button" class="small">Appendix Word</button>
+                  <button id="export-appendix-xlsx-btn" type="button" class="small">Appendix Excel</button>
+                  <button id="export-appendix-pdf-btn" type="button" class="small">Appendix PDF</button>
+                </div>
+                <div id="office-launch-status" class="small-muted" style="margin-top:10px">Office integration status will appear here.</div>
+              </article>
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Import from SQL</h2>
+                <p class="small-muted" style="margin:0">
+                  Save a PostgreSQL or SQL Server connection profile, inspect tables, and import rows into cases plus case attributes.
+                </p>
+              </div>
+              <button id="load-sql-tables-btn" type="button" class="small">Load tables</button>
+            </div>
+            <div class="grid grid-2 compact-grid">
+              <label class="field">
+                <span>Profile label</span>
+                <input id="sql-profile-label" type="text" placeholder="Admissions warehouse" />
+              </label>
+              <label class="field">
+                <span>Host</span>
+                <input id="sql-host" type="text" placeholder="sql.mu.edu" />
+              </label>
+            </div>
+            <div class="grid grid-5 compact-grid">
+              <label class="field">
+                <span>Client type</span>
+                <select id="sql-client-type">
+                  <option value="postgres" selected>PostgreSQL</option>
+                  <option value="sqlserver">SQL Server</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Port</span>
+                <input id="sql-port" type="number" value="5432" />
+              </label>
+              <label class="field">
+                <span>Database</span>
+                <input id="sql-database" type="text" placeholder="warehouse" />
+              </label>
+              <label class="field">
+                <span>Username</span>
+                <input id="sql-username" type="text" placeholder="mu_user" />
+              </label>
+              <label class="field">
+                <span>Password</span>
+                <input id="sql-password" type="password" placeholder="Database password" />
+              </label>
+            </div>
+            <div class="button-row" style="margin-top:10px">
+              <label class="checkbox" style="display:flex; align-items:center; gap:8px;">
+                <input id="sql-ssl" type="checkbox" />
+                <span>Use SSL</span>
+              </label>
+              <button id="save-sql-profile-btn" type="button" class="small">Save SQL profile</button>
+              <button id="delete-sql-profile-btn" type="button" class="small">Delete selected profile</button>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Saved profiles</span>
+                <select id="sql-profile-select"></select>
+              </label>
+              <label class="field">
+                <span>Table</span>
+                <select id="sql-table-select"></select>
+              </label>
+            </div>
+            <div class="grid grid-2 compact-grid">
+              <label class="field">
+                <span>Case label column</span>
+                <select id="sql-case-label-column"></select>
+              </label>
+              <label class="field">
+                <span>Max rows</span>
+                <input id="sql-max-rows" type="number" min="1" max="5000" value="500" />
+              </label>
+            </div>
+            <div class="button-row" style="margin-top:10px">
+              <button id="preview-sql-table-btn" type="button" class="small">Preview table</button>
+              <button id="import-sql-table-btn" type="button" class="small">Import table into cases</button>
+              <button id="save-sql-import-job-btn" type="button" class="small">Save import job</button>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Saved job row limit</span>
+                <input id="sql-job-max-rows" type="number" min="1" max="5000" value="500" />
+              </label>
+              <label class="field">
+                <span>Schedule interval (minutes)</span>
+                <input id="sql-job-schedule-interval" type="number" min="15" max="10080" value="60" />
+              </label>
+              <label class="checkbox" style="display:flex; align-items:end; gap:8px;">
+                <input id="sql-job-schedule-enabled" type="checkbox" />
+                <span>Enable automatic refresh for this saved job</span>
+              </label>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Columns to import as case attributes</span>
+                <div id="sql-import-columns" class="stack gap-8"></div>
+              </label>
+              <label class="field">
+                <span>Create variables for selected columns</span>
+                <select id="sql-variable-columns" multiple size="8"></select>
+              </label>
+            </div>
+            <div class="panel" style="margin-top:14px">
+              <div class="section-header">
+                <div>
+                  <h3 style="margin-bottom:6px">Read-only SQL query runner</h3>
+                  <p class="small-muted" style="margin:0">Use a single `SELECT` or `WITH` query to preview external SQL data.</p>
+                </div>
+                <button id="run-sql-query-btn" type="button" class="small">Run query</button>
+              </div>
+              <label class="field">
+                <span>Query</span>
+                <textarea id="sql-query-text" rows="6" placeholder="SELECT * FROM public.ext_sql_import_demo"></textarea>
+              </label>
+              <div id="sql-query-result" class="panel" style="margin-top:10px"></div>
+            </div>
+            <div class="panel" style="margin-top:14px">
+              <div class="section-header">
+                <div>
+                  <h3 style="margin-bottom:6px">Write current dataset back to external SQL</h3>
+                  <p class="small-muted" style="margin:0">Exports the current case dataset, including active filters, recodes, weights, and missing-data rules.</p>
+                </div>
+                <button id="export-sql-table-btn" type="button" class="small">Export dataset to external SQL</button>
+              </div>
+              <div class="grid grid-3 compact-grid">
+                <label class="field">
+                  <span>Target schema</span>
+                  <input id="sql-export-schema" type="text" value="public" />
+                </label>
+                <label class="field">
+                  <span>Target table</span>
+                  <input id="sql-export-table" type="text" placeholder="project_demo_dataset" />
+                </label>
+                <label class="field">
+                  <span>Write mode</span>
+                  <select id="sql-export-mode">
+                    <option value="replace" selected>replace table</option>
+                    <option value="append">append rows</option>
+                    <option value="upsert">upsert by key</option>
+                  </select>
+                </label>
+              </div>
+              <div class="grid grid-2 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Dataset key field</span>
+                  <input id="sql-export-key-field" type="text" placeholder="case_id" />
+                </label>
+                <label class="field">
+                  <span>Target key column</span>
+                  <input id="sql-export-key-column" type="text" placeholder="case_id" />
+                </label>
+              </div>
+              <div class="small-muted" style="margin-top:10px">Use `replace table` to recreate the target from the current dataset. Use `append rows` only when the target table already has matching columns.</div>
+            </div>
+            <div id="sql-preview" class="panel" style="margin-top:14px"></div>
+            <div class="panel" style="margin-top:14px">
+              <h3 style="margin-bottom:8px">Saved SQL import jobs</h3>
+              <ul id="sql-import-jobs" class="interactive-list"></ul>
+            </div>
+            <div id="sql-import-status" class="small-muted" style="margin-top:10px">SQL import status will appear here.</div>
+          </article>
+          </section>
+
+        <section class="grid grid-3 quantitative-setup workspace-section" data-quant-section="data" data-quant-parent="data" data-quant-subsection="design">
+          <article class="panel">
+            <h2>Create variable</h2>
+            <form id="variable-form" class="stack gap-12">
+              <label class="field">
+                <span>Selected project</span>
+                <input id="selected-project-variable" type="text" value="No project selected" disabled />
+              </label>
+              <div class="grid grid-2 compact-grid">
+                <label class="field">
+                  <span>Variable name</span>
+                  <input id="variable-name" type="text" placeholder="trust_concern_flag" required />
+                </label>
+                <label class="field">
+                  <span>Variable label</span>
+                  <input id="variable-label" type="text" placeholder="Trust concern flagged" required />
+                </label>
+              </div>
+              <div class="grid grid-2 compact-grid">
+                <label class="field">
+                  <span>Kind</span>
+                  <select id="variable-kind">
+                    <option value="binary" selected>binary</option>
+                    <option value="categorical">categorical</option>
+                    <option value="continuous">continuous</option>
+                    <option value="text">text</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Source kind</span>
+                  <select id="variable-source-kind">
+                    <option value="manual">manual</option>
+                    <option value="derived_code" selected>derived_code</option>
+                    <option value="imported">imported</option>
+                    <option value="statistical_model">statistical_model</option>
+                    <option value="dataset_derivation">dataset_derivation</option>
+                  </select>
+                </label>
+              </div>
+              <label class="field">
+                <span>Derived from code ID (for derived_code variables)</span>
+                <input id="variable-derived-code-id" type="text" placeholder="code-... (click a code in Qualitative tab)" />
+              </label>
+              <label class="field">
+                <span>Derivation rule</span>
+                <select id="variable-derivation-rule">
+                  <option value="presence" selected>presence</option>
+                  <option value="count">count</option>
+                  <option value="intensity">intensity</option>
+                </select>
+              </label>
+              <button type="submit">Save variable</button>
+            </form>
+          </article>
+
+          <article class="panel">
+            <h2>Create case</h2>
+            <form id="case-form" class="stack gap-12">
+              <label class="field">
+                <span>Selected project</span>
+                <input id="selected-project-case" type="text" value="No project selected" disabled />
+              </label>
+              <label class="field">
+                <span>Case label</span>
+                <input id="case-label" type="text" placeholder="Participant 002" required />
+              </label>
+              <label class="field">
+                <span>Source IDs (comma-separated, optional)</span>
+                <input id="case-source-ids" type="text" placeholder="source-abc, source-xyz" />
+              </label>
+              <button type="submit">Save case</button>
+            </form>
+          </article>
+
+          <article class="panel">
+            <h2>Create attribute</h2>
+            <form id="attribute-form" class="stack gap-12">
+              <label class="field">
+                <span>Selected project</span>
+                <input id="selected-project-attribute" type="text" value="No project selected" disabled />
+              </label>
+              <div class="grid grid-2 compact-grid">
+                <label class="field">
+                  <span>Target type</span>
+                  <select id="attribute-target-type">
+                    <option value="case" selected>case</option>
+                    <option value="source">source</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Target ID</span>
+                  <input id="attribute-target-id" type="text" placeholder="case-... or source-..." required />
+                </label>
+              </div>
+              <div class="grid grid-2 compact-grid">
+                <label class="field">
+                  <span>Attribute name</span>
+                  <input id="attribute-name" type="text" placeholder="department" required />
+                </label>
+                <label class="field">
+                  <span>Value type</span>
+                  <select id="attribute-value-type">
+                    <option value="string" selected>string</option>
+                    <option value="number">number</option>
+                    <option value="boolean">boolean</option>
+                    <option value="null">null</option>
+                  </select>
+                </label>
+              </div>
+              <label class="field">
+                <span>Value</span>
+                <input id="attribute-value" type="text" placeholder="Admissions" />
+              </label>
+              <button type="submit">Save attribute</button>
+            </form>
+          </article>
+        </section>
+
+        <!-- Derive trace links -->
+        <section class="quantitative-action workspace-section" data-quant-section="transform" data-quant-parent="transform" data-quant-subsection="derive">
+          <div class="workspace-banner">
+            <p class="eyebrow">Transform</p>
+            <h3>Convert coded evidence into analysis-ready structure, then save the setup for reuse.</h3>
+          </div>
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Derive trace links</h2>
+                <p style="margin:0;color:var(--muted);font-size:13px">
+                  Automatically computes which cases have evidence for each derived_code variable,
+                  based on code applications. Run this after applying codes to segments.
+                </p>
+              </div>
+              <button id="derive-btn" class="small">Run derivation</button>
+            </div>
+            <div id="derive-result" style="margin-top:14px;color:var(--muted);font-size:13px"></div>
+          </article>
+        </section>
+
+        <section class="quantitative-control workspace-section" data-quant-section="transform" data-quant-parent="transform" data-quant-subsection="reshape">
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Filters and recodes</h2>
+                <p class="small-muted" style="margin:0">
+                  Narrow the active dataset and derive grouped fields before running summaries and cross-tabs.
+                </p>
+              </div>
+              <button id="clear-analysis-btn" type="button" class="small">Reset analysis</button>
+            </div>
+            <div class="grid grid-2" style="margin-top:14px">
+              <div class="stack gap-12">
+                <label class="field">
+                  <span>Filter field</span>
+                  <select id="filter-field"></select>
+                </label>
+                <div class="grid grid-2 compact-grid">
+                  <label class="field">
+                    <span>Operator</span>
+                    <select id="filter-operator">
+                      <option value="equals" selected>equals</option>
+                      <option value="not_equals">not equals</option>
+                      <option value="contains">contains</option>
+                      <option value="greater_than">greater than</option>
+                      <option value="less_than">less than</option>
+                      <option value="is_missing">is missing</option>
+                      <option value="not_missing">not missing</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Value</span>
+                    <input id="filter-value" type="text" placeholder="Admissions or 5" />
+                  </label>
+                </div>
+                <button id="apply-filter-btn" type="button" class="small">Apply filter</button>
+              </div>
+              <div class="stack gap-12">
+                <label class="field">
+                  <span>Recode source field</span>
+                  <select id="recode-source-field"></select>
+                </label>
+                <div class="grid grid-2 compact-grid">
+                  <label class="field">
+                    <span>Output field key</span>
+                    <input id="recode-output-key" type="text" placeholder="service_area" />
+                  </label>
+                  <label class="field">
+                    <span>Output label</span>
+                    <input id="recode-output-label" type="text" placeholder="Service area" />
+                  </label>
+                </div>
+                <label class="field">
+                  <span>Mapping rules</span>
+                  <textarea id="recode-rules" rows="5" placeholder="Admissions=Student Services&#10;Financial Aid=Student Services&#10;*=Other"></textarea>
+                </label>
+                <button id="apply-recode-btn" type="button" class="small">Apply recode</button>
+              </div>
+            </div>
+            <div id="analysis-summary" class="small-muted" style="margin-top:16px">No dataset transforms applied.</div>
+            <div class="grid grid-3 compact-grid" style="margin-top:16px">
+              <label class="field">
+                <span>Weight field</span>
+                <select id="analysis-weight-field"></select>
+              </label>
+              <label class="field">
+                <span>Missing-data rule</span>
+                <select id="missing-strategy">
+                  <option value="available" selected>available-case</option>
+                  <option value="listwise">listwise</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Custom missing codes</span>
+                <input id="missing-codes" type="text" placeholder="NA, N/A, 999" />
+              </label>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:16px">
+              <label class="field">
+                <span>Transform label</span>
+                <input id="transform-label" type="text" placeholder="Metro campuses only" />
+              </label>
+              <button id="save-transform-btn" type="button" class="small">Save current transform</button>
+              <div></div>
+            </div>
+            <ul id="saved-transforms-list" class="interactive-list" style="margin-top:12px"></ul>
+          </article>
+        </section>
+
+        <section class="grid grid-2 quantitative-overview workspace-section" data-quant-section="describe" data-quant-parent="describe" data-quant-subsection="summary">
+          <div class="workspace-banner">
+            <p class="eyebrow">Describe</p>
+            <h3>Read the case-level dataset first, then inspect field behavior before moving to formal tests.</h3>
+          </div>
+          <article class="panel">
+            <div class="section-header">
+              <h2>Basic descriptives</h2>
+              <span class="small-muted">See Output Viewer</span>
+            </div>
+            <div class="small-muted">The full descriptive report is shown in the Output Viewer.</div>
+          </article>
+          <article class="panel">
+            <div class="section-header">
+              <h2>Field summaries</h2>
+              <span class="small-muted">See Output Viewer</span>
+            </div>
+            <div class="small-muted">Use the navigator to review field summaries and switch between output pages.</div>
+          </article>
+        </section>
+
+        <section class="quantitative-procedure workspace-section" data-quant-section="describe" data-quant-parent="describe" data-quant-subsection="frequency">
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Frequency table</h2>
+                <p class="small-muted" style="margin:0">
+                  Review full distributions with cumulative percentages for one active field.
+                </p>
+              </div>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Field</span>
+                <select id="frequency-field"></select>
+              </label>
+              <div class="small-muted">Results open in the Output Viewer.</div>
+            </div>
+          </article>
+        </section>
+
+        <section class="quantitative-procedure workspace-section" data-quant-section="describe" data-quant-parent="describe" data-quant-subsection="missing">
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Missing values</h2>
+                <p class="small-muted" style="margin:0">
+                  Review field-level missingness, row patterns, and simple imputation recommendations before running procedures.
+                </p>
+              </div>
+              <button id="run-missing-values-btn" type="button" class="small">Run missing analysis</button>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Impute field</span>
+                <select id="imputation-field"></select>
+              </label>
+              <label class="field">
+                <span>Method</span>
+                <select id="imputation-method">
+                  <option value="mean" selected>mean</option>
+                  <option value="mode">mode</option>
+                  <option value="constant">constant</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Constant value</span>
+                <input id="imputation-constant" type="text" placeholder="Optional constant" />
+              </label>
+            </div>
+            <div class="inline-actions" style="margin-top:14px">
+              <button id="run-imputation-plan-btn" type="button" class="small">Preview imputation plan</button>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer. Imputation preview does not overwrite stored cases.</div>
+          </article>
+        </section>
+
+        <section class="quantitative-procedure workspace-section" data-quant-section="test" data-quant-parent="test" data-quant-subsection="compare">
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Compare means</h2>
+                <p class="small-muted" style="margin:0">
+                  Compare a numeric outcome across groups and review one-way ANOVA-style summary output.
+                </p>
+              </div>
+              <button id="run-compare-means-btn" type="button" class="small">Run compare means</button>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Outcome field</span>
+                <select id="compare-means-outcome-field"></select>
+              </label>
+              <label class="field">
+                <span>Grouping field</span>
+                <select id="compare-means-group-field"></select>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
+          </article>
+        </section>
+
+        <section class="grid grid-2 quantitative-procedure workspace-section" data-quant-section="test" data-quant-parent="test" data-quant-subsection="ttests">
+          <div class="workspace-banner">
+            <p class="eyebrow">Tests</p>
+            <h3>Run focused comparisons and inferential procedures on the transformed dataset.</h3>
+          </div>
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">T-test</h2>
+                <p class="small-muted" style="margin:0">
+                  Run an independent-samples t-test when the grouping field has exactly two groups.
+                </p>
+              </div>
+              <button id="run-ttest-btn" type="button" class="small">Run t-test</button>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Outcome field</span>
+                <select id="ttest-outcome-field"></select>
+              </label>
+              <label class="field">
+                <span>Grouping field</span>
+                <select id="ttest-group-field"></select>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
+          </article>
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Paired t-test</h2>
+                <p class="small-muted" style="margin:0">
+                  Compare two numeric measures taken on the same cases.
+                </p>
+              </div>
+              <button id="run-paired-ttest-btn" type="button" class="small">Run paired t-test</button>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Before field</span>
+                <select id="paired-before-field"></select>
+              </label>
+              <label class="field">
+                <span>After field</span>
+                <select id="paired-after-field"></select>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
+          </article>
+        </section>
+
+        <section class="quantitative-procedure workspace-section" data-quant-section="test" data-quant-parent="test" data-quant-subsection="rank">
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Nonparametric test</h2>
+                <p class="small-muted" style="margin:0">
+                  Run Mann-Whitney U for two groups or Kruskal-Wallis when there are more than two groups, with weighted rank handling when a weight field is active.
+                </p>
+              </div>
+              <button id="run-nonparametric-btn" type="button" class="small">Run nonparametric</button>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Outcome field</span>
+                <select id="nonparametric-outcome-field"></select>
+              </label>
+              <label class="field">
+                <span>Grouping field</span>
+                <select id="nonparametric-group-field"></select>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
+          </article>
+        </section>
+
+        <section class="quantitative-procedure workspace-section" data-quant-section="test" data-quant-parent="test" data-quant-subsection="crosstab">
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Cross-tab analysis</h2>
+                <p class="small-muted" style="margin:0">
+                  Compare two dataset fields the way SPSS-style contingency tables do.
+                </p>
+              </div>
+              <button id="run-crosstab-btn" type="button" class="small">Run crosstab</button>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Row field</span>
+                <select id="crosstab-row-field"></select>
+              </label>
+              <label class="field">
+                <span>Column field</span>
+                <select id="crosstab-column-field"></select>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
+          </article>
+        </section>
+
+        <section class="quantitative-procedure workspace-section" data-quant-section="test" data-quant-parent="test" data-quant-subsection="tables">
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Custom tables</h2>
+                <p class="small-muted" style="margin:0">
+                  Build grouped table output with row fields, an optional column field, and optional numeric mean/sum measures.
+                </p>
+              </div>
+              <button id="run-custom-table-btn" type="button" class="small">Build custom table</button>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Row fields</span>
+                <select id="custom-table-row-fields" multiple size="7"></select>
+              </label>
+              <label class="field">
+                <span>Column field</span>
+                <select id="custom-table-column-field"></select>
+              </label>
+              <label class="field">
+                <span>Measure fields</span>
+                <select id="custom-table-measure-fields" multiple size="7"></select>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
+          </article>
+        </section>
+
+        <section class="quantitative-procedure workspace-section" data-quant-section="test" data-quant-parent="test" data-quant-subsection="exact">
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Exact tests</h2>
+                <p class="small-muted" style="margin:0">
+                  Run Fisher exact for 2x2 integer crosstabs, with chi-square output retained for larger or weighted tables.
+                </p>
+              </div>
+              <button id="run-exact-test-btn" type="button" class="small">Run exact test</button>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Row field</span>
+                <select id="exact-row-field"></select>
+              </label>
+              <label class="field">
+                <span>Column field</span>
+                <select id="exact-column-field"></select>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
+          </article>
+        </section>
+
+        <section class="quantitative-procedure workspace-section" data-quant-section="test" data-quant-parent="test" data-quant-subsection="bootstrap">
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Bootstrap</h2>
+                <p class="small-muted" style="margin:0">
+                  Estimate confidence intervals for a mean or correlation using reproducible resampling.
+                </p>
+              </div>
+              <button id="run-bootstrap-btn" type="button" class="small">Run bootstrap</button>
+            </div>
+            <div class="grid grid-4 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Procedure</span>
+                <select id="bootstrap-procedure">
+                  <option value="mean" selected>mean</option>
+                  <option value="correlation">correlation</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Target fields</span>
+                <select id="bootstrap-target-fields" multiple size="7"></select>
+              </label>
+              <label class="field">
+                <span>Iterations</span>
+                <input id="bootstrap-iterations" type="number" min="100" max="10000" value="1000" />
+              </label>
+              <label class="field">
+                <span>Confidence level</span>
+                <select id="bootstrap-confidence">
+                  <option value="0.9">90%</option>
+                  <option value="0.95" selected>95%</option>
+                  <option value="0.99">99%</option>
+                </select>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
+          </article>
+        </section>
+
+        <section class="grid grid-2 quantitative-procedure workspace-section" data-quant-section="model">
+          <div class="workspace-banner">
+            <p class="eyebrow">Models</p>
+            <h3>Move from summary statistics to relationships, correlation structure, and predictive models.</h3>
+          </div>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="correlation">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Correlation</h2>
+                <p class="small-muted" style="margin:0">
+                  Run a Pearson correlation on two numeric fields in the active transformed dataset.
+                </p>
+              </div>
+              <button id="run-correlation-btn" type="button" class="small">Run correlation</button>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>X field</span>
+                <select id="correlation-x-field"></select>
+              </label>
+              <label class="field">
+                <span>Y field</span>
+                <select id="correlation-y-field"></select>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="regression">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Regression</h2>
+                <p class="small-muted" style="margin:0">
+                  Run a first-pass linear or logistic regression on the active transformed dataset.
+                </p>
+              </div>
+              <button id="run-regression-btn" type="button" class="small">Run regression</button>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Model</span>
+                <select id="regression-model">
+                  <option value="linear" selected>linear</option>
+                  <option value="logistic">logistic</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Dependent field</span>
+                <select id="regression-dependent-field"></select>
+              </label>
+              <label class="field">
+                <span>Predictor fields</span>
+                <select id="regression-predictor-fields" multiple size="6"></select>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="reliability">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Reliability analysis</h2>
+                <p class="small-muted" style="margin:0">
+                  Estimate internal consistency across a selected scale using Cronbach alpha.
+                </p>
+              </div>
+              <button id="run-reliability-btn" type="button" class="small">Run reliability</button>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Scale fields</span>
+                <select id="reliability-fields" multiple size="8"></select>
+              </label>
+              <label class="field">
+                <span>Subscales (optional)</span>
+                <textarea id="reliability-subscales" rows="6" placeholder="Trust: item_1, item_2&#10;Process: item_3, item_4"></textarea>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:14px">Use one `Label: field_1, field_2` line per subscale. Reliability output opens in the Output Viewer and can be saved like the other procedures.</div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="factor">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Factor analysis</h2>
+                <p class="small-muted" style="margin:0">
+                  Run a first-pass exploratory factor extraction on a selected numeric field set.
+                </p>
+              </div>
+              <button id="run-factor-analysis-btn" type="button" class="small">Run factor analysis</button>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Factor fields</span>
+                <select id="factor-analysis-fields" multiple size="8"></select>
+              </label>
+              <div class="stack gap-12">
+                <label class="field">
+                  <span>Requested factors</span>
+                  <input id="factor-count" type="number" min="1" value="2" />
+                </label>
+                <label class="field">
+                  <span>Rotation</span>
+                  <select id="factor-rotation">
+                    <option value="none" selected>none</option>
+                    <option value="varimax">varimax</option>
+                  </select>
+                </label>
+                <div class="small-muted">
+                  Current implementation uses principal-components extraction and can apply a first-pass varimax rotation.
+                </div>
+              </div>
+            </div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="forecast">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Forecasting</h2>
+                <p class="small-muted" style="margin:0">Run a first-pass linear trend forecast for ordered or date-like data.</p>
+              </div>
+              <button id="run-forecasting-btn" type="button" class="small">Run forecast</button>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Time/order field</span>
+                <select id="forecast-time-field"></select>
+              </label>
+              <label class="field">
+                <span>Value field</span>
+                <select id="forecast-value-field"></select>
+              </label>
+              <label class="field">
+                <span>Forecast horizon</span>
+                <input id="forecast-horizon" type="number" min="1" max="24" value="3" />
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="cluster">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Cluster analysis</h2>
+                <p class="small-muted" style="margin:0">Run deterministic k-means clustering over standardized numeric fields.</p>
+              </div>
+              <button id="run-cluster-analysis-btn" type="button" class="small">Run cluster analysis</button>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Cluster fields</span>
+                <select id="cluster-analysis-fields" multiple size="8"></select>
+              </label>
+              <label class="field">
+                <span>Clusters</span>
+                <input id="cluster-count" type="number" min="2" max="8" value="3" />
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="tree">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Decision tree</h2>
+                <p class="small-muted" style="margin:0">Run a first-pass classification tree using Gini impurity.</p>
+              </div>
+              <button id="run-decision-tree-btn" type="button" class="small">Run decision tree</button>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Target field</span>
+                <select id="decision-tree-target-field"></select>
+              </label>
+              <label class="field">
+                <span>Predictor fields</span>
+                <select id="decision-tree-predictor-fields" multiple size="8"></select>
+              </label>
+              <label class="field">
+                <span>Max depth</span>
+                <input id="decision-tree-depth" type="number" min="1" max="6" value="3" />
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
+          </article>
+        </section>
+
+        <section class="grid grid-3 quantitative-summary-strip workspace-section" data-quant-section="describe" data-quant-parent="describe" data-quant-subsection="summary">
+          <article class="panel stat-card">
+            <h2>Project</h2>
+            <div id="project-card">Select a project.</div>
+          </article>
+          <article class="panel stat-card">
+            <h2>Qualitative summary</h2>
+            <div id="qual-card">Select a project.</div>
+          </article>
+          <article class="panel stat-card">
+            <h2>Quantitative summary</h2>
+            <div id="quant-card">Select a project.</div>
+          </article>
+        </section>
+
+        <section class="grid grid-3 quantitative-browser workspace-section" data-quant-section="data" data-quant-parent="data" data-quant-subsection="browser">
+          <div class="workspace-banner">
+            <p class="eyebrow">Data browser</p>
+            <h3>Inspect the working data model directly: variables, cases, and attributes available to analysis.</h3>
+          </div>
+          <article class="panel">
+            <div class="section-header">
+              <h2>Variables</h2>
+              <span class="small-muted" id="variable-count">0</span>
+            </div>
+            <ul id="variables-list" class="interactive-list"></ul>
+          </article>
+          <article class="panel">
+            <div class="section-header">
+              <h2>Cases</h2>
+              <span class="small-muted" id="case-count">0</span>
+            </div>
+            <ul id="cases-list" class="interactive-list"></ul>
+          </article>
+          <article class="panel">
+            <div class="section-header">
+              <h2>Attributes</h2>
+              <span class="small-muted" id="attribute-count">0</span>
+            </div>
+            <ul id="attributes-list" class="interactive-list"></ul>
+          </article>
+        </section>
+
+        <section class="quantitative-inspector workspace-section" data-quant-section="describe" data-quant-parent="describe" data-quant-subsection="inspect">
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Variable inspector</h2>
+                <p class="small-muted" style="margin:0">
+                  Click a variable to inspect its derivation rule, dataset field, distribution, and example case values.
+                </p>
+              </div>
+            </div>
+            <div id="variable-inspector-summary" style="margin-top:14px">Select a variable to inspect it.</div>
+            <div id="variable-inspector-preview" style="margin-top:16px">No variable selected.</div>
+          </article>
+        </section>
+
+        <section class="quantitative-trace workspace-section" data-quant-section="transform" data-quant-parent="transform" data-quant-subsection="trace">
+          <article class="panel">
+            <div class="section-header">
+              <h2>Trace links (derived dataset)</h2>
+              <span class="small-muted" id="trace-link-count">0</span>
+            </div>
+            <ul id="trace-links-list" class="interactive-list"></ul>
+          </article>
+        </section>
+
+      </div>
+
+      <!-- ── Status tab ── -->
+      <div class="tab-panel" id="tab-status">
+        <section class="tab-intro">
+          <div>
+            <p class="eyebrow">Status and governance</p>
+            <h2>Inspect deployment readiness, governance controls, audit activity, and backup state.</h2>
+          </div>
+          <p class="small-muted">This tab is the operational control surface for administration, diagnostics, and recovery.</p>
+        </section>
+        <section class="tab-overview">
+          <article class="panel overview-card">
+            <span class="workspace-label">Governance</span>
+            <strong id="governance-ready">loading</strong>
+            <p class="small-muted">Overall governance and deployment state.</p>
+          </article>
+          <article class="panel overview-card">
+            <span class="workspace-label">Audit events</span>
+            <strong id="audit-count">0</strong>
+            <p class="small-muted">Events visible in the active audit view.</p>
+          </article>
+          <article class="panel overview-card">
+            <span class="workspace-label">Backups</span>
+            <strong id="backup-count">0</strong>
+            <p class="small-muted">Available project-level recovery points.</p>
+          </article>
+          <article class="panel overview-card">
+            <span class="workspace-label">Deployment issues</span>
+            <strong id="deployment-issue-count">0</strong>
+            <p class="small-muted">Validation issues still needing attention.</p>
+          </article>
+        </section>
+        <section class="tab-layout">
+          <article class="panel">
+            <h2>Selected project payload</h2>
+            <pre id="dataset-output">Select a project to see payload.</pre>
+          </article>
+          <article class="panel">
+            <h2>Status</h2>
+            <ul id="trace-list" class="trace-list"></ul>
+          </article>
+        </section>
+        <section class="tab-layout">
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2>Governance readiness</h2>
+                <p class="small-muted" style="margin:0">Current security, retention, export, and readiness controls.</p>
+              </div>
+            </div>
+            <ul id="governance-status-list" class="interactive-list" style="margin-top:16px"></ul>
+          </article>
+          <article class="panel">
+            <div class="section-header">
+              <h2>Deployment validation</h2>
+              <button id="refresh-deployment-btn" type="button" class="small">Refresh validation</button>
+            </div>
+            <ul id="deployment-issues-list" class="interactive-list" style="margin-top:16px"></ul>
+          </article>
+        </section>
+        <section class="tab-layout">
+          <article class="panel">
+            <h2>Professor governance controls</h2>
+            <form id="governance-policy-form" class="stack gap-12">
+              <div class="grid grid-2 compact-grid">
+                <label class="field">
+                  <span>Idle timeout (minutes)</span>
+                  <input id="policy-idle-timeout" type="number" min="15" max="720" value="90" />
+                </label>
+                <label class="field">
+                  <span>Login throttle window</span>
+                  <input id="policy-login-window" type="number" min="1" max="240" value="15" />
+                </label>
+              </div>
+              <div class="grid grid-2 compact-grid">
+                <label class="field">
+                  <span>Max failed logins</span>
+                  <input id="policy-login-failures" type="number" min="1" max="20" value="5" />
+                </label>
+                <label class="field">
+                  <span>Audit export max rows</span>
+                  <input id="policy-audit-max-rows" type="number" min="100" max="100000" value="2000" />
+                </label>
+              </div>
+              <label class="field">
+                <span>Backup retention (days)</span>
+                <input id="policy-backup-retention" type="number" min="1" max="3650" value="30" />
+              </label>
+              <button type="submit">Save governance policy</button>
+              <div id="policy-save-result" class="small-muted">Professor accounts can update deployment policy here.</div>
+            </form>
+          </article>
+          <article class="panel">
+            <div class="section-header">
+              <h2>Backup and restore</h2>
+            </div>
+            <div class="inline-actions" style="margin-top:14px">
+              <button id="create-backup-btn" type="button" class="small">Create backup snapshot</button>
+              <button id="refresh-backups-btn" type="button" class="small">Refresh backups</button>
+            </div>
+            <div id="backup-result" class="small-muted" style="margin-top:14px">Project owners can create and restore backup snapshots here.</div>
+            <ul id="backup-list" class="interactive-list" style="margin-top:12px"></ul>
+          </article>
+        </section>
+        <section>
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2>Audit trail</h2>
+                <p class="small-muted" style="margin:0">Filter and export the project event history for review or compliance reporting.</p>
+              </div>
+            </div>
+            <div class="grid grid-4 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Actor</span>
+                <input id="audit-filter-actor" type="text" placeholder="student1" />
+              </label>
+              <label class="field">
+                <span>Action prefix</span>
+                <input id="audit-filter-action" type="text" placeholder="export." />
+              </label>
+              <label class="field">
+                <span>Entity type</span>
+                <input id="audit-filter-entity" type="text" placeholder="export" />
+              </label>
+              <label class="field">
+                <span>Role</span>
+                <select id="audit-filter-role">
+                  <option value="">any</option>
+                  <option value="student">student</option>
+                  <option value="professor">professor</option>
+                  <option value="system">system</option>
+                </select>
+              </label>
+            </div>
+            <div class="inline-actions" style="margin-top:14px">
+              <button id="apply-audit-filters-btn" type="button" class="small">Apply audit filters</button>
+              <button id="export-audit-json-btn" type="button" class="small">Export audit JSON</button>
+              <button id="export-audit-csv-btn" type="button" class="small">Export audit CSV</button>
+              <button id="export-audit-xlsx-btn" type="button" class="small">Export audit Excel</button>
+              <button id="export-audit-txt-btn" type="button" class="small">Export audit TXT</button>
+            </div>
+            <ul id="audit-events-list" class="interactive-list" style="margin-top:16px"></ul>
+          </article>
+        </section>
+      </div>
+
+    </main>
+
+    <script type="module" src="/src/app.js"></script>
+  </body>
+</html>
