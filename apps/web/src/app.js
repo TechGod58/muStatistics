@@ -7725,6 +7725,43 @@ function renderRegression() {
       value: value === null ? 'n/a' : formatDecimal(value, 4)
     }));
     const diagnostics = result.diagnostics ?? {};
+    const observationRows = Array.isArray(result.observations) ? result.observations : [];
+    const multicollinearityRows = Array.isArray(result.multicollinearity) && result.multicollinearity.length > 0
+      ? result.multicollinearity.map((row) => ({
+        field: row.field,
+        vif: row.vif,
+        tolerance: row.tolerance
+      }))
+      : Object.entries(diagnostics)
+        .filter(([key]) => key.startsWith('vif_'))
+        .map(([key, value]) => {
+          const field = key.replace(/^vif_/, '');
+          const tolerance = diagnostics[`tol_${field}`] ?? (typeof value === 'number' && value > 0 ? 1 / value : null);
+          return {
+            field,
+            vif: typeof value === 'number' ? value : null,
+            tolerance: typeof tolerance === 'number' ? tolerance : null
+          };
+        });
+    const influenceSummaryRows = Array.isArray(result.influenceSummary) && result.influenceSummary.length > 0
+      ? result.influenceSummary
+      : [...observationRows]
+        .sort((left, right) => {
+          const cooksDelta = (right.cooksDistance ?? -Infinity) - (left.cooksDistance ?? -Infinity);
+          if (Number.isFinite(cooksDelta) && cooksDelta !== 0) return cooksDelta;
+          const leverageDelta = (right.leverage ?? -Infinity) - (left.leverage ?? -Infinity);
+          if (Number.isFinite(leverageDelta) && leverageDelta !== 0) return leverageDelta;
+          return Math.abs(right.standardizedResidual ?? 0) - Math.abs(left.standardizedResidual ?? 0);
+        })
+        .slice(0, 10)
+        .map((observation) => ({
+          caseId: observation.caseId ?? null,
+          caseLabel: observation.caseLabel ?? null,
+          leverage: observation.leverage ?? null,
+          cooksDistance: observation.cooksDistance ?? null,
+          standardizedResidual: observation.standardizedResidual ?? null,
+          devianceResidual: observation.devianceResidual ?? null
+        }));
     const diagnosticRows = [
       ['Durbin-Watson', formatStatValue(diagnostics.durbinWatson, 4)],
       ['Jarque-Bera statistic', formatStatValue(diagnostics.jarqueBeraStatistic, 4)],
@@ -7737,8 +7774,7 @@ function renderRegression() {
       ['Outlier count', formatStatValue(diagnostics.outlierCount, 0)],
       ['High leverage count', formatStatValue(diagnostics.highLeverageCount, 0)],
       ['Influential count', formatStatValue(diagnostics.influentialCount, 0)]
-    ];
-    const observationRows = Array.isArray(result.observations) ? result.observations : [];
+    ].filter((row) => row[1] !== 'n/a');
     const thresholdAnalysis = Array.isArray(result.thresholdAnalysis) ? result.thresholdAnalysis : [];
     const calibrationBins = Array.isArray(result.calibration?.bins) ? result.calibration.bins : [];
     const calibrationPoints = calibrationBins
@@ -7792,6 +7828,19 @@ function renderRegression() {
             buildOutputTable(
               ['Diagnostic', 'Value'],
               diagnosticRows.map((row) => [escapeHtml(row[0]), row[1]])
+            )
+          )
+          : '',
+        multicollinearityRows.length > 0
+          ? buildOutputSection(
+            'Multicollinearity',
+            buildOutputTable(
+              ['Predictor', 'VIF', 'Tolerance'],
+              multicollinearityRows.map((row) => [
+                escapeHtml(row.field),
+                formatStatValue(row.vif, 4),
+                formatStatValue(row.tolerance, 4)
+              ])
             )
           )
           : '',
@@ -7885,6 +7934,21 @@ function renderRegression() {
               )
             )
             : '',
+        influenceSummaryRows.length > 0
+          ? buildOutputSection(
+            'Top influential cases',
+            buildOutputTable(
+              ['Case', "Cook's D", 'Leverage', 'Std residual', 'Deviance residual'],
+              influenceSummaryRows.map((observation) => [
+                escapeHtml(observation.caseLabel ?? observation.caseId ?? 'case'),
+                formatStatValue(observation.cooksDistance, 4),
+                formatStatValue(observation.leverage, 4),
+                formatStatValue(observation.standardizedResidual, 4),
+                formatStatValue(observation.devianceResidual, 4)
+              ])
+            )
+          )
+          : '',
         buildChartSuggestionsSection([
           'Coefficient bar chart with confidence intervals',
           'Residual vs fitted plot',

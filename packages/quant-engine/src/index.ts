@@ -604,6 +604,21 @@ export type RegressionObservation = {
   outlier: boolean;
 };
 
+export type RegressionMulticollinearityRow = {
+  field: string;
+  vif: number | null;
+  tolerance: number | null;
+};
+
+export type RegressionInfluenceRow = {
+  caseId: string | null;
+  caseLabel: string | null;
+  leverage: number | null;
+  cooksDistance: number | null;
+  standardizedResidual: number | null;
+  devianceResidual: number | null;
+};
+
 export type RegressionThresholdMetric = {
   threshold: number;
   weightedCount: number;
@@ -642,6 +657,8 @@ export type RegressionResult = {
   metrics: Record<string, number | null>;
   diagnostics?: Record<string, number | null>;
   observations?: RegressionObservation[];
+  multicollinearity?: RegressionMulticollinearityRow[];
+  influenceSummary?: RegressionInfluenceRow[];
   assumptions?: AssumptionCheck[];
   thresholdAnalysis?: RegressionThresholdMetric[];
   calibration?: {
@@ -4399,6 +4416,9 @@ export function analyzeRegression(
     const durbinWatson = computeDurbinWatson(residuals);
     const meanAbsoluteError = residuals.reduce((total, value, index) => total + (Math.abs(value) * weights[index]!), 0) / weightedCaseCount;
     const vifByPredictor = computeVifByPredictor(rows, predictorFields);
+    const toleranceByPredictor = Object.fromEntries(
+      Object.entries(vifByPredictor).map(([field, value]) => [field, value === null || value <= 0 ? null : 1 / value])
+    ) as Record<string, number | null>;
     const vifValues = Object.values(vifByPredictor).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
     const standardizedResidualValues = standardizedResiduals
       .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
@@ -4406,6 +4426,28 @@ export function analyzeRegression(
     const breuschPagan = computeBreuschPagan(rows, residuals);
     const maxPredictorCorrelation = computeMaxPredictorCorrelation(rows);
     const maxVif = vifValues.length > 0 ? Math.max(...vifValues) : null;
+    const multicollinearity = predictorFields.map((field) => ({
+      field,
+      vif: vifByPredictor[field] ?? null,
+      tolerance: toleranceByPredictor[field] ?? null
+    }));
+    const influenceSummary = [...observations]
+      .sort((left, right) => {
+        const cooksDelta = (right.cooksDistance ?? -Infinity) - (left.cooksDistance ?? -Infinity);
+        if (Number.isFinite(cooksDelta) && cooksDelta !== 0) return cooksDelta;
+        const leverageDelta = (right.leverage ?? -Infinity) - (left.leverage ?? -Infinity);
+        if (Number.isFinite(leverageDelta) && leverageDelta !== 0) return leverageDelta;
+        return Math.abs(right.standardizedResidual ?? 0) - Math.abs(left.standardizedResidual ?? 0);
+      })
+      .slice(0, 10)
+      .map((observation) => ({
+        caseId: observation.caseId,
+        caseLabel: observation.caseLabel,
+        leverage: observation.leverage ?? null,
+        cooksDistance: observation.cooksDistance ?? null,
+        standardizedResidual: observation.standardizedResidual ?? null,
+        devianceResidual: observation.devianceResidual ?? null
+      }));
     assumptions.push(
       buildAssumptionCheck(
         'residual_normality',
@@ -4463,6 +4505,8 @@ export function analyzeRegression(
         fStatistic,
         fPValue
       },
+      multicollinearity,
+      influenceSummary,
       diagnostics: {
         weightedCaseCount,
         residualSumSquares: ssRes,
@@ -4483,7 +4527,8 @@ export function analyzeRegression(
         breuschPaganStatistic: breuschPagan.statistic,
         breuschPaganPValue: breuschPagan.pValue,
         breuschPaganRSquared: breuschPagan.rSquared,
-        ...Object.fromEntries(Object.entries(vifByPredictor).map(([field, value]) => [`vif_${field}`, value]))
+        ...Object.fromEntries(Object.entries(vifByPredictor).map(([field, value]) => [`vif_${field}`, value])),
+        ...Object.fromEntries(Object.entries(toleranceByPredictor).map(([field, value]) => [`tol_${field}`, value]))
       },
       observations: observations.slice(0, 50),
       assumptions
@@ -4672,12 +4717,81 @@ export function analyzeRegression(
     observation.leverage = leverageValues[index];
     observation.devianceResidual = devianceResiduals[index];
   });
+  const parameterCount = predictorFields.length + 1;
+  const cooksValues = observations.map((observation, index) => {
+    const h = leverageValues[index];
+    const pearsonResidual = observation.standardizedResidual;
+    if (h === null || pearsonResidual === null || pearsonResidual === undefined || !(h >= 0) || h >= 1 || parameterCount <= 0) return null;
+    const numericResidual = pearsonResidual as number;
+    return ((numericResidual ** 2) * h) / (parameterCount * Math.max(1e-12, (1 - h) ** 2));
+  });
+  observations.forEach((observation, index) => {
+    observation.cooksDistance = cooksValues[index];
+  });
   const outlierCount = observations.filter((item) => item.outlier).length;
   const maxAbsPearsonResidual = pearsonResiduals.reduce((max, value) => Math.max(max, Math.abs(value)), 0);
   const maxLeverage = leverageValues.reduce<number>((max, value) => value === null ? max : Math.max(max, value), 0);
+  const maxCooksDistance = cooksValues.reduce<number>((max, value) => value === null ? max : Math.max(max, value), 0);
   const maxAbsDevianceResidual = devianceResiduals.reduce((max, value) => Math.max(max, Math.abs(value)), 0);
-  const leverageThreshold = (2 * (predictorFields.length + 1)) / Math.max(rows.length, 1);
+  const leverageThreshold = (2 * parameterCount) / Math.max(rows.length, 1);
   const highLeverageCount = leverageValues.filter((value) => value !== null && value > leverageThreshold).length;
+  const influentialCount = cooksValues.filter((value) => value !== null && value > (4 / Math.max(rows.length, 1))).length;
+  const vifByPredictor = computeVifByPredictor(rows, predictorFields);
+  const toleranceByPredictor = Object.fromEntries(
+    Object.entries(vifByPredictor).map(([field, value]) => [field, value === null || value <= 0 ? null : 1 / value])
+  ) as Record<string, number | null>;
+  const vifValues = Object.values(vifByPredictor).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  const maxVif = vifValues.length > 0 ? Math.max(...vifValues) : null;
+  const meanVif = vifValues.length > 0 ? vifValues.reduce((total, value) => total + value, 0) / vifValues.length : null;
+  const maxPredictorCorrelation = computeMaxPredictorCorrelation(rows);
+  const multicollinearity = predictorFields.map((field) => ({
+    field,
+    vif: vifByPredictor[field] ?? null,
+    tolerance: toleranceByPredictor[field] ?? null
+  }));
+  const influenceSummary = [...observations]
+    .sort((left, right) => {
+      const cooksDelta = (right.cooksDistance ?? -Infinity) - (left.cooksDistance ?? -Infinity);
+      if (Number.isFinite(cooksDelta) && cooksDelta !== 0) return cooksDelta;
+      const leverageDelta = (right.leverage ?? -Infinity) - (left.leverage ?? -Infinity);
+      if (Number.isFinite(leverageDelta) && leverageDelta !== 0) return leverageDelta;
+      return Math.abs(right.standardizedResidual ?? 0) - Math.abs(left.standardizedResidual ?? 0);
+    })
+    .slice(0, 10)
+    .map((observation) => ({
+      caseId: observation.caseId,
+      caseLabel: observation.caseLabel,
+      leverage: observation.leverage ?? null,
+      cooksDistance: observation.cooksDistance ?? null,
+      standardizedResidual: observation.standardizedResidual ?? null,
+      devianceResidual: observation.devianceResidual ?? null
+    }));
+  assumptions.push(
+    buildAssumptionCheck(
+      'multicollinearity',
+      'Multicollinearity (max VIF)',
+      maxVif === null ? 'warn' : maxVif <= 5 ? 'pass' : maxVif <= 10 ? 'warn' : 'fail',
+      maxVif,
+      maxVif === null
+        ? 'Could not compute VIF for all predictors.'
+        : maxVif <= 5
+          ? 'Multicollinearity is within typical bounds.'
+          : maxVif <= 10
+            ? 'Moderate multicollinearity detected.'
+            : 'High multicollinearity detected; coefficients may be unstable.'
+    ),
+    buildAssumptionCheck(
+      'influence',
+      "Influence (Cook's D)",
+      influentialCount === 0 ? 'pass' : influentialCount <= 2 ? 'warn' : 'fail',
+      influentialCount,
+      influentialCount === 0
+        ? 'No highly influential rows by Cook threshold.'
+        : influentialCount <= 2
+          ? 'A small number of influential rows were detected.'
+          : 'Multiple influential rows were detected; inspect case-level diagnostics.'
+    )
+  );
 
   return {
     model,
@@ -4699,6 +4813,8 @@ export function analyzeRegression(
       brierScore,
       rocAuc
     },
+    multicollinearity,
+    influenceSummary,
     diagnostics: {
       weightedCaseCount,
       logLikelihood,
@@ -4723,9 +4839,16 @@ export function analyzeRegression(
       outlierCount,
       maxAbsPearsonResidual,
       maxLeverage,
+      maxCooksDistance,
       maxAbsDevianceResidual,
       highLeverageCount,
-      rocAuc
+      influentialCount,
+      maxVif,
+      meanVif,
+      maxPredictorCorrelation,
+      rocAuc,
+      ...Object.fromEntries(Object.entries(vifByPredictor).map(([field, value]) => [`vif_${field}`, value])),
+      ...Object.fromEntries(Object.entries(toleranceByPredictor).map(([field, value]) => [`tol_${field}`, value]))
     },
     thresholdAnalysis,
     calibration: {

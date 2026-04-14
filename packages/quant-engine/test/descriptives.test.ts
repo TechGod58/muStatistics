@@ -245,6 +245,11 @@ describe('buildCaseDataset', () => {
     expect(linear.predictorFields).toEqual(['predictor_one', 'predictor_two']);
     expect(linear.coefficients).toHaveLength(3);
     expect(linear.metrics.fPValue).not.toBeNull();
+    expect(Array.isArray(linear.multicollinearity)).toBe(true);
+    expect(linear.multicollinearity?.length).toBe(2);
+    expect(linear.diagnostics?.maxVif).not.toBeNull();
+    expect(linear.diagnostics?.tol_predictor_one).not.toBeNull();
+    expect(Array.isArray(linear.influenceSummary)).toBe(true);
 
     const logistic = analyzeRegression(dataset, 'binary_outcome', ['predictor_one', 'predictor_two'], 'logistic', {
       weightField: 'case_weight'
@@ -253,6 +258,11 @@ describe('buildCaseDataset', () => {
     expect(logistic.diagnostics?.logLikelihood).not.toBeNull();
     expect(logistic.diagnostics?.hosmerLemeshowPValue).not.toBeNull();
     expect(logistic.coefficients).toHaveLength(3);
+    expect(logistic.diagnostics?.maxVif).not.toBeNull();
+    expect(logistic.diagnostics?.influentialCount).not.toBeNull();
+    expect(logistic.diagnostics?.maxCooksDistance).not.toBeNull();
+    expect(Array.isArray(logistic.multicollinearity)).toBe(true);
+    expect(Array.isArray(logistic.influenceSummary)).toBe(true);
   });
 
   it('supports reliability analysis and factor analysis over complete numeric rows', () => {
