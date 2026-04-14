@@ -281,7 +281,10 @@ describe('buildCaseDataset', () => {
     expect(reliability.items).toHaveLength(3);
     expect(reliability.alpha).toBeGreaterThan(0.95);
     expect(reliability.standardizedAlpha).toBeGreaterThan(0.95);
+    expect(reliability.omegaTotal).toBeGreaterThan(0.95);
+    expect(reliability.averageInterItemCorrelation).toBeGreaterThan(0.8);
     expect(reliability.spearmanBrown).not.toBeNull();
+    expect(reliability.standardErrorOfMeasurement).not.toBeNull();
     expect(reliability.items.every((item) => item.itemTotalCorrelation !== null)).toBe(true);
 
     const factorAnalysis = analyzeFactorAnalysis(dataset, ['item_1', 'item_2', 'item_3'], 2);
@@ -292,5 +295,82 @@ describe('buildCaseDataset', () => {
     expect(factorAnalysis.factors[0]?.eigenvalue).toBeGreaterThan(1);
     expect(factorAnalysis.factors[0]?.loadings).toHaveLength(3);
     expect(factorAnalysis.correlationMatrix).toHaveLength(3);
+    expect(factorAnalysis.diagnostics.kmoPerField).toHaveLength(3);
+    expect(factorAnalysis.diagnostics.bartlettTest.degreesOfFreedom).toBe(3);
+  });
+
+  it('supports promax rotation and reports factor adequacy diagnostics', () => {
+    const dataset = {
+      caseCount: 8,
+      fields: [
+        { key: 'case_id', label: 'Case ID', source: 'system', valueType: 'string' },
+        { key: 'case_label', label: 'Case Label', source: 'system', valueType: 'string' },
+        { key: 'item_1', label: 'Item 1', source: 'attribute', valueType: 'number' },
+        { key: 'item_2', label: 'Item 2', source: 'attribute', valueType: 'number' },
+        { key: 'item_3', label: 'Item 3', source: 'attribute', valueType: 'number' },
+        { key: 'item_4', label: 'Item 4', source: 'attribute', valueType: 'number' }
+      ],
+      rows: [
+        { case_id: 'case-1', case_label: 'Case 1', item_1: 1, item_2: 2, item_3: 5, item_4: 4 },
+        { case_id: 'case-2', case_label: 'Case 2', item_1: 2, item_2: 1, item_3: 4, item_4: 5 },
+        { case_id: 'case-3', case_label: 'Case 3', item_1: 1, item_2: 2, item_3: 6, item_4: 4 },
+        { case_id: 'case-4', case_label: 'Case 4', item_1: 3, item_2: 3, item_3: 3, item_4: 2 },
+        { case_id: 'case-5', case_label: 'Case 5', item_1: 4, item_2: 5, item_3: 2, item_4: 1 },
+        { case_id: 'case-6', case_label: 'Case 6', item_1: 3, item_2: 4, item_3: 3, item_4: 2 },
+        { case_id: 'case-7', case_label: 'Case 7', item_1: 5, item_2: 6, item_3: 1, item_4: 0 },
+        { case_id: 'case-8', case_label: 'Case 8', item_1: 4, item_2: 5, item_3: 2, item_4: 1 }
+      ],
+      notes: []
+    } as const;
+
+    const factorAnalysis = analyzeFactorAnalysis(dataset, ['item_1', 'item_2', 'item_3', 'item_4'], 2, undefined, 'promax');
+    expect(factorAnalysis.rotation).toBe('promax');
+    expect(factorAnalysis.factorCount).toBe(2);
+    expect(factorAnalysis.diagnostics.kmoOverall).not.toBeNull();
+    expect(factorAnalysis.diagnostics.correlationDeterminant).not.toBeNull();
+    expect(factorAnalysis.diagnostics.bartlettTest.degreesOfFreedom).toBe(6);
+    expect(factorAnalysis.diagnostics.bartlettTest.pValue).not.toBeNull();
+    expect(factorAnalysis.diagnostics.kmoPerField).toHaveLength(4);
+    expect(factorAnalysis.diagnostics.factorCorrelationMatrix?.length ?? 0).toBe(2);
+  });
+
+  it('returns richer reliability diagnostics for subscales', () => {
+    const dataset = {
+      caseCount: 8,
+      fields: [
+        { key: 'case_id', label: 'Case ID', source: 'system', valueType: 'string' },
+        { key: 'case_label', label: 'Case Label', source: 'system', valueType: 'string' },
+        { key: 'item_a', label: 'Item A', source: 'attribute', valueType: 'number' },
+        { key: 'item_b', label: 'Item B', source: 'attribute', valueType: 'number' },
+        { key: 'item_c', label: 'Item C', source: 'attribute', valueType: 'number' },
+        { key: 'item_d', label: 'Item D', source: 'attribute', valueType: 'number' }
+      ],
+      rows: [
+        { case_id: 'case-1', case_label: 'Case 1', item_a: 1, item_b: 2, item_c: 4, item_d: 5 },
+        { case_id: 'case-2', case_label: 'Case 2', item_a: 2, item_b: 3, item_c: 5, item_d: 6 },
+        { case_id: 'case-3', case_label: 'Case 3', item_a: 3, item_b: 3, item_c: 4, item_d: 4 },
+        { case_id: 'case-4', case_label: 'Case 4', item_a: 4, item_b: 5, item_c: 6, item_d: 6 },
+        { case_id: 'case-5', case_label: 'Case 5', item_a: 5, item_b: 5, item_c: 7, item_d: 7 },
+        { case_id: 'case-6', case_label: 'Case 6', item_a: 4, item_b: 4, item_c: 6, item_d: 6 },
+        { case_id: 'case-7', case_label: 'Case 7', item_a: 2, item_b: 2, item_c: 3, item_d: 3 },
+        { case_id: 'case-8', case_label: 'Case 8', item_a: 3, item_b: 4, item_c: 5, item_d: 5 }
+      ],
+      notes: []
+    } as const;
+
+    const reliability = analyzeReliability(
+      dataset,
+      ['item_a', 'item_b', 'item_c', 'item_d'],
+      undefined,
+      [
+        { label: 'Scale 1', fields: ['item_a', 'item_b'] },
+        { label: 'Scale 2', fields: ['item_c', 'item_d'] }
+      ]
+    );
+    expect(reliability.subscales?.length).toBe(2);
+    expect(reliability.subscales?.[0]?.itemCount).toBe(2);
+    expect(reliability.subscales?.[0]?.omegaTotal).not.toBeNull();
+    expect(reliability.subscales?.[0]?.averageInterItemCorrelation).not.toBeNull();
+    expect(reliability.subscales?.[0]?.standardErrorOfMeasurement).not.toBeNull();
   });
 });

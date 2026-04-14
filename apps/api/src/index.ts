@@ -6213,7 +6213,11 @@ server.post('/factor-analysis', async (request, reply) => {
   const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
   const fields = Array.isArray(body.fields) ? body.fields.map((field) => String(field ?? '').trim()).filter(Boolean) : [];
   const factorCount = typeof body.factorCount === 'number' ? body.factorCount : undefined;
-  const rotation = body.rotation === 'varimax' ? 'varimax' : 'none';
+  const rotation = body.rotation === 'varimax'
+    ? 'varimax'
+    : body.rotation === 'promax'
+      ? 'promax'
+      : 'none';
   if (!projectId || fields.length < 2) {
     return reply.status(400).send(fail('INVALID', 'projectId and at least two fields are required.'));
   }
@@ -6228,7 +6232,7 @@ server.post('/factor-analysis', async (request, reply) => {
       analysis
     });
     return ok({
-      factorAnalysis: analyzeFactorAnalysis(dataset, fields, factorCount, analysis, rotation)
+      factorAnalysis: analyzeFactorAnalysis(dataset, fields, factorCount, analysis, rotation as never)
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to run factor analysis.';

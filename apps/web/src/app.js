@@ -8015,19 +8015,21 @@ function renderReliability() {
     return;
   }
 
-    const result = state.reliabilityResult;
-    const itemCorrelationItems = result.items.map((item) => ({
-      label: item.label,
-      value: item.itemTotalCorrelation ?? 0
-    }));
-    resultEl.innerHTML = buildOutputViewer({
+  const result = state.reliabilityResult;
+  const itemCorrelationItems = result.items.map((item) => ({
+    label: item.label,
+    value: item.itemTotalCorrelation ?? 0
+  }));
+  resultEl.innerHTML = buildOutputViewer({
     eyebrow: 'Reliability',
     title: `Cronbach alpha for ${result.fieldLabels.join(', ')}`,
     summary: `Alpha ${formatStatValue(result.alpha, 4)} across ${result.validCaseCount} complete case(s).`,
     metrics: [
       { label: 'Valid cases', value: result.validCaseCount },
+      { label: 'Items', value: result.itemCount ?? result.fields?.length ?? result.fieldLabels.length },
       { label: 'Alpha', value: formatStatValue(result.alpha, 4) },
       { label: 'Std alpha', value: formatStatValue(result.standardizedAlpha, 4) },
+      { label: 'Omega', value: formatStatValue(result.omegaTotal, 4) },
       { label: 'Spearman-Brown', value: formatStatValue(result.spearmanBrown, 4) },
       { label: 'Scale mean', value: formatStatValue(result.scaleMean, 4) },
       { label: 'Scale variance', value: formatStatValue(result.scaleVariance, 4) }
@@ -8040,8 +8042,11 @@ function renderReliability() {
           [
             ['Cronbach alpha', formatStatValue(result.alpha, 4)],
             ['Standardized alpha', formatStatValue(result.standardizedAlpha, 4)],
+            ['McDonald omega total', formatStatValue(result.omegaTotal, 4)],
+            ['Average inter-item correlation', formatStatValue(result.averageInterItemCorrelation, 4)],
             ['Split-half correlation', formatStatValue(result.splitHalfCorrelation, 4)],
-            ['Spearman-Brown', formatStatValue(result.spearmanBrown, 4)]
+            ['Spearman-Brown', formatStatValue(result.spearmanBrown, 4)],
+            ['Standard error of measurement', formatStatValue(result.standardErrorOfMeasurement, 4)]
           ]
         )
       ),
@@ -8058,39 +8063,41 @@ function renderReliability() {
           ])
         )
       ),
-        Array.isArray(result.subscales) && result.subscales.length > 0
-          ? buildOutputSection(
-            'Subscale reliability',
+      Array.isArray(result.subscales) && result.subscales.length > 0
+        ? buildOutputSection(
+          'Subscale reliability',
           buildOutputTable(
-            ['Subscale', 'Fields', 'Valid cases', 'Alpha', 'Std alpha', 'Spearman-Brown'],
+            ['Subscale', 'Fields', 'Items', 'Valid cases', 'Alpha', 'Omega', 'Avg inter-item r', 'SEM'],
             result.subscales.map((subscale) => [
               escapeHtml(subscale.label),
               escapeHtml(subscale.fieldLabels.join(', ')),
+              String(subscale.itemCount ?? subscale.fields.length),
               String(subscale.validCaseCount),
               formatStatValue(subscale.alpha, 4),
-              formatStatValue(subscale.standardizedAlpha, 4),
-              formatStatValue(subscale.spearmanBrown, 4)
+              formatStatValue(subscale.omegaTotal, 4),
+              formatStatValue(subscale.averageInterItemCorrelation, 4),
+              formatStatValue(subscale.standardErrorOfMeasurement, 4)
             ])
-              )
-            )
-          : '',
-        itemCorrelationItems.length > 0
-          ? buildOutputSection(
-            'Item-total pattern',
-            `<div class="chart-grid">${buildChartCard('Item-total correlations', buildSvgBarChart(itemCorrelationItems, { color: '#7ea7a1', formatter: (value) => formatDecimal(value, 3) }), 'Higher values indicate stronger alignment with the full scale.')}</div>`
           )
-          : '',
-        result.notes?.length
-          ? buildOutputSection('Notes', buildOutputList(result.notes.map((note) => escapeHtml(note))))
-          : '',
-        buildChartSuggestionsSection([
-          'Item-total correlation bar chart',
-          'Alpha-if-deleted comparison plot',
-          'Subscale reliability summary chart'
-        ])
-      ].filter(Boolean)
-    });
-  }
+        )
+        : '',
+      itemCorrelationItems.length > 0
+        ? buildOutputSection(
+          'Item-total pattern',
+          `<div class="chart-grid">${buildChartCard('Item-total correlations', buildSvgBarChart(itemCorrelationItems, { color: '#7ea7a1', formatter: (value) => formatDecimal(value, 3) }), 'Higher values indicate stronger alignment with the full scale.')}</div>`
+        )
+        : '',
+      result.notes?.length
+        ? buildOutputSection('Notes', buildOutputList(result.notes.map((note) => escapeHtml(note))))
+        : '',
+      buildChartSuggestionsSection([
+        'Item-total correlation bar chart',
+        'Alpha-if-deleted comparison plot',
+        'Subscale reliability summary chart'
+      ])
+    ].filter(Boolean)
+  });
+}
 
 function renderFactorAnalysis() {
   const fieldsEl = document.getElementById('factor-analysis-fields');
@@ -8133,6 +8140,19 @@ function renderFactorAnalysis() {
     label: `F${index + 1}`,
     value
   }));
+  const diagnostics = result.diagnostics ?? null;
+  const kmoRows = Array.isArray(diagnostics?.kmoPerField)
+    ? diagnostics.kmoPerField.map((item) => [
+      escapeHtml(item.label ?? item.field ?? ''),
+      formatStatValue(item.kmo, 4)
+    ])
+    : [];
+  const factorCorrelationRows = Array.isArray(diagnostics?.factorCorrelationMatrix)
+    ? diagnostics.factorCorrelationMatrix.map((row, rowIndex) => [
+      `Factor ${rowIndex + 1}`,
+      ...row.map((value) => formatStatValue(value, 4))
+    ])
+    : [];
   resultEl.innerHTML = buildOutputViewer({
     eyebrow: 'Factor analysis',
     title: `${result.factorCount} factor(s) from ${result.fieldLabels.join(', ')}`,
@@ -8157,26 +8177,69 @@ function renderFactorAnalysis() {
           ]]
         )
       ),
-        buildOutputSection(
-          'Variance explained',
-          buildOutputTable(
+      buildOutputSection(
+        'Variance explained',
+        buildOutputTable(
           ['Factor', 'Eigenvalue', '% variance', 'Cumulative %'],
           result.factors.map((factor) => [
             `Factor ${factor.factor}`,
             formatStatValue(factor.eigenvalue, 4),
             formatStatValue(factor.varianceExplained * 100, 2),
             formatStatValue(factor.cumulativeVarianceExplained * 100, 2)
-            ])
+          ])
+        )
+      ),
+      diagnostics
+        ? buildOutputSection(
+          'Adequacy diagnostics',
+          buildOutputTable(
+            ['Check', 'Statistic', 'P-value'],
+            [
+              [
+                'KMO (overall)',
+                formatStatValue(diagnostics.kmoOverall, 4),
+                'n/a'
+              ],
+              [
+                `Bartlett test (df ${String(diagnostics.bartlettTest?.degreesOfFreedom ?? 0)})`,
+                formatStatValue(diagnostics.bartlettTest?.chiSquare, 4),
+                formatStatValue(diagnostics.bartlettTest?.pValue, 4)
+              ],
+              [
+                'Correlation determinant',
+                formatStatValue(diagnostics.correlationDeterminant, 6),
+                'n/a'
+              ]
+            ]
           )
-        ),
-        screeItems.length > 0
-          ? buildOutputSection(
-            'Scree profile',
-            `<div class="chart-grid">${buildChartCard('Eigenvalue scree', buildSvgLineChart(screeItems, { color: '#8fb3ff' }), 'Eigenvalues by extracted factor order.')}</div>`
+        )
+        : '',
+      kmoRows.length > 0
+        ? buildOutputSection(
+          'KMO by field',
+          buildOutputTable(
+            ['Field', 'KMO'],
+            kmoRows
           )
-          : '',
-        buildOutputSection(
-          'Loadings',
+        )
+        : '',
+      factorCorrelationRows.length > 0
+        ? buildOutputSection(
+          'Factor correlation matrix',
+          buildOutputTable(
+            ['Factor', ...result.factors.map((factor) => `Factor ${factor.factor}`)],
+            factorCorrelationRows
+          )
+        )
+        : '',
+      screeItems.length > 0
+        ? buildOutputSection(
+          'Scree profile',
+          `<div class="chart-grid">${buildChartCard('Eigenvalue scree', buildSvgLineChart(screeItems, { color: '#8fb3ff' }), 'Eigenvalues by extracted factor order.')}</div>`
+        )
+        : '',
+      buildOutputSection(
+        'Loadings',
         buildOutputTable(
           ['Field', ...result.factors.map((factor) => `Factor ${factor.factor}`), 'Communality', 'Uniqueness'],
           result.fields.map((field, fieldIndex) => [
@@ -8196,17 +8259,17 @@ function renderFactorAnalysis() {
             ...row.values.map((value) => formatStatValue(value, 4))
           ])
         )
-        ),
-        result.notes?.length
-          ? buildOutputSection('Notes', buildOutputList(result.notes.map((note) => escapeHtml(note))))
-          : '',
-        buildChartSuggestionsSection([
-          'Scree plot for eigenvalues',
-          'Loading heatmap by factor',
-          'Variance explained cumulative line chart'
-        ])
-      ].filter(Boolean)
-    });
+      ),
+      result.notes?.length
+        ? buildOutputSection('Notes', buildOutputList(result.notes.map((note) => escapeHtml(note))))
+        : '',
+      buildChartSuggestionsSection([
+        'Scree plot for eigenvalues',
+        'Loading heatmap by factor',
+        'Variance explained cumulative line chart'
+      ])
+    ].filter(Boolean)
+  });
   }
 
 function renderForecasting() {
@@ -11626,7 +11689,8 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
     if (!state.selectedProjectId) { alert('Select a project first.'); return; }
     const fields = getSelectedValues(document.getElementById('factor-analysis-fields'));
     const factorCount = Number(document.getElementById('factor-count')?.value || 0);
-    const rotation = document.getElementById('factor-rotation')?.value === 'varimax' ? 'varimax' : 'none';
+    const rotationValue = document.getElementById('factor-rotation')?.value;
+    const rotation = rotationValue === 'varimax' || rotationValue === 'promax' ? rotationValue : 'none';
     if (fields.length < 2) {
       alert('Choose at least two numeric fields for factor analysis.');
       return;

@@ -786,28 +786,38 @@ export type ReliabilityItemSummary = {
   alphaIfDeleted: number | null;
 };
 
+export type ReliabilitySubscaleSummary = {
+  label: string;
+  fields: string[];
+  fieldLabels: string[];
+  validCaseCount: number;
+  itemCount: number;
+  alpha: number | null;
+  standardizedAlpha: number | null;
+  omegaTotal: number | null;
+  averageInterItemCorrelation: number | null;
+  splitHalfCorrelation: number | null;
+  spearmanBrown: number | null;
+  standardErrorOfMeasurement: number | null;
+};
+
 export type ReliabilityResult = {
   fields: string[];
   fieldLabels: string[];
   caseCount: number;
   validCaseCount: number;
+  itemCount: number;
   alpha: number | null;
   standardizedAlpha: number | null;
+  omegaTotal: number | null;
+  averageInterItemCorrelation: number | null;
   splitHalfCorrelation: number | null;
   spearmanBrown: number | null;
   scaleMean: number | null;
   scaleVariance: number | null;
+  standardErrorOfMeasurement: number | null;
   items: ReliabilityItemSummary[];
-  subscales?: Array<{
-    label: string;
-    fields: string[];
-    fieldLabels: string[];
-    validCaseCount: number;
-    alpha: number | null;
-    standardizedAlpha: number | null;
-    splitHalfCorrelation: number | null;
-    spearmanBrown: number | null;
-  }>;
+  subscales?: ReliabilitySubscaleSummary[];
   notes: string[];
 };
 
@@ -827,6 +837,24 @@ export type FactorSummary = {
   loadings: FactorLoading[];
 };
 
+export type FactorRotation = 'none' | 'varimax' | 'promax';
+
+export type FactorDiagnostics = {
+  correlationDeterminant: number | null;
+  kmoOverall: number | null;
+  kmoPerField: Array<{
+    field: string;
+    label: string;
+    kmo: number | null;
+  }>;
+  bartlettTest: {
+    chiSquare: number | null;
+    degreesOfFreedom: number;
+    pValue: number | null;
+  };
+  factorCorrelationMatrix: number[][] | null;
+};
+
 export type FactorAnalysisResult = {
   fields: string[];
   fieldLabels: string[];
@@ -835,10 +863,11 @@ export type FactorAnalysisResult = {
   factorCount: number;
   recommendedFactorCount: number;
   extraction: 'principal_components';
-  rotation: 'none' | 'varimax';
+  rotation: FactorRotation;
   eigenvalues: number[];
   factors: FactorSummary[];
   correlationMatrix: Array<{ field: string; values: number[] }>;
+  diagnostics: FactorDiagnostics;
   notes: string[];
 };
 
@@ -1790,6 +1819,178 @@ function applyVarimaxRotation(loadings: number[][]): number[][] {
     if (!improved) break;
   }
   return rotated;
+}
+
+function transposeMatrix(matrix: number[][]): number[][] {
+  if (matrix.length === 0) return [];
+  const columnCount = matrix[0]?.length ?? 0;
+  return Array.from({ length: columnCount }, (_unused, columnIndex) =>
+    matrix.map((row) => row[columnIndex] ?? 0)
+  );
+}
+
+function multiplyMatrices(left: number[][], right: number[][]): number[][] {
+  const leftRows = left.length;
+  const shared = left[0]?.length ?? 0;
+  const rightColumns = right[0]?.length ?? 0;
+  if (shared === 0 || right.length === 0 || shared !== right.length) {
+    throw new Error('Matrix dimensions are incompatible for multiplication.');
+  }
+  const result = Array.from({ length: leftRows }, () => Array.from({ length: rightColumns }, () => 0));
+  for (let rowIndex = 0; rowIndex < leftRows; rowIndex += 1) {
+    for (let sharedIndex = 0; sharedIndex < shared; sharedIndex += 1) {
+      const value = left[rowIndex]![sharedIndex] ?? 0;
+      for (let columnIndex = 0; columnIndex < rightColumns; columnIndex += 1) {
+        result[rowIndex]![columnIndex] += value * (right[sharedIndex]![columnIndex] ?? 0);
+      }
+    }
+  }
+  return result;
+}
+
+function matrixDeterminant(matrix: number[][]): number {
+  const size = matrix.length;
+  if (size === 0) return 1;
+  const working = cloneMatrix(matrix);
+  let determinant = 1;
+  let sign = 1;
+  for (let pivot = 0; pivot < size; pivot += 1) {
+    let maxRow = pivot;
+    for (let candidate = pivot + 1; candidate < size; candidate += 1) {
+      if (Math.abs(working[candidate]![pivot]!) > Math.abs(working[maxRow]![pivot]!)) {
+        maxRow = candidate;
+      }
+    }
+    const pivotValue = working[maxRow]![pivot]!;
+    if (Math.abs(pivotValue) < 1e-12) return 0;
+    if (maxRow !== pivot) {
+      [working[pivot], working[maxRow]] = [working[maxRow]!, working[pivot]!];
+      sign *= -1;
+    }
+    const diagonal = working[pivot]![pivot]!;
+    determinant *= diagonal;
+    for (let row = pivot + 1; row < size; row += 1) {
+      const factor = (working[row]![pivot] ?? 0) / diagonal;
+      for (let column = pivot + 1; column < size; column += 1) {
+        working[row]![column] -= factor * (working[pivot]![column] ?? 0);
+      }
+    }
+  }
+  return determinant * sign;
+}
+
+function computeKmoDiagnostics(correlationMatrix: number[][]): { overall: number | null; perField: Array<number | null> } {
+  const size = correlationMatrix.length;
+  if (size < 2) {
+    return {
+      overall: null,
+      perField: correlationMatrix.map(() => null)
+    };
+  }
+  let inverse: number[][];
+  try {
+    inverse = invertMatrix(correlationMatrix);
+  } catch {
+    return {
+      overall: null,
+      perField: correlationMatrix.map(() => null)
+    };
+  }
+
+  const correlationSquareTotals = new Array<number>(size).fill(0);
+  const partialSquareTotals = new Array<number>(size).fill(0);
+  let totalCorrelationSquares = 0;
+  let totalPartialSquares = 0;
+
+  for (let rowIndex = 0; rowIndex < size; rowIndex += 1) {
+    for (let columnIndex = rowIndex + 1; columnIndex < size; columnIndex += 1) {
+      const correlation = correlationMatrix[rowIndex]![columnIndex] ?? 0;
+      const diagonalProduct = (inverse[rowIndex]![rowIndex] ?? 0) * (inverse[columnIndex]![columnIndex] ?? 0);
+      const denominator = diagonalProduct > 0 ? Math.sqrt(diagonalProduct) : 0;
+      const partialCorrelation = denominator > 0
+        ? -((inverse[rowIndex]![columnIndex] ?? 0) / denominator)
+        : 0;
+      const correlationSquare = correlation ** 2;
+      const partialSquare = Number.isFinite(partialCorrelation) ? partialCorrelation ** 2 : 0;
+      totalCorrelationSquares += correlationSquare;
+      totalPartialSquares += partialSquare;
+      correlationSquareTotals[rowIndex]! += correlationSquare;
+      correlationSquareTotals[columnIndex]! += correlationSquare;
+      partialSquareTotals[rowIndex]! += partialSquare;
+      partialSquareTotals[columnIndex]! += partialSquare;
+    }
+  }
+
+  const overallDenominator = totalCorrelationSquares + totalPartialSquares;
+  return {
+    overall: overallDenominator > 0 ? totalCorrelationSquares / overallDenominator : null,
+    perField: correlationSquareTotals.map((correlationSquare, index) => {
+      const denominator = correlationSquare + partialSquareTotals[index]!;
+      return denominator > 0 ? correlationSquare / denominator : null;
+    })
+  };
+}
+
+function applyPromaxRotation(
+  loadings: number[][],
+  power = 4
+): { loadings: number[][]; factorCorrelationMatrix: number[][] | null } {
+  if (loadings.length === 0 || (loadings[0]?.length ?? 0) < 2) {
+    return {
+      loadings: loadings.map((row) => [...row]),
+      factorCorrelationMatrix: null
+    };
+  }
+  const varimaxLoadings = applyVarimaxRotation(loadings);
+  const target = varimaxLoadings.map((row) =>
+    row.map((value) => Math.sign(value) * (Math.abs(value) ** power))
+  );
+  try {
+    const loadingsTranspose = transposeMatrix(varimaxLoadings);
+    const normalMatrix = multiplyMatrices(loadingsTranspose, varimaxLoadings);
+    const crossMatrix = multiplyMatrices(loadingsTranspose, target);
+    const transformMatrix = multiplyMatrices(invertMatrix(normalMatrix), crossMatrix);
+    const rotated = multiplyMatrices(varimaxLoadings, transformMatrix);
+    const transformTranspose = transposeMatrix(transformMatrix);
+    const factorCorrelationMatrix = invertMatrix(multiplyMatrices(transformTranspose, transformMatrix));
+    return {
+      loadings: rotated,
+      factorCorrelationMatrix
+    };
+  } catch {
+    return {
+      loadings: varimaxLoadings,
+      factorCorrelationMatrix: null
+    };
+  }
+}
+
+function buildCorrelationMatrix(columns: number[][]): number[][] {
+  return columns.map((columnA, rowIndex) =>
+    columns.map((columnB, columnIndex) => {
+      if (rowIndex === columnIndex) return 1;
+      const correlation = pearsonCorrelation(columnA, columnB);
+      return correlation ?? 0;
+    })
+  );
+}
+
+function computeOmegaTotalFromCorrelationMatrix(correlationMatrix: number[][]): number | null {
+  if (correlationMatrix.length < 2) return null;
+  try {
+    const component = powerIterationSymmetric(correlationMatrix);
+    if (!(component.eigenvalue > 0)) return null;
+    const loadings = component.eigenvector.map((value) => value * Math.sqrt(Math.max(component.eigenvalue, 0)));
+    const commonVarianceSum = loadings.reduce((total, value) => total + value, 0) ** 2;
+    const uniquenessSum = loadings.reduce((total, value) => total + Math.max(0, 1 - (value ** 2)), 0);
+    const denominator = commonVarianceSum + uniquenessSum;
+    if (!(denominator > 0)) return null;
+    const omega = commonVarianceSum / denominator;
+    if (!Number.isFinite(omega)) return null;
+    return Math.max(0, Math.min(1, omega));
+  } catch {
+    return null;
+  }
 }
 
 function fDistributionPValue(statistic: number, numeratorDf: number, denominatorDf: number): number | null {
@@ -5200,6 +5401,8 @@ export function analyzeReliability(
   const standardizedAlpha = averageInterItemCorrelation === null
     ? null
     : (itemCount * averageInterItemCorrelation) / (1 + ((itemCount - 1) * averageInterItemCorrelation));
+  const correlationMatrix = buildCorrelationMatrix(itemColumns);
+  const omegaTotal = computeOmegaTotalFromCorrelationMatrix(correlationMatrix);
   const midpoint = Math.ceil(itemCount / 2);
   const splitHalfLeft = rows.map((row) => row.slice(0, midpoint).reduce((total, value) => total + value, 0));
   const splitHalfRight = rows.map((row) => row.slice(midpoint).reduce((total, value) => total + value, 0));
@@ -5208,6 +5411,9 @@ export function analyzeReliability(
     ? null
     : (2 * splitHalfCorrelation) / (1 + splitHalfCorrelation);
   const scaleMean = weightedMean(totalScores, new Array(totalScores.length).fill(1));
+  const standardErrorOfMeasurement = totalVariance !== null && alpha !== null
+    ? Math.sqrt(Math.max(0, totalVariance * Math.max(0, 1 - alpha)))
+    : null;
   const items: ReliabilityItemSummary[] = uniqueFields.map((field, fieldIndex) => {
     const values = itemColumns[fieldIndex]!;
     const remainingScores = rows.map((row) => row.reduce((total, value, index) => total + (index === fieldIndex ? 0 : value), 0));
@@ -5234,12 +5440,16 @@ export function analyzeReliability(
     fieldLabels: fieldMeta.map((field) => field.label),
     caseCount: dataset.caseCount,
     validCaseCount: rows.length,
+    itemCount,
     alpha,
     standardizedAlpha,
+    omegaTotal,
+    averageInterItemCorrelation,
     splitHalfCorrelation,
     spearmanBrown,
     scaleMean,
     scaleVariance: totalVariance,
+    standardErrorOfMeasurement,
     items,
     subscales: Array.isArray(subscales)
       ? subscales
@@ -5257,10 +5467,14 @@ export function analyzeReliability(
             fields: filteredFields,
             fieldLabels: subscaleResult.fieldLabels,
             validCaseCount: subscaleResult.validCaseCount,
+            itemCount: filteredFields.length,
             alpha: subscaleResult.alpha,
             standardizedAlpha: subscaleResult.standardizedAlpha,
+            omegaTotal: subscaleResult.omegaTotal,
+            averageInterItemCorrelation: subscaleResult.averageInterItemCorrelation,
             splitHalfCorrelation: subscaleResult.splitHalfCorrelation,
-            spearmanBrown: subscaleResult.spearmanBrown
+            spearmanBrown: subscaleResult.spearmanBrown,
+            standardErrorOfMeasurement: subscaleResult.standardErrorOfMeasurement
           };
         })
         .filter((subscale): subscale is NonNullable<typeof subscale> => subscale !== null)
@@ -5268,7 +5482,7 @@ export function analyzeReliability(
     notes: [
       'Reliability is computed as Cronbach alpha over complete numeric cases.',
       'Current implementation uses listwise complete rows across the selected fields.',
-      'Standardized alpha and split-half reliability are also reported for quick scale review.'
+      'Standardized alpha, omega total, and split-half reliability are also reported for quick scale review.'
     ]
   };
 }
@@ -5278,7 +5492,7 @@ export function analyzeFactorAnalysis(
   fields: string[],
   requestedFactorCount?: number,
   options?: DatasetAnalysisOptions,
-  rotation: 'none' | 'varimax' = 'none'
+  rotation: FactorRotation = 'none'
 ): FactorAnalysisResult {
   const uniqueFields = [...new Set(fields.map((field) => field.trim()).filter(Boolean))];
   if (uniqueFields.length < 2) {
@@ -5324,7 +5538,7 @@ export function analyzeFactorAnalysis(
   }
   const eigenvalues = extracted.map((component) => component.eigenvalue);
   const recommendedFactorCount = Math.max(1, eigenvalues.filter((value) => value >= 1).length || Math.min(1, extracted.length));
-  let factorCount = Math.min(
+  const factorCount = Math.min(
     Math.max(1, Math.floor(requestedFactorCount ?? Math.min(recommendedFactorCount, matrixSize))),
     extracted.length
   );
@@ -5338,9 +5552,16 @@ export function analyzeFactorAnalysis(
       component.eigenvector[fieldIndex]! * Math.sqrt(Math.max(component.eigenvalue, 0))
     )
   );
-  const rotatedLoadingMatrix = rotation === 'varimax'
-    ? applyVarimaxRotation(baseLoadingMatrix)
-    : baseLoadingMatrix.map((row) => [...row]);
+  let rotatedLoadingMatrix = baseLoadingMatrix.map((row) => [...row]);
+  let factorCorrelationMatrix: number[][] | null = null;
+  if (rotation === 'varimax') {
+    rotatedLoadingMatrix = applyVarimaxRotation(baseLoadingMatrix);
+  } else if (rotation === 'promax') {
+    const rotated = applyPromaxRotation(baseLoadingMatrix);
+    rotatedLoadingMatrix = rotated.loadings;
+    factorCorrelationMatrix = rotated.factorCorrelationMatrix;
+  }
+
   const communalities = new Array<number>(matrixSize).fill(0);
   for (let fieldIndex = 0; fieldIndex < matrixSize; fieldIndex += 1) {
     communalities[fieldIndex] = rotatedLoadingMatrix[fieldIndex]!.reduce((total, value) => total + (value ** 2), 0);
@@ -5366,6 +5587,18 @@ export function analyzeFactorAnalysis(
     };
   });
 
+  const kmoDiagnostics = computeKmoDiagnostics(correlationMatrix);
+  const determinant = matrixDeterminant(correlationMatrix);
+  const positiveDeterminant = determinant > 0 && Number.isFinite(determinant) ? determinant : null;
+  const bartlettDegreesOfFreedom = Math.max(0, Math.floor((matrixSize * (matrixSize - 1)) / 2));
+  const bartlettScale = (rows.length - 1) - ((2 * matrixSize + 5) / 6);
+  const bartlettStatistic = positiveDeterminant !== null && positiveDeterminant < 1 && bartlettScale > 0
+    ? Math.max(0, -bartlettScale * Math.log(positiveDeterminant))
+    : null;
+  const bartlettPValue = bartlettStatistic === null
+    ? null
+    : chiSquarePValue(bartlettStatistic, bartlettDegreesOfFreedom);
+
   return {
     fields: uniqueFields,
     fieldLabels: fieldMeta.map((field) => field.label),
@@ -5381,12 +5614,29 @@ export function analyzeFactorAnalysis(
       field: uniqueFields[index]!,
       values
     })),
+    diagnostics: {
+      correlationDeterminant: positiveDeterminant,
+      kmoOverall: kmoDiagnostics.overall,
+      kmoPerField: uniqueFields.map((field, index) => ({
+        field,
+        label: fieldMeta[index]!.label,
+        kmo: kmoDiagnostics.perField[index] ?? null
+      })),
+      bartlettTest: {
+        chiSquare: bartlettStatistic,
+        degreesOfFreedom: bartlettDegreesOfFreedom,
+        pValue: bartlettPValue
+      },
+      factorCorrelationMatrix
+    },
     notes: [
       'Current factor analysis is a first-pass principal-components extraction.',
       'Kaiser-style factor count recommendation is based on eigenvalues greater than or equal to 1.',
       rotation === 'varimax'
         ? 'Varimax rotation is applied as a first-pass orthogonal rotation.'
-        : 'Rotation is not applied in this version.'
+        : rotation === 'promax'
+          ? 'Promax rotation is applied as a first-pass oblique rotation (via varimax target transformation).'
+          : 'Rotation is not applied in this version.'
     ]
   };
 }
