@@ -122,6 +122,7 @@ export type FrameworkMatrixCell = {
   memoCount: number;
   summary: string;
   segmentIds: string[];
+  sourceIds: string[];
 };
 
 export type FrameworkMatrixResult = {
@@ -129,6 +130,36 @@ export type FrameworkMatrixResult = {
   columns: Array<{ codeId: string; codeName: string; count: number }>;
   cells: FrameworkMatrixCell[];
   totalCount: number;
+  populatedCellCount: number;
+  cellDensity: number;
+  caseSummaries: Array<{
+    caseId: string;
+    caseLabel: string;
+    totalLinks: number;
+    memoCount: number;
+    populatedCodes: number;
+    topCodes: Array<{ codeId: string; codeName: string; count: number; memoCount: number }>;
+    summary: string;
+    highlightSegmentId: string | null;
+  }>;
+  codeSummaries: Array<{
+    codeId: string;
+    codeName: string;
+    totalLinks: number;
+    memoCount: number;
+    caseCount: number;
+    topCases: Array<{ caseId: string; caseLabel: string; count: number; memoCount: number }>;
+    summary: string;
+    highlightSegmentId: string | null;
+  }>;
+  sourceSummaries: Array<{
+    sourceId: string;
+    sourceTitle: string | null;
+    totalLinks: number;
+    memoCount: number;
+    caseCount: number;
+    codeCount: number;
+  }>;
 };
 
 export type CodingComparisonResult = {
@@ -1625,6 +1656,11 @@ export function buildFrameworkMatrix(params: {
   memos: Memo[];
   codes: Pick<Code, 'id' | 'name'>[];
 }): FrameworkMatrixResult {
+  const summarizeFrameworkText = (value: string, maxLength: number): string => {
+    const compact = value.replace(/\s+/g, ' ').trim();
+    if (compact.length <= maxLength) return compact;
+    return `${compact.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+  };
   const matches = retrieveEvidence(params);
   const cellMap = new Map<string, {
     caseId: string;
@@ -1632,12 +1668,22 @@ export function buildFrameworkMatrix(params: {
     count: number;
     memoCount: number;
     segmentIds: string[];
+    sourceIds: string[];
     excerpts: string[];
   }>();
   const rowCounts = new Map<string, number>();
   const columnCounts = new Map<string, number>();
   const caseLabelById = new Map(params.cases.map((item) => [item.id, item.label]));
   const codeNameById = new Map(params.codes.map((item) => [item.id, item.name]));
+  const sourceTitleById = new Map(params.sources.map((item) => [item.id, item.title ?? null]));
+  const sourceSummaryMap = new Map<string, {
+    sourceId: string;
+    sourceTitle: string | null;
+    totalLinks: number;
+    memoCount: number;
+    caseIds: Set<string>;
+    codeIds: Set<string>;
+  }>();
 
   for (const match of matches) {
     const relatedCaseIds = new Set<string>(match.cases.map((item) => item.id));
@@ -1645,12 +1691,15 @@ export function buildFrameworkMatrix(params: {
       const targetCaseIds = application.caseId ? [application.caseId] : [...relatedCaseIds];
       for (const caseId of targetCaseIds) {
         const key = `${caseId}::${application.codeId}`;
+        const sourceId = match.source?.id ?? match.segment.sourceId;
+        const sourceTitle = match.source?.title ?? sourceTitleById.get(sourceId) ?? null;
         const entry = cellMap.get(key) ?? {
           caseId,
           codeId: application.codeId,
           count: 0,
           memoCount: 0,
           segmentIds: [],
+          sourceIds: [],
           excerpts: []
         };
         entry.count += 1;
@@ -1658,12 +1707,28 @@ export function buildFrameworkMatrix(params: {
         if (!entry.segmentIds.includes(match.segment.id)) {
           entry.segmentIds.push(match.segment.id);
         }
+        if (!entry.sourceIds.includes(sourceId)) {
+          entry.sourceIds.push(sourceId);
+        }
         if (entry.excerpts.length < 3 && !entry.excerpts.includes(match.segment.text)) {
           entry.excerpts.push(match.segment.text);
         }
         cellMap.set(key, entry);
         rowCounts.set(caseId, (rowCounts.get(caseId) ?? 0) + 1);
         columnCounts.set(application.codeId, (columnCounts.get(application.codeId) ?? 0) + 1);
+        const sourceEntry = sourceSummaryMap.get(sourceId) ?? {
+          sourceId,
+          sourceTitle,
+          totalLinks: 0,
+          memoCount: 0,
+          caseIds: new Set<string>(),
+          codeIds: new Set<string>()
+        };
+        sourceEntry.totalLinks += 1;
+        sourceEntry.memoCount += match.memos.length;
+        sourceEntry.caseIds.add(caseId);
+        sourceEntry.codeIds.add(application.codeId);
+        sourceSummaryMap.set(sourceId, sourceEntry);
       }
     }
   }
@@ -1675,27 +1740,112 @@ export function buildFrameworkMatrix(params: {
       count: entry.count,
       memoCount: entry.memoCount,
       summary: entry.excerpts.length > 0 ? entry.excerpts.map((excerpt) => excerpt.trim()).join(' / ') : '',
-      segmentIds: entry.segmentIds
+      segmentIds: entry.segmentIds,
+      sourceIds: entry.sourceIds
     }))
     .sort((left, right) => right.count - left.count || left.caseId.localeCompare(right.caseId) || left.codeId.localeCompare(right.codeId));
 
+  const rows = [...rowCounts.entries()]
+    .map(([caseId, count]) => ({
+      caseId,
+      caseLabel: caseLabelById.get(caseId) ?? caseId,
+      count
+    }))
+    .sort((left, right) => right.count - left.count || left.caseLabel.localeCompare(right.caseLabel));
+
+  const columns = [...columnCounts.entries()]
+    .map(([codeId, count]) => ({
+      codeId,
+      codeName: codeNameById.get(codeId) ?? codeId,
+      count
+    }))
+    .sort((left, right) => right.count - left.count || left.codeName.localeCompare(right.codeName));
+
+  const populatedCellCount = cells.length;
+  const cellDensity = rows.length > 0 && columns.length > 0
+    ? populatedCellCount / (rows.length * columns.length)
+    : 0;
+
+  const caseSummaries = rows.map((row) => {
+    const rowCells = cells.filter((cell) => cell.caseId === row.caseId);
+    const topCodes = [...rowCells]
+      .sort((left, right) => right.count - left.count || right.memoCount - left.memoCount)
+      .slice(0, 5)
+      .map((cell) => ({
+        codeId: cell.codeId,
+        codeName: codeNameById.get(cell.codeId) ?? cell.codeId,
+        count: cell.count,
+        memoCount: cell.memoCount
+      }));
+    const memoCount = rowCells.reduce((total, cell) => total + cell.memoCount, 0);
+    const topExcerpts = rowCells
+      .filter((cell) => cell.summary)
+      .sort((left, right) => right.count - left.count || right.memoCount - left.memoCount)
+      .slice(0, 2)
+      .map((cell) => summarizeFrameworkText(cell.summary, 120));
+    return {
+      caseId: row.caseId,
+      caseLabel: row.caseLabel,
+      totalLinks: rowCells.reduce((total, cell) => total + cell.count, 0),
+      memoCount,
+      populatedCodes: rowCells.length,
+      topCodes,
+      summary: topExcerpts.join(' | '),
+      highlightSegmentId: rowCells[0]?.segmentIds?.[0] ?? null
+    };
+  });
+
+  const codeSummaries = columns.map((column) => {
+    const columnCells = cells.filter((cell) => cell.codeId === column.codeId);
+    const topCases = [...columnCells]
+      .sort((left, right) => right.count - left.count || right.memoCount - left.memoCount)
+      .slice(0, 5)
+      .map((cell) => ({
+        caseId: cell.caseId,
+        caseLabel: caseLabelById.get(cell.caseId) ?? cell.caseId,
+        count: cell.count,
+        memoCount: cell.memoCount
+      }));
+    const memoCount = columnCells.reduce((total, cell) => total + cell.memoCount, 0);
+    const caseCount = new Set(columnCells.map((cell) => cell.caseId)).size;
+    const topExcerpts = columnCells
+      .filter((cell) => cell.summary)
+      .sort((left, right) => right.count - left.count || right.memoCount - left.memoCount)
+      .slice(0, 2)
+      .map((cell) => summarizeFrameworkText(cell.summary, 120));
+    return {
+      codeId: column.codeId,
+      codeName: column.codeName,
+      totalLinks: columnCells.reduce((total, cell) => total + cell.count, 0),
+      memoCount,
+      caseCount,
+      topCases,
+      summary: topExcerpts.join(' | '),
+      highlightSegmentId: columnCells[0]?.segmentIds?.[0] ?? null
+    };
+  });
+
+  const sourceSummaries = [...sourceSummaryMap.values()]
+    .map((entry) => ({
+      sourceId: entry.sourceId,
+      sourceTitle: entry.sourceTitle,
+      totalLinks: entry.totalLinks,
+      memoCount: entry.memoCount,
+      caseCount: entry.caseIds.size,
+      codeCount: entry.codeIds.size
+    }))
+    .sort((left, right) => right.totalLinks - left.totalLinks || (left.sourceTitle ?? left.sourceId).localeCompare(right.sourceTitle ?? right.sourceId));
+
   return {
-    rows: [...rowCounts.entries()]
-      .map(([caseId, count]) => ({
-        caseId,
-        caseLabel: caseLabelById.get(caseId) ?? caseId,
-        count
-      }))
-      .sort((left, right) => right.count - left.count || left.caseLabel.localeCompare(right.caseLabel)),
-    columns: [...columnCounts.entries()]
-      .map(([codeId, count]) => ({
-        codeId,
-        codeName: codeNameById.get(codeId) ?? codeId,
-        count
-      }))
-      .sort((left, right) => right.count - left.count || left.codeName.localeCompare(right.codeName)),
+    rows,
+    columns,
     cells,
-    totalCount: cells.reduce((total, cell) => total + cell.count, 0)
+    totalCount: cells.reduce((total, cell) => total + cell.count, 0),
+    populatedCellCount,
+    cellDensity,
+    caseSummaries,
+    codeSummaries,
+    sourceSummaries
   };
 }
 

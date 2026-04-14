@@ -604,6 +604,32 @@ export type RegressionObservation = {
   outlier: boolean;
 };
 
+export type RegressionThresholdMetric = {
+  threshold: number;
+  weightedCount: number;
+  truePositive: number;
+  trueNegative: number;
+  falsePositive: number;
+  falseNegative: number;
+  accuracy: number | null;
+  precision: number | null;
+  recall: number | null;
+  specificity: number | null;
+  f1Score: number | null;
+  youdenJ: number | null;
+};
+
+export type RegressionCalibrationBin = {
+  bin: string;
+  minProbability: number;
+  maxProbability: number;
+  count: number;
+  weightedCount: number;
+  observedRate: number | null;
+  predictedRate: number | null;
+  calibrationGap: number | null;
+};
+
 export type RegressionResult = {
   model: RegressionModel;
   dependentField: string;
@@ -617,6 +643,14 @@ export type RegressionResult = {
   diagnostics?: Record<string, number | null>;
   observations?: RegressionObservation[];
   assumptions?: AssumptionCheck[];
+  thresholdAnalysis?: RegressionThresholdMetric[];
+  calibration?: {
+    bins: RegressionCalibrationBin[];
+    meanAbsoluteCalibrationError: number | null;
+    maxCalibrationGap: number | null;
+    bestThresholdByF1: number | null;
+    bestThresholdByYouden: number | null;
+  };
 };
 
 export type CorrelationResult = {
@@ -1477,6 +1511,89 @@ function computeRocAuc(probabilities: number[], outcomes: number[], weights?: nu
     }
   }
   return totalWeight > 0 ? (concordant + (0.5 * ties)) / totalWeight : null;
+}
+
+function computeClassificationMetricsAtThreshold(
+  probabilities: number[],
+  outcomes: number[],
+  weights: number[],
+  threshold: number
+): RegressionThresholdMetric {
+  const normalizedThreshold = Math.min(0.99, Math.max(0.01, threshold));
+  let truePositive = 0;
+  let trueNegative = 0;
+  let falsePositive = 0;
+  let falseNegative = 0;
+  let weightedCount = 0;
+  for (let index = 0; index < probabilities.length; index += 1) {
+    const weight = weights[index] ?? 1;
+    weightedCount += weight;
+    const predicted = probabilities[index]! >= normalizedThreshold ? 1 : 0;
+    const actual = outcomes[index]!;
+    if (actual === 1 && predicted === 1) truePositive += weight;
+    else if (actual === 0 && predicted === 0) trueNegative += weight;
+    else if (actual === 0 && predicted === 1) falsePositive += weight;
+    else falseNegative += weight;
+  }
+  const accuracy = weightedCount > 0 ? (truePositive + trueNegative) / weightedCount : null;
+  const precision = (truePositive + falsePositive) > 0 ? truePositive / (truePositive + falsePositive) : null;
+  const recall = (truePositive + falseNegative) > 0 ? truePositive / (truePositive + falseNegative) : null;
+  const specificity = (trueNegative + falsePositive) > 0 ? trueNegative / (trueNegative + falsePositive) : null;
+  const f1Score = precision !== null && recall !== null && (precision + recall) > 0 ? (2 * precision * recall) / (precision + recall) : null;
+  const youdenJ = recall !== null && specificity !== null ? (recall + specificity - 1) : null;
+  return {
+    threshold: normalizedThreshold,
+    weightedCount,
+    truePositive,
+    trueNegative,
+    falsePositive,
+    falseNegative,
+    accuracy,
+    precision,
+    recall,
+    specificity,
+    f1Score,
+    youdenJ
+  };
+}
+
+function buildCalibrationBins(
+  probabilities: number[],
+  outcomes: number[],
+  weights: number[],
+  binCount = 10
+): RegressionCalibrationBin[] {
+  const points = probabilities.map((probability, index) => ({
+    probability,
+    outcome: outcomes[index]!,
+    weight: weights[index] ?? 1
+  })).sort((left, right) => left.probability - right.probability);
+  if (points.length === 0) return [];
+  const normalizedBinCount = Math.min(Math.max(3, Math.floor(binCount)), Math.max(3, Math.min(10, points.length)));
+  const chunkSize = Math.ceil(points.length / normalizedBinCount);
+  const bins: RegressionCalibrationBin[] = [];
+  for (let binIndex = 0; binIndex < normalizedBinCount; binIndex += 1) {
+    const chunk = points.slice(binIndex * chunkSize, (binIndex + 1) * chunkSize);
+    if (chunk.length === 0) continue;
+    const weightedCount = chunk.reduce((total, item) => total + item.weight, 0);
+    const observedRate = weightedCount > 0
+      ? chunk.reduce((total, item) => total + (item.outcome * item.weight), 0) / weightedCount
+      : null;
+    const predictedRate = weightedCount > 0
+      ? chunk.reduce((total, item) => total + (item.probability * item.weight), 0) / weightedCount
+      : null;
+    bins.push({
+      bin: `B${binIndex + 1}`,
+      minProbability: chunk[0]!.probability,
+      maxProbability: chunk[chunk.length - 1]!.probability,
+      count: chunk.length,
+      weightedCount,
+      observedRate,
+      predictedRate,
+      calibrationGap: observedRate === null || predictedRate === null ? null : observedRate - predictedRate
+    });
+  }
+  return bins;
 }
 
 function computeVifByPredictor(rows: Array<{ x: number[]; weight: number }>, predictorFields: string[]): Record<string, number | null> {
@@ -4190,9 +4307,9 @@ export function analyzeRegression(
   }
 
   const probabilities = xMatrix.map((vector) => 1 / (1 + Math.exp(-coefficients.reduce((total, coefficient, index) => total + (coefficient * vector[index]!), 0))));
+  const defaultThresholdMetrics = computeClassificationMetricsAtThreshold(probabilities, yVector, weights, 0.5);
   const predictedClasses = probabilities.map((probability) => probability >= 0.5 ? 1 : 0);
-  const weightedAccuracy = yVector.reduce((total, value, index) =>
-    total + ((predictedClasses[index] === value ? 1 : 0) * weights[index]!), 0) / weightedCaseCount;
+  const weightedAccuracy = defaultThresholdMetrics.accuracy;
   const logLikelihood = yVector.reduce((total, value, index) => {
     const probability = Math.min(0.999999, Math.max(0.000001, probabilities[index]!));
     return total + (weights[index]! * ((value * Math.log(probability)) + ((1 - value) * Math.log(1 - probability))));
@@ -4201,14 +4318,11 @@ export function analyzeRegression(
   const boundedMeanY = Math.min(0.999999, Math.max(0.000001, meanY));
   const nullLogLikelihood = yVector.reduce((total, value, index) =>
     total + (weights[index]! * ((value * Math.log(boundedMeanY)) + ((1 - value) * Math.log(1 - boundedMeanY)))), 0);
-  const truePositive = yVector.reduce((total, value, index) => total + ((value === 1 && predictedClasses[index] === 1 ? 1 : 0) * weights[index]!), 0);
-  const trueNegative = yVector.reduce((total, value, index) => total + ((value === 0 && predictedClasses[index] === 0 ? 1 : 0) * weights[index]!), 0);
-  const falsePositive = yVector.reduce((total, value, index) => total + ((value === 0 && predictedClasses[index] === 1 ? 1 : 0) * weights[index]!), 0);
-  const falseNegative = yVector.reduce((total, value, index) => total + ((value === 1 && predictedClasses[index] === 0 ? 1 : 0) * weights[index]!), 0);
-  const precision = (truePositive + falsePositive) > 0 ? truePositive / (truePositive + falsePositive) : null;
-  const recall = (truePositive + falseNegative) > 0 ? truePositive / (truePositive + falseNegative) : null;
-  const specificity = (trueNegative + falsePositive) > 0 ? trueNegative / (trueNegative + falsePositive) : null;
-  const f1Score = precision !== null && recall !== null && (precision + recall) > 0 ? (2 * precision * recall) / (precision + recall) : null;
+  const { truePositive, trueNegative, falsePositive, falseNegative } = defaultThresholdMetrics;
+  const precision = defaultThresholdMetrics.precision;
+  const recall = defaultThresholdMetrics.recall;
+  const specificity = defaultThresholdMetrics.specificity;
+  const f1Score = defaultThresholdMetrics.f1Score;
   const brierScore = probabilities.reduce((total, probability, index) => total + (weights[index]! * ((probability - yVector[index]!) ** 2)), 0) / weightedCaseCount;
   const deviance = -2 * logLikelihood;
   const nullDeviance = -2 * nullLogLikelihood;
@@ -4281,6 +4395,46 @@ export function analyzeRegression(
       rows.length >= (predictorFields.length * 5) ? 'Sample size is acceptable for this first-pass model.' : 'Sample size is small relative to predictor count.'
     )
   ];
+  const thresholdCandidates = Array.from({ length: 17 }, (_unused, index) => Number((0.1 + (index * 0.05)).toFixed(2)));
+  if (!thresholdCandidates.includes(0.5)) thresholdCandidates.push(0.5);
+  const thresholdAnalysis = [...new Set(thresholdCandidates)]
+    .sort((left, right) => left - right)
+    .map((threshold) => computeClassificationMetricsAtThreshold(probabilities, yVector, weights, threshold));
+  const bestByF1 = [...thresholdAnalysis]
+    .filter((item) => item.f1Score !== null)
+    .sort((left, right) =>
+      (right.f1Score! - left.f1Score!)
+      || ((right.youdenJ ?? -Infinity) - (left.youdenJ ?? -Infinity))
+      || Math.abs(left.threshold - 0.5) - Math.abs(right.threshold - 0.5))[0] ?? null;
+  const bestByYouden = [...thresholdAnalysis]
+    .filter((item) => item.youdenJ !== null)
+    .sort((left, right) =>
+      (right.youdenJ! - left.youdenJ!)
+      || ((right.f1Score ?? -Infinity) - (left.f1Score ?? -Infinity))
+      || Math.abs(left.threshold - 0.5) - Math.abs(right.threshold - 0.5))[0] ?? null;
+  const calibrationBins = buildCalibrationBins(probabilities, yVector, weights, 10);
+  const totalCalibrationWeight = calibrationBins.reduce((total, bin) => total + bin.weightedCount, 0);
+  const meanAbsoluteCalibrationError = totalCalibrationWeight > 0
+    ? calibrationBins.reduce((total, bin) => total + ((Math.abs(bin.calibrationGap ?? 0)) * bin.weightedCount), 0) / totalCalibrationWeight
+    : null;
+  const maxCalibrationGap = calibrationBins.reduce<number | null>((max, bin) => {
+    if (bin.calibrationGap === null) return max;
+    const absoluteGap = Math.abs(bin.calibrationGap);
+    return max === null ? absoluteGap : Math.max(max, absoluteGap);
+  }, null);
+  assumptions.push(
+    buildAssumptionCheck(
+      'calibration',
+      'Calibration (mean absolute gap)',
+      meanAbsoluteCalibrationError === null ? 'warn' : meanAbsoluteCalibrationError <= 0.1 ? 'pass' : 'warn',
+      meanAbsoluteCalibrationError,
+      meanAbsoluteCalibrationError === null
+        ? 'Calibration gap could not be computed.'
+        : meanAbsoluteCalibrationError <= 0.1
+          ? 'Predicted probabilities are reasonably calibrated.'
+          : 'Calibration gap is elevated; consider recalibration or threshold tuning.'
+    )
+  );
   const pearsonResiduals = probabilities.map((probability, index) => {
     const denominator = Math.sqrt(Math.max(1e-12, probability * (1 - probability)));
     return (yVector[index]! - probability) / denominator;
@@ -4358,12 +4512,27 @@ export function analyzeRegression(
       falseNegative,
       hosmerLemeshowStatistic,
       hosmerLemeshowPValue,
+      defaultThreshold: 0.5,
+      bestThresholdByF1: bestByF1?.threshold ?? null,
+      bestThresholdByYouden: bestByYouden?.threshold ?? null,
+      bestF1Score: bestByF1?.f1Score ?? null,
+      bestYoudenJ: bestByYouden?.youdenJ ?? null,
+      meanAbsoluteCalibrationError,
+      maxCalibrationGap,
       outlierCount,
       maxAbsPearsonResidual,
       maxLeverage,
       maxAbsDevianceResidual,
       highLeverageCount,
       rocAuc
+    },
+    thresholdAnalysis,
+    calibration: {
+      bins: calibrationBins,
+      meanAbsoluteCalibrationError,
+      maxCalibrationGap,
+      bestThresholdByF1: bestByF1?.threshold ?? null,
+      bestThresholdByYouden: bestByYouden?.threshold ?? null
     },
     observations: observations.slice(0, 50),
     assumptions

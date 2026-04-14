@@ -7739,6 +7739,17 @@ function renderRegression() {
       ['Influential count', formatStatValue(diagnostics.influentialCount, 0)]
     ];
     const observationRows = Array.isArray(result.observations) ? result.observations : [];
+    const thresholdAnalysis = Array.isArray(result.thresholdAnalysis) ? result.thresholdAnalysis : [];
+    const calibrationBins = Array.isArray(result.calibration?.bins) ? result.calibration.bins : [];
+    const calibrationPoints = calibrationBins
+      .filter((bin) => typeof bin.predictedRate === 'number' && typeof bin.observedRate === 'number')
+      .map((bin) => ({ x: bin.predictedRate, y: bin.observedRate }));
+    const calibrationObservedSeries = calibrationBins
+      .map((bin) => ({ label: bin.bin, value: Number(bin.observedRate) }))
+      .filter((point) => Number.isFinite(point.value));
+    const calibrationPredictedSeries = calibrationBins
+      .map((bin) => ({ label: bin.bin, value: Number(bin.predictedRate) }))
+      .filter((point) => Number.isFinite(point.value));
     const coefficientChartItems = result.coefficients
       .filter((item) => item.field !== '(Intercept)')
       .map((item) => ({ label: item.field, value: item.coefficient }));
@@ -7782,6 +7793,57 @@ function renderRegression() {
               ['Diagnostic', 'Value'],
               diagnosticRows.map((row) => [escapeHtml(row[0]), row[1]])
             )
+          )
+          : '',
+        result.model === 'logistic' && thresholdAnalysis.length > 0
+          ? buildOutputSection(
+            'Threshold analysis',
+            buildOutputTable(
+              ['Threshold', 'Accuracy', 'Precision', 'Recall', 'Specificity', 'F1', 'Youden J', 'TP', 'FP', 'TN', 'FN'],
+              thresholdAnalysis.map((entry) => [
+                formatStatValue(entry.threshold, 2),
+                formatStatValue(entry.accuracy, 4),
+                formatStatValue(entry.precision, 4),
+                formatStatValue(entry.recall, 4),
+                formatStatValue(entry.specificity, 4),
+                formatStatValue(entry.f1Score, 4),
+                formatStatValue(entry.youdenJ, 4),
+                formatStatValue(entry.truePositive, 2),
+                formatStatValue(entry.falsePositive, 2),
+                formatStatValue(entry.trueNegative, 2),
+                formatStatValue(entry.falseNegative, 2)
+              ])
+            )
+          )
+          : '',
+        result.model === 'logistic' && calibrationBins.length > 0
+          ? buildOutputSection(
+            'Calibration diagnostics',
+            `
+              ${buildOutputTable(
+                ['Bin', 'Prob range', 'N', 'Weighted N', 'Observed rate', 'Predicted rate', 'Gap'],
+                calibrationBins.map((bin) => [
+                  escapeHtml(bin.bin),
+                  `${formatStatValue(bin.minProbability, 3)} to ${formatStatValue(bin.maxProbability, 3)}`,
+                  String(bin.count),
+                  formatStatValue(bin.weightedCount, 3),
+                  formatStatValue(bin.observedRate, 4),
+                  formatStatValue(bin.predictedRate, 4),
+                  formatStatValue(bin.calibrationGap, 4)
+                ])
+              )}
+              <div class="chart-grid">
+                ${calibrationPoints.length > 0
+                  ? buildChartCard('Observed vs predicted rate', buildSvgScatterPlot(calibrationPoints, { color: '#8fb3ff', xLabel: 'Predicted rate', yLabel: 'Observed rate' }), 'Points near diagonal indicate better calibration.')
+                  : ''}
+                ${calibrationObservedSeries.length > 0
+                  ? buildChartCard('Observed rate by bin', buildSvgLineChart(calibrationObservedSeries, { color: '#ffb86c' }), 'Observed event rate per calibration bin.')
+                  : ''}
+                ${calibrationPredictedSeries.length > 0
+                  ? buildChartCard('Predicted rate by bin', buildSvgLineChart(calibrationPredictedSeries, { color: '#7ea7a1' }), 'Average predicted probability per calibration bin.')
+                  : ''}
+              </div>
+            `
           )
           : '',
         coefficientChartItems.length > 0
@@ -9607,8 +9669,18 @@ function renderFrameworkMatrix() {
     return;
   }
 
-  const { rows, columns, cells, totalCount } = state.frameworkMatrixResult;
-  summaryEl.textContent = `${rows.length} case row(s), ${columns.length} code column(s), ${totalCount} coded link(s).`;
+  const {
+    rows,
+    columns,
+    cells,
+    totalCount,
+    populatedCellCount = cells.length,
+    cellDensity = rows.length > 0 && columns.length > 0 ? cells.length / (rows.length * columns.length) : 0,
+    caseSummaries = [],
+    codeSummaries = [],
+    sourceSummaries = []
+  } = state.frameworkMatrixResult;
+  summaryEl.textContent = `${rows.length} case row(s), ${columns.length} code column(s), ${totalCount} coded link(s), ${populatedCellCount} populated cell(s), density ${formatDecimal(cellDensity * 100, 1)}%.`;
   if (rows.length === 0 || columns.length === 0) {
     resultEl.innerHTML = '<p>No framework matrix data matched the current filters.</p>';
     return;
@@ -9644,6 +9716,84 @@ function renderFrameworkMatrix() {
           `).join('')}
         </tbody>
       </table>
+    </div>
+    <div class="stack gap-12" style="margin-top:14px">
+      <div class="matrix-table-wrap">
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th>Case summary</th>
+              <th>Top codes</th>
+              <th>Narrative summary</th>
+              <th>Open</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(caseSummaries.length > 0 ? caseSummaries : rows.slice(0, 10).map((row) => ({
+              caseId: row.caseId,
+              caseLabel: row.caseLabel,
+              topCodes: [],
+              summary: '',
+              highlightSegmentId: null
+            }))).slice(0, 12).map((entry) => `
+              <tr>
+                <td>${escapeHtml(entry.caseLabel)}</td>
+                <td>${escapeHtml((entry.topCodes ?? []).map((code) => `${code.codeName} (${code.count})`).join(', ') || 'none')}</td>
+                <td>${escapeHtml(summarizeText(entry.summary || 'No excerpt summary.', 140))}</td>
+                <td>${entry.highlightSegmentId ? `<button type="button" class="small framework-open-btn" data-segment-id="${escapeHtml(entry.highlightSegmentId)}">Open</button>` : 'n/a'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="matrix-table-wrap">
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th>Code summary</th>
+              <th>Top cases</th>
+              <th>Narrative summary</th>
+              <th>Open</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${codeSummaries.slice(0, 12).map((entry) => `
+              <tr>
+                <td>${escapeHtml(entry.codeName)}</td>
+                <td>${escapeHtml((entry.topCases ?? []).map((caseEntry) => `${caseEntry.caseLabel} (${caseEntry.count})`).join(', ') || 'none')}</td>
+                <td>${escapeHtml(summarizeText(entry.summary || 'No excerpt summary.', 140))}</td>
+                <td>${entry.highlightSegmentId ? `<button type="button" class="small framework-open-btn" data-segment-id="${escapeHtml(entry.highlightSegmentId)}">Open</button>` : 'n/a'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${sourceSummaries.length > 0 ? `
+        <div class="matrix-table-wrap">
+          <table class="matrix-table">
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>Links</th>
+                <th>Cases</th>
+                <th>Codes</th>
+                <th>Memos</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${sourceSummaries.slice(0, 15).map((entry) => `
+                <tr>
+                  <td>${escapeHtml(entry.sourceTitle ?? entry.sourceId)}</td>
+                  <td>${entry.totalLinks}</td>
+                  <td>${entry.caseCount}</td>
+                  <td>${entry.codeCount}</td>
+                  <td>${entry.memoCount}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : ''}
     </div>
   `;
   resultEl.querySelectorAll('.framework-open-btn').forEach((button) => {

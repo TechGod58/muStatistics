@@ -115,6 +115,11 @@ function summarizeText(value: string, maxLength = 500): string {
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
 }
 
+function formatPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return 'n/a';
+  return `${(value * 100).toFixed(1)}%`;
+}
+
 function sortCoverage(left: { label: string; count: number }, right: { label: string; count: number }): number {
   return right.count - left.count || left.label.localeCompare(right.label);
 }
@@ -1014,18 +1019,35 @@ export function buildFrameworkMatrixSummaryReport(input: {
   const densestCells = [...input.matrix.cells]
     .sort((left, right) => right.count - left.count || right.memoCount - left.memoCount)
     .slice(0, 10);
-  const caseCoverageRows = input.matrix.rows.map((row) => {
-    const rowCells = input.matrix.cells.filter((cell) => cell.caseId === row.caseId);
-    const memoCount = rowCells.reduce((total, cell) => total + cell.memoCount, 0);
-    const excerptCount = rowCells.filter((cell) => cell.summary).length;
-    return [row.caseLabel, String(row.count), String(memoCount), String(excerptCount)];
-  });
-  const codeCoverageRows = input.matrix.columns.map((column) => {
-    const columnCells = input.matrix.cells.filter((cell) => cell.codeId === column.codeId);
-    const caseCount = new Set(columnCells.map((cell) => cell.caseId)).size;
-    const memoCount = columnCells.reduce((total, cell) => total + cell.memoCount, 0);
-    return [column.codeName, String(column.count), String(caseCount), String(memoCount)];
-  });
+  const caseCoverageRows = input.matrix.caseSummaries.map((entry) => [
+    entry.caseLabel,
+    String(entry.totalLinks),
+    String(entry.memoCount),
+    String(entry.populatedCodes)
+  ]);
+  const codeCoverageRows = input.matrix.codeSummaries.map((entry) => [
+    entry.codeName,
+    String(entry.totalLinks),
+    String(entry.caseCount),
+    String(entry.memoCount)
+  ]);
+  const sourceCoverageRows = input.matrix.sourceSummaries.map((entry) => [
+    entry.sourceTitle ?? entry.sourceId,
+    String(entry.totalLinks),
+    String(entry.caseCount),
+    String(entry.codeCount),
+    String(entry.memoCount)
+  ]);
+  const caseSummaryRows = input.matrix.caseSummaries.map((entry) => [
+    entry.caseLabel,
+    entry.topCodes.map((code) => `${code.codeName} (${code.count})`).join(', ') || 'none',
+    summarizeText(entry.summary || 'No excerpt summary.', 140)
+  ]);
+  const codeSummaryRows = input.matrix.codeSummaries.map((entry) => [
+    entry.codeName,
+    entry.topCases.map((caseEntry) => `${caseEntry.caseLabel} (${caseEntry.count})`).join(', ') || 'none',
+    summarizeText(entry.summary || 'No excerpt summary.', 140)
+  ]);
   const annotationSummary = Array.isArray(input.annotations) ? input.annotations : [];
   const annotationRows = ['project', 'source', 'segment', 'code', 'case'].map((targetType) => {
     const items = annotationSummary.filter((annotation) => annotation.targetType === targetType);
@@ -1038,7 +1060,8 @@ export function buildFrameworkMatrixSummaryReport(input: {
     subtitleLines: [
       `Project ID: ${input.project.id}`,
       `Filters: ${input.queryLabels.length > 0 ? input.queryLabels.join(' | ') : 'none'}`,
-      `Cases: ${input.matrix.rows.length} | Codes: ${input.matrix.columns.length} | Links: ${input.matrix.totalCount}`
+      `Cases: ${input.matrix.rows.length} | Codes: ${input.matrix.columns.length} | Links: ${input.matrix.totalCount}`,
+      `Populated cells: ${input.matrix.populatedCellCount} | Density: ${formatPercent(input.matrix.cellDensity)}`
     ],
     sections: [
       {
@@ -1067,13 +1090,36 @@ export function buildFrameworkMatrixSummaryReport(input: {
         tables: [
           {
             title: 'Case coverage',
-            headers: ['Case', 'Links', 'Memo references', 'Cells with summaries'],
+            headers: ['Case', 'Links', 'Memo references', 'Populated codes'],
             rows: caseCoverageRows
           },
           {
             title: 'Code coverage',
             headers: ['Code', 'Links', 'Cases', 'Memo references'],
             rows: codeCoverageRows
+          },
+          {
+            title: 'Source coverage',
+            headers: ['Source', 'Links', 'Cases', 'Codes', 'Memo references'],
+            rows: sourceCoverageRows
+          }
+        ]
+      },
+      {
+        heading: 'Framework summaries',
+        paragraphs: [
+          'Case and code summaries provide quick narrative anchors for committee review and qualitative synthesis.'
+        ],
+        tables: [
+          {
+            title: 'Case summaries',
+            headers: ['Case', 'Top codes', 'Narrative summary'],
+            rows: caseSummaryRows
+          },
+          {
+            title: 'Code summaries',
+            headers: ['Code', 'Top cases', 'Narrative summary'],
+            rows: codeSummaryRows
           }
         ]
       },
@@ -1082,12 +1128,14 @@ export function buildFrameworkMatrixSummaryReport(input: {
         tables: [
           {
             title: 'Top populated framework cells',
-            headers: ['Case ID', 'Code ID', 'Links', 'Memos', 'Summary'],
+            headers: ['Case ID', 'Code ID', 'Links', 'Memos', 'Sources', 'Segment IDs', 'Summary'],
             rows: densestCells.map((cell) => [
               cell.caseId,
               cell.codeId,
               String(cell.count),
               String(cell.memoCount),
+              cell.sourceIds.join(', ') || 'none',
+              cell.segmentIds.slice(0, 5).join(', ') || 'none',
               summarizeText(cell.summary || 'No excerpt summary.', 120)
             ])
           }
