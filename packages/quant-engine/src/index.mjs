@@ -635,6 +635,105 @@ function computeVifByPredictor(rows, predictorFields) {
     }
     return result;
 }
+function computeWeightedCorrelation(left, right, weights) {
+    if (left.length !== right.length || left.length !== weights.length || left.length < 2)
+        return null;
+    const totalWeight = weights.reduce((total, value) => total + value, 0);
+    if (!(totalWeight > 0))
+        return null;
+    const leftMean = left.reduce((total, value, index) => total + (value * weights[index]), 0) / totalWeight;
+    const rightMean = right.reduce((total, value, index) => total + (value * weights[index]), 0) / totalWeight;
+    const leftSS = left.reduce((total, value, index) => total + (weights[index] * ((value - leftMean) ** 2)), 0);
+    const rightSS = right.reduce((total, value, index) => total + (weights[index] * ((value - rightMean) ** 2)), 0);
+    if (!(leftSS > 0) || !(rightSS > 0))
+        return null;
+    const covariance = left.reduce((total, value, index) => total + (weights[index] * (value - leftMean) * (right[index] - rightMean)), 0);
+    return covariance / Math.sqrt(leftSS * rightSS);
+}
+function computeMaxPredictorCorrelation(rows) {
+    const predictorCount = rows[0]?.x.length ?? 0;
+    if (predictorCount < 2)
+        return null;
+    let maxAbsCorrelation = 0;
+    let hasValue = false;
+    for (let left = 0; left < predictorCount; left += 1) {
+        for (let right = left + 1; right < predictorCount; right += 1) {
+            const leftValues = rows.map((row) => row.x[left]);
+            const rightValues = rows.map((row) => row.x[right]);
+            const weights = rows.map((row) => row.weight);
+            const correlation = computeWeightedCorrelation(leftValues, rightValues, weights);
+            if (correlation === null)
+                continue;
+            hasValue = true;
+            maxAbsCorrelation = Math.max(maxAbsCorrelation, Math.abs(correlation));
+        }
+    }
+    return hasValue ? maxAbsCorrelation : null;
+}
+function computeJarqueBera(values) {
+    if (values.length < 8) {
+        return { statistic: null, pValue: null };
+    }
+    const mean = values.reduce((total, value) => total + value, 0) / values.length;
+    const centered = values.map((value) => value - mean);
+    const secondMoment = centered.reduce((total, value) => total + (value ** 2), 0) / values.length;
+    if (!(secondMoment > 0)) {
+        return { statistic: null, pValue: null };
+    }
+    const thirdMoment = centered.reduce((total, value) => total + (value ** 3), 0) / values.length;
+    const fourthMoment = centered.reduce((total, value) => total + (value ** 4), 0) / values.length;
+    const skewness = thirdMoment / (secondMoment ** 1.5);
+    const kurtosis = fourthMoment / (secondMoment ** 2);
+    const statistic = (values.length / 6) * ((skewness ** 2) + (((kurtosis - 3) ** 2) / 4));
+    return {
+        statistic,
+        pValue: chiSquarePValue(statistic, 2)
+    };
+}
+function computeBreuschPagan(rows, residuals) {
+    const predictorCount = rows[0]?.x.length ?? 0;
+    if (predictorCount === 0 || rows.length < predictorCount + 2) {
+        return { statistic: null, pValue: null, rSquared: null };
+    }
+    const y = residuals.map((value) => value ** 2);
+    const designMatrix = rows.map((row) => [1, ...row.x]);
+    const xtwx = Array.from({ length: predictorCount + 1 }, () => Array.from({ length: predictorCount + 1 }, () => 0));
+    const xtwy = Array.from({ length: predictorCount + 1 }, () => 0);
+    for (let rowIndex = 0; rowIndex < designMatrix.length; rowIndex += 1) {
+        const vector = designMatrix[rowIndex];
+        const weight = rows[rowIndex].weight;
+        for (let i = 0; i < vector.length; i += 1) {
+            xtwy[i] += vector[i] * y[rowIndex] * weight;
+            for (let j = 0; j < vector.length; j += 1) {
+                xtwx[i][j] += vector[i] * vector[j] * weight;
+            }
+        }
+    }
+    try {
+        const coefficients = solveLinearSystem(xtwx, xtwy);
+        const predictions = designMatrix.map((vector) => coefficients.reduce((total, coefficient, index) => total + (coefficient * vector[index]), 0));
+        const totalWeight = rows.reduce((total, row) => total + row.weight, 0);
+        if (!(totalWeight > 0)) {
+            return { statistic: null, pValue: null, rSquared: null };
+        }
+        const meanY = y.reduce((total, value, index) => total + (value * rows[index].weight), 0) / totalWeight;
+        const ssTot = y.reduce((total, value, index) => total + (rows[index].weight * ((value - meanY) ** 2)), 0);
+        const ssRes = y.reduce((total, value, index) => total + (rows[index].weight * ((value - predictions[index]) ** 2)), 0);
+        const rSquared = ssTot === 0 ? null : Math.max(0, 1 - (ssRes / ssTot));
+        if (rSquared === null) {
+            return { statistic: null, pValue: null, rSquared: null };
+        }
+        const statistic = rows.length * rSquared;
+        return {
+            statistic,
+            pValue: chiSquarePValue(statistic, predictorCount),
+            rSquared
+        };
+    }
+    catch {
+        return { statistic: null, pValue: null, rSquared: null };
+    }
+}
 function varimaxObjective(loadings) {
     if (loadings.length === 0 || (loadings[0]?.length ?? 0) === 0)
         return 0;
@@ -2827,6 +2926,27 @@ export function analyzeRegression(dataset, dependentField, predictorField, model
         const meanAbsoluteError = residuals.reduce((total, value, index) => total + (Math.abs(value) * weights[index]), 0) / weightedCaseCount;
         const vifByPredictor = computeVifByPredictor(rows, predictorFields);
         const vifValues = Object.values(vifByPredictor).filter((value) => typeof value === 'number' && Number.isFinite(value));
+        const standardizedResidualValues = standardizedResiduals
+            .filter((value) => typeof value === 'number' && Number.isFinite(value));
+        const jarqueBera = computeJarqueBera(standardizedResidualValues);
+        const breuschPagan = computeBreuschPagan(rows, residuals);
+        const maxPredictorCorrelation = computeMaxPredictorCorrelation(rows);
+        const maxVif = vifValues.length > 0 ? Math.max(...vifValues) : null;
+        assumptions.push(buildAssumptionCheck('residual_normality', 'Residual normality (Jarque-Bera)', jarqueBera.pValue === null ? 'warn' : jarqueBera.pValue >= 0.05 ? 'pass' : 'warn', jarqueBera.pValue, jarqueBera.pValue === null
+            ? 'Not enough variation to evaluate residual normality.'
+            : jarqueBera.pValue >= 0.05
+                ? 'Residual distribution does not strongly deviate from normality.'
+                : 'Residual distribution shows non-normality; review transformations or robust inference.'), buildAssumptionCheck('homoskedasticity', 'Homoskedasticity (Breusch-Pagan)', breuschPagan.pValue === null ? 'warn' : breuschPagan.pValue >= 0.05 ? 'pass' : 'warn', breuschPagan.pValue, breuschPagan.pValue === null
+            ? 'Unable to evaluate heteroskedasticity for this model.'
+            : breuschPagan.pValue >= 0.05
+                ? 'No strong heteroskedasticity signal detected.'
+                : 'Heteroskedasticity signal detected; consider robust standard errors.'), buildAssumptionCheck('multicollinearity', 'Multicollinearity (max VIF)', maxVif === null ? 'warn' : maxVif <= 5 ? 'pass' : maxVif <= 10 ? 'warn' : 'fail', maxVif, maxVif === null
+            ? 'Could not compute VIF for all predictors.'
+            : maxVif <= 5
+                ? 'Multicollinearity is within typical bounds.'
+                : maxVif <= 10
+                    ? 'Moderate multicollinearity detected.'
+                    : 'High multicollinearity detected; coefficients may be unstable.'));
         return {
             model,
             dependentField,
@@ -2858,8 +2978,14 @@ export function analyzeRegression(dataset, dependentField, predictorField, model
                 influentialCount,
                 meanAbsoluteError,
                 durbinWatson,
-                maxVif: vifValues.length > 0 ? Math.max(...vifValues) : null,
+                maxVif,
                 meanVif: vifValues.length > 0 ? vifValues.reduce((total, value) => total + value, 0) / vifValues.length : null,
+                maxPredictorCorrelation,
+                jarqueBeraStatistic: jarqueBera.statistic,
+                jarqueBeraPValue: jarqueBera.pValue,
+                breuschPaganStatistic: breuschPagan.statistic,
+                breuschPaganPValue: breuschPagan.pValue,
+                breuschPaganRSquared: breuschPagan.rSquared,
                 ...Object.fromEntries(Object.entries(vifByPredictor).map(([field, value]) => [`vif_${field}`, value]))
             },
             observations: observations.slice(0, 50),

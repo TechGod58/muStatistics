@@ -519,6 +519,44 @@ function buildSvgScatterPlot(points, { width = 760, height = 260, color = '#8fb3
   `;
 }
 
+function inverseNormalCdf(probability) {
+  const p = Number(probability);
+  if (!(p > 0 && p < 1)) {
+    if (p === 0) return Number.NEGATIVE_INFINITY;
+    if (p === 1) return Number.POSITIVE_INFINITY;
+    return NaN;
+  }
+  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239];
+  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572];
+  const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+  const low = 0.02425;
+  const high = 1 - low;
+  if (p < low) {
+    const q = Math.sqrt(-2 * Math.log(p));
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5])
+      / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  if (p > high) {
+    const q = Math.sqrt(-2 * Math.log(1 - p));
+    return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5])
+      / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  const q = p - 0.5;
+  const r = q * q;
+  return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q
+    / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+}
+
+function buildQqPlotPoints(values) {
+  const numericValues = values.filter((value) => Number.isFinite(Number(value))).map((value) => Number(value)).sort((left, right) => left - right);
+  if (numericValues.length < 3) return [];
+  return numericValues.map((value, index) => {
+    const probability = (index + 0.5) / numericValues.length;
+    return { x: inverseNormalCdf(probability), y: value };
+  }).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+}
+
 function buildChartCard(title, body, caption = '') {
   return `
     <div class="chart-card">
@@ -7686,7 +7724,20 @@ function renderRegression() {
       label: key,
       value: value === null ? 'n/a' : formatDecimal(value, 4)
     }));
-    const diagnosticItems = Object.entries(result.diagnostics ?? {}).map(([key, value]) => `${escapeHtml(key)}: <strong>${value === null ? 'n/a' : formatDecimal(value, 4)}</strong>`);
+    const diagnostics = result.diagnostics ?? {};
+    const diagnosticRows = [
+      ['Durbin-Watson', formatStatValue(diagnostics.durbinWatson, 4)],
+      ['Jarque-Bera statistic', formatStatValue(diagnostics.jarqueBeraStatistic, 4)],
+      ['Jarque-Bera p-value', formatStatValue(diagnostics.jarqueBeraPValue, 4)],
+      ['Breusch-Pagan statistic', formatStatValue(diagnostics.breuschPaganStatistic, 4)],
+      ['Breusch-Pagan p-value', formatStatValue(diagnostics.breuschPaganPValue, 4)],
+      ['Max VIF', formatStatValue(diagnostics.maxVif, 4)],
+      ['Mean VIF', formatStatValue(diagnostics.meanVif, 4)],
+      ['Max predictor correlation', formatStatValue(diagnostics.maxPredictorCorrelation, 4)],
+      ['Outlier count', formatStatValue(diagnostics.outlierCount, 0)],
+      ['High leverage count', formatStatValue(diagnostics.highLeverageCount, 0)],
+      ['Influential count', formatStatValue(diagnostics.influentialCount, 0)]
+    ];
     const observationRows = Array.isArray(result.observations) ? result.observations : [];
     const coefficientChartItems = result.coefficients
       .filter((item) => item.field !== '(Intercept)')
@@ -7694,6 +7745,10 @@ function renderRegression() {
     const residualPlotPoints = observationRows
       .filter((item) => typeof item.predicted === 'number' && typeof item.residual === 'number')
       .map((item) => ({ x: item.predicted, y: item.residual }));
+    const observedPredictedPoints = observationRows
+      .filter((item) => typeof item.actual === 'number' && typeof item.predicted === 'number')
+      .map((item) => ({ x: item.actual, y: item.predicted }));
+    const qqPlotPoints = buildQqPlotPoints(observationRows.map((item) => item.standardizedResidual));
 
     resultEl.innerHTML = buildOutputViewer({
       eyebrow: `${result.model} regression`,
@@ -7720,8 +7775,14 @@ function renderRegression() {
             ])
           )
         ),
-        diagnosticItems.length
-          ? buildOutputSection('Diagnostics', buildOutputList(diagnosticItems))
+        diagnosticRows.length
+          ? buildOutputSection(
+            'Model diagnostics',
+            buildOutputTable(
+              ['Diagnostic', 'Value'],
+              diagnosticRows.map((row) => [escapeHtml(row[0]), row[1]])
+            )
+          )
           : '',
         coefficientChartItems.length > 0
           ? buildOutputSection(
@@ -7729,10 +7790,16 @@ function renderRegression() {
             `<div class="chart-grid">${buildChartCard('Predictor coefficients', buildSvgBarChart(coefficientChartItems, { color: '#d2b27a', formatter: (value) => formatDecimal(value, 3) }), 'Coefficient direction and magnitude by predictor.')}</div>`
           )
           : '',
+        observedPredictedPoints.length > 0
+          ? buildOutputSection(
+            'Fit profile',
+            `<div class="chart-grid">${buildChartCard('Observed vs predicted', buildSvgScatterPlot(observedPredictedPoints, { color: '#8fb3ff', xLabel: 'Observed', yLabel: 'Predicted' }), 'Points close to the diagonal indicate better fit.')}</div>`
+          )
+          : '',
         residualPlotPoints.length > 0
           ? buildOutputSection(
             'Residual diagnostics',
-            `<div class="chart-grid">${buildChartCard('Predicted vs residual', buildSvgScatterPlot(residualPlotPoints, { color: '#ffb86c', xLabel: 'Predicted', yLabel: 'Residual' }), 'Residual spread against fitted values for the sampled observations.')}</div>`
+            `<div class="chart-grid">${buildChartCard('Predicted vs residual', buildSvgScatterPlot(residualPlotPoints, { color: '#ffb86c', xLabel: 'Predicted', yLabel: 'Residual' }), 'Residual spread against fitted values for the sampled observations.')}${qqPlotPoints.length > 0 ? buildChartCard('Residual QQ plot', buildSvgScatterPlot(qqPlotPoints, { color: '#7ea7a1', xLabel: 'Theoretical quantile', yLabel: 'Standardized residual' }), 'Departures from linear pattern suggest non-normal residual behavior.') : ''}</div>`
           )
           : '',
         buildAssumptionsSection(result.assumptions),
