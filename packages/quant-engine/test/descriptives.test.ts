@@ -20,7 +20,7 @@ import {
   applyDatasetRecodes,
   buildCaseDataset,
   describeDataset
-} from '../src/index';
+} from '../src/index.ts';
 
 describe('buildCaseDataset', () => {
   it('builds a case-level dataset and descriptive summaries from attributes and derived trace links', () => {
