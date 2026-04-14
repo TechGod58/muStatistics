@@ -1145,6 +1145,48 @@ export async function insertTranscriptSyncLink(link: TranscriptSyncLink): Promis
   return link;
 }
 
+export async function updateTranscriptSyncLink(link: TranscriptSyncLink): Promise<TranscriptSyncLink> {
+  const result = await pool.query(
+    `UPDATE transcript_sync_links
+     SET media_source_id = $3,
+         transcript_source_id = $4,
+         segment_id = $5,
+         start_ms = $6,
+         end_ms = $7,
+         transcript_text = $8,
+         updated_at = $9
+     WHERE id = $1 AND project_id = $2`,
+    [
+      link.id,
+      link.projectId,
+      link.mediaSourceId,
+      link.transcriptSourceId,
+      link.segmentId,
+      link.startMs,
+      link.endMs,
+      link.transcriptText,
+      link.updatedAt
+    ]
+  );
+  if (result.rowCount && result.rowCount < 1) {
+    throw new Error('Transcript sync link not found.');
+  }
+  await touchProject(link.projectId);
+  return link;
+}
+
+export async function deleteTranscriptSyncLink(id: string, projectId: string): Promise<boolean> {
+  const result = await pool.query(
+    `DELETE FROM transcript_sync_links WHERE id = $1 AND project_id = $2`,
+    [id, projectId]
+  );
+  if (result.rowCount && result.rowCount > 0) {
+    await touchProject(projectId);
+    return true;
+  }
+  return false;
+}
+
 export async function deleteTranscriptSyncLinksByMediaSource(projectId: string, mediaSourceId: string): Promise<void> {
   await pool.query(
     `DELETE FROM transcript_sync_links WHERE project_id = $1 AND media_source_id = $2`,

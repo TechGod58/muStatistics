@@ -83,7 +83,7 @@ import {
   insertAnnotation, listAnnotations,
   insertRelationship, listRelationships,
   insertProjectReference, listProjectReferences, deleteProjectReference,
-  insertTranscriptSyncLink, listTranscriptSyncLinks, deleteTranscriptSyncLinksByMediaSource,
+  insertTranscriptSyncLink, listTranscriptSyncLinks, updateTranscriptSyncLink, deleteTranscriptSyncLink, deleteTranscriptSyncLinksByMediaSource,
   insertTranscriptionJob, listTranscriptionJobs, updateTranscriptionJob,
   insertSegment, listSegments,
   insertCodeApplication, listCodeApplications,
@@ -1870,28 +1870,102 @@ function formatEvidenceFilterLabels(query: ReturnType<typeof parseEvidenceQuery>
 function buildMediaTimeline(params: {
   sourceId: string;
   segments: Array<{ id: string; sourceId: string; kind: string; anchor: any; text: string }>;
-  syncLinks: Array<{ mediaSourceId: string; transcriptSourceId: string; segmentId: string | null; startMs: number; endMs: number; transcriptText: string }>;
+  syncLinks: Array<{ id: string; mediaSourceId: string; transcriptSourceId: string; segmentId: string | null; startMs: number; endMs: number; transcriptText: string }>;
+  sources: Array<{ id: string; title: string }>;
 }) {
+  const sourceTitleById = new Map(params.sources.map((source) => [source.id, source.title]));
+  const normalizeMs = (value: unknown): number => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+    return Math.max(0, Math.round(value));
+  };
+  const computeUnionDuration = (intervals: Array<{ startMs: number; endMs: number }>): number => {
+    if (intervals.length === 0) return 0;
+    const normalized = intervals
+      .map((interval) => ({
+        startMs: Math.min(interval.startMs, interval.endMs),
+        endMs: Math.max(interval.startMs, interval.endMs)
+      }))
+      .sort((left, right) => left.startMs - right.startMs);
+    let total = 0;
+    let cursorStart = normalized[0]!.startMs;
+    let cursorEnd = normalized[0]!.endMs;
+    for (let index = 1; index < normalized.length; index += 1) {
+      const interval = normalized[index]!;
+      if (interval.startMs <= cursorEnd) {
+        cursorEnd = Math.max(cursorEnd, interval.endMs);
+        continue;
+      }
+      total += Math.max(0, cursorEnd - cursorStart);
+      cursorStart = interval.startMs;
+      cursorEnd = interval.endMs;
+    }
+    total += Math.max(0, cursorEnd - cursorStart);
+    return total;
+  };
   const timeSegments = params.segments
     .filter((segment) => segment.sourceId === params.sourceId && segment.kind === 'time_range')
     .map((segment) => ({
       segmentId: segment.id,
-      startMs: typeof segment.anchor?.startMs === 'number' ? segment.anchor.startMs : 0,
-      endMs: typeof segment.anchor?.endMs === 'number' ? segment.anchor.endMs : 0,
+      startMs: normalizeMs(segment.anchor?.startMs),
+      endMs: normalizeMs(segment.anchor?.endMs),
       text: segment.text
     }))
     .sort((left, right) => left.startMs - right.startMs);
-  const syncLinks = params.syncLinks
+  const timeSegmentIdSet = new Set(timeSegments.map((segment) => segment.segmentId));
+  const rawSyncLinks = params.syncLinks
     .filter((link) => link.mediaSourceId === params.sourceId)
+    .map((link) => ({
+      ...link,
+      startMs: normalizeMs(link.startMs),
+      endMs: normalizeMs(link.endMs)
+    }))
     .sort((left, right) => left.startMs - right.startMs);
+  const syncLinkCountBySegmentId = new Map<string, number>();
+  for (const link of rawSyncLinks) {
+    if (!link.segmentId) continue;
+    syncLinkCountBySegmentId.set(link.segmentId, (syncLinkCountBySegmentId.get(link.segmentId) ?? 0) + 1);
+  }
+  const enrichedTimeSegments = timeSegments.map((segment) => {
+    const syncLinkCount = syncLinkCountBySegmentId.get(segment.segmentId) ?? 0;
+    return {
+      ...segment,
+      syncLinkCount,
+      isSynced: syncLinkCount > 0
+    };
+  });
+  const syncedSegmentCount = enrichedTimeSegments.filter((segment) => segment.isSynced).length;
+  const unsyncedSegmentCount = Math.max(0, enrichedTimeSegments.length - syncedSegmentCount);
+  const syncLinks = rawSyncLinks.map((link) => ({
+    id: link.id,
+    segmentId: link.segmentId,
+    transcriptSourceId: link.transcriptSourceId,
+    transcriptSourceTitle: sourceTitleById.get(link.transcriptSourceId) ?? null,
+    startMs: link.startMs,
+    endMs: link.endMs,
+    durationMs: Math.max(0, link.endMs - link.startMs),
+    transcriptText: link.transcriptText,
+    hasSegmentAnchor: Boolean(link.segmentId && timeSegmentIdSet.has(link.segmentId))
+  }));
+  const orphanSyncLinkCount = syncLinks.filter((link) => !link.hasSegmentAnchor).length;
+  const linkedDurationMs = computeUnionDuration(syncLinks.map((link) => ({ startMs: link.startMs, endMs: link.endMs })));
   const durationMs = Math.max(
     0,
     ...timeSegments.map((segment) => segment.endMs),
     ...syncLinks.map((link) => link.endMs)
   );
+  const coverageRatio = durationMs > 0 ? Math.min(1, linkedDurationMs / durationMs) : 0;
   return {
     durationMs,
-    timeSegments,
+    linkedDurationMs,
+    coverageRatio,
+    summary: {
+      timeSegmentCount: enrichedTimeSegments.length,
+      syncLinkCount: syncLinks.length,
+      syncedSegmentCount,
+      unsyncedSegmentCount,
+      orphanSyncLinkCount
+    },
+    timeSegments: enrichedTimeSegments,
     syncLinks
   };
 }
@@ -5502,6 +5576,112 @@ server.post('/transcript-sync-links', async (request, reply) => {
   return ok({ link });
 });
 
+server.put('/transcript-sync-links/:linkId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ linkId: string }>;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    mediaSourceId: string;
+    transcriptSourceId: string;
+    segmentId: string | null;
+    startMs: number;
+    endMs: number;
+    transcriptText: string;
+  }>;
+  const linkId = typeof params.linkId === 'string' ? params.linkId.trim() : '';
+  if (!linkId) {
+    return reply.status(400).send(fail('INVALID', 'linkId is required.'));
+  }
+  const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+  if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
+
+  const existingLinks = await listTranscriptSyncLinks(projectId);
+  const existing = existingLinks.find((entry) => entry.id === linkId);
+  if (!existing) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Transcript sync link not found.'));
+  }
+
+  const mediaSourceId = typeof body.mediaSourceId === 'string' && body.mediaSourceId.trim()
+    ? body.mediaSourceId.trim()
+    : existing.mediaSourceId;
+  const transcriptSourceId = typeof body.transcriptSourceId === 'string' && body.transcriptSourceId.trim()
+    ? body.transcriptSourceId.trim()
+    : existing.transcriptSourceId;
+  if (!mediaSourceId || !transcriptSourceId) {
+    return reply.status(400).send(fail('INVALID', 'mediaSourceId and transcriptSourceId are required.'));
+  }
+  const startMs = typeof body.startMs === 'number'
+    ? Math.max(0, Math.round(body.startMs))
+    : existing.startMs;
+  const requestedEndMs = typeof body.endMs === 'number'
+    ? Math.max(0, Math.round(body.endMs))
+    : existing.endMs;
+  const endMs = Math.max(startMs, requestedEndMs);
+  const segmentId = body.segmentId === null
+    ? null
+    : typeof body.segmentId === 'string' && body.segmentId.trim()
+      ? body.segmentId.trim()
+      : existing.segmentId;
+  const transcriptText = typeof body.transcriptText === 'string'
+    ? body.transcriptText
+    : existing.transcriptText;
+  const updatedAt = new Date().toISOString();
+  const link = await updateTranscriptSyncLink({
+    ...existing,
+    mediaSourceId,
+    transcriptSourceId,
+    segmentId,
+    startMs,
+    endMs,
+    transcriptText,
+    updatedAt
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'transcript_sync.update',
+    entityType: 'transcript_sync_link',
+    entityId: link.id,
+    details: {
+      mediaSourceId,
+      transcriptSourceId,
+      segmentId,
+      startMs,
+      endMs,
+      replacedSegmentId: existing.segmentId
+    }
+  });
+  return ok({ link });
+});
+
+server.delete('/transcript-sync-links/:linkId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ linkId: string }>;
+  const query = (request.query ?? {}) as Partial<{ projectId: string }>;
+  const linkId = typeof params.linkId === 'string' ? params.linkId.trim() : '';
+  if (!linkId) {
+    return reply.status(400).send(fail('INVALID', 'linkId is required.'));
+  }
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const removed = await deleteTranscriptSyncLink(linkId, projectId);
+  if (!removed) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Transcript sync link not found.'));
+  }
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'transcript_sync.delete',
+    entityType: 'transcript_sync_link',
+    entityId: linkId,
+    details: {}
+  });
+  return ok({ removed: true });
+});
+
 server.get('/media-timeline', async (request, reply) => {
   const userId = await assertAuth(request, reply);
   if (!userId) return;
@@ -5518,7 +5698,8 @@ server.get('/media-timeline', async (request, reply) => {
     timeline: buildMediaTimeline({
       sourceId,
       segments: payload.segments,
-      syncLinks: payload.transcriptSyncLinks
+      syncLinks: payload.transcriptSyncLinks,
+      sources: payload.sources
     })
   });
 });

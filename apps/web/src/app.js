@@ -91,6 +91,7 @@ const state = {
   workspaceSelectedCaseId: null,
   workspaceSelectedItemKey: null,
   workspaceFocusedSegmentId: null,
+  workspaceEditingSyncLinkId: null,
   selectedDescriptivesBase: null,
   selectedDescriptives: null,
   selectedCrosstab: null,
@@ -2123,6 +2124,7 @@ async function loadSelectedProjectData() {
     state.workspaceSelectedCodeId = null;
     state.workspaceSelectedCaseId = null;
     state.workspaceFocusedSegmentId = null;
+    state.workspaceEditingSyncLinkId = null;
     state.selectedDescriptivesBase = null;
     state.selectedDescriptives = null;
     state.selectedCrosstab = null;
@@ -2202,6 +2204,9 @@ async function loadSelectedProjectData() {
     state.selectedRelationships = relationshipsEnv.data.items ?? [];
     state.selectedReferences = referencesEnv.data.items ?? [];
     state.selectedTranscriptSyncLinks = transcriptSyncEnv.data.items ?? [];
+  if (state.workspaceEditingSyncLinkId && !state.selectedTranscriptSyncLinks.some((link) => link.id === state.workspaceEditingSyncLinkId)) {
+    state.workspaceEditingSyncLinkId = null;
+  }
   state.transcriptionJobs = transcriptionJobsEnv.data.items ?? [];
   state.selectedAttributes = attributesEnv.data.items ?? [];
   state.selectedMessages = messagesEnv.data.items ?? [];
@@ -3505,7 +3510,7 @@ function renderRelationships() {
   }
 }
 
-function renderMediaTimeline() {
+function renderMediaTimelineLegacy() {
   const node = document.getElementById('workspace-media-timeline');
   const jobsNode = document.getElementById('workspace-transcription-jobs');
   if (jobsNode) {
@@ -3517,7 +3522,7 @@ function renderMediaTimeline() {
             <div class="source-row">
               <div>
                 <span class="project-title">${escapeHtml(job.id)}</span>
-                <span class="source-meta">${escapeHtml(job.status)} · ${escapeHtml(job.mode)}</span>
+                <span class="source-meta">${escapeHtml(job.status)} | ${escapeHtml(job.mode)}</span>
                 <span class="source-meta">${escapeHtml(job.note || 'No note')}</span>
               </div>
               <div class="inline-actions">
@@ -3562,6 +3567,192 @@ function renderMediaTimeline() {
   node.querySelectorAll('.timeline-segment-btn').forEach((button) => {
     button.addEventListener('click', () => {
       jumpToWorkspaceSegment(button.dataset.segmentId);
+    });
+  });
+}
+
+function formatMediaClock(ms) {
+  const totalSeconds = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function getEditingTranscriptSyncLink() {
+  if (!state.workspaceEditingSyncLinkId) return null;
+  const link = state.selectedTranscriptSyncLinks.find((entry) => entry.id === state.workspaceEditingSyncLinkId) ?? null;
+  if (!link) return null;
+  if (state.activeSourceId && link.mediaSourceId !== state.activeSourceId) return null;
+  return link;
+}
+
+function beginTranscriptSyncEdit(linkId) {
+  if (!linkId) return;
+  const link = state.selectedTranscriptSyncLinks.find((entry) => entry.id === linkId) ?? null;
+  if (!link) {
+    window.alert('Transcript sync link was not found. Refresh the workspace and try again.');
+    return;
+  }
+  state.workspaceEditingSyncLinkId = link.id;
+  const startEl = document.getElementById('workspace-media-start');
+  const endEl = document.getElementById('workspace-media-end');
+  const textEl = document.getElementById('workspace-media-text');
+  const transcriptSourceEl = document.getElementById('workspace-transcript-source-id');
+  if (startEl) startEl.value = (Math.max(0, link.startMs) / 1000).toFixed(1);
+  if (endEl) endEl.value = (Math.max(0, link.endMs) / 1000).toFixed(1);
+  if (textEl) textEl.value = link.transcriptText || '';
+  if (transcriptSourceEl && link.transcriptSourceId) transcriptSourceEl.value = link.transcriptSourceId;
+  const statusEl = document.getElementById('workspace-status');
+  if (statusEl) statusEl.textContent = `Editing transcript sync link ${link.id}.`;
+  renderMediaTimeline();
+}
+
+function cancelTranscriptSyncEdit() {
+  if (!state.workspaceEditingSyncLinkId) return;
+  state.workspaceEditingSyncLinkId = null;
+  const statusEl = document.getElementById('workspace-status');
+  if (statusEl) statusEl.textContent = 'Transcript sync edit cancelled.';
+  renderMediaTimeline();
+}
+
+async function deleteTranscriptSyncLinkById(linkId) {
+  if (!state.selectedProjectId || !linkId) return;
+  const confirmed = window.confirm('Delete this transcript sync link? This does not delete the coded segment itself.');
+  if (!confirmed) return;
+  await deleteJson(`${API_BASE}/transcript-sync-links/${encodeURIComponent(linkId)}?projectId=${encodeURIComponent(state.selectedProjectId)}`);
+  if (state.workspaceEditingSyncLinkId === linkId) {
+    state.workspaceEditingSyncLinkId = null;
+  }
+  await loadSelectedProjectData();
+  await loadMediaTimelineForActiveSource();
+  renderAll();
+  const statusEl = document.getElementById('workspace-status');
+  if (statusEl) statusEl.textContent = 'Transcript sync link deleted.';
+}
+
+function renderMediaTimeline() {
+  const node = document.getElementById('workspace-media-timeline');
+  const jobsNode = document.getElementById('workspace-transcription-jobs');
+  const saveBtn = document.getElementById('workspace-save-media-segment-btn');
+  const cancelEditBtn = document.getElementById('workspace-cancel-sync-edit-btn');
+  const editNote = document.getElementById('workspace-sync-edit-note');
+
+  let editingLink = getEditingTranscriptSyncLink();
+  if (state.workspaceEditingSyncLinkId && !editingLink) {
+    state.workspaceEditingSyncLinkId = null;
+  }
+  editingLink = getEditingTranscriptSyncLink();
+
+  if (saveBtn) {
+    saveBtn.textContent = editingLink ? 'Update transcript sync link' : 'Save media segment and code it';
+  }
+  if (cancelEditBtn) {
+    cancelEditBtn.style.display = editingLink ? '' : 'none';
+  }
+  if (editNote) {
+    editNote.textContent = editingLink
+      ? `Editing sync link ${editingLink.id} (${formatMediaClock(editingLink.startMs)}-${formatMediaClock(editingLink.endMs)}).`
+      : 'Create coded media segments and optional transcript sync links.';
+  }
+
+  if (jobsNode) {
+    jobsNode.innerHTML = state.transcriptionJobs.length === 0
+      ? '<div class="small-muted">No transcription jobs yet.</div>'
+      : state.transcriptionJobs
+        .map((job) => `
+          <div class="interactive-list-item">
+            <div class="source-row">
+              <div>
+                <span class="project-title">${escapeHtml(job.id)}</span>
+                <span class="source-meta">${escapeHtml(job.status)} · ${escapeHtml(job.mode)}</span>
+                <span class="source-meta">${escapeHtml(job.note || 'No note')}</span>
+              </div>
+              <div class="inline-actions">
+                <button type="button" class="small transcription-run-btn" data-job-id="${escapeHtml(job.id)}">Run</button>
+              </div>
+            </div>
+          </div>
+        `).join('');
+    jobsNode.querySelectorAll('.transcription-run-btn').forEach((button) => {
+      button.addEventListener('click', async () => {
+        await runTranscriptionJob(button.dataset.jobId);
+      });
+    });
+  }
+
+  if (!node) return;
+  const timeline = state.mediaTimeline;
+  if (!timeline) {
+    node.innerHTML = '<div class="small-muted">No media timeline yet. Save time-range segments or run transcription first.</div>';
+    return;
+  }
+  const durationMs = Math.max(1, timeline.durationMs || 0);
+  const summary = timeline.summary ?? {};
+  const coveragePercent = ((timeline.coverageRatio ?? 0) * 100).toFixed(1);
+  node.innerHTML = `
+    <div class="small-muted">
+      Duration ${escapeHtml(formatMediaClock(timeline.durationMs || 0))}
+      | Linked ${escapeHtml(formatMediaClock(timeline.linkedDurationMs || 0))}
+      | Coverage ${escapeHtml(coveragePercent)}%
+    </div>
+    <div class="code-chip-row" style="margin-top:8px">
+      <span class="badge">${escapeHtml(String(summary.timeSegmentCount ?? (timeline.timeSegments ?? []).length))} segments</span>
+      <span class="badge">${escapeHtml(String(summary.syncLinkCount ?? (timeline.syncLinks ?? []).length))} sync links</span>
+      <span class="badge">${escapeHtml(String(summary.syncedSegmentCount ?? 0))} synced</span>
+      <span class="badge">${escapeHtml(String(summary.unsyncedSegmentCount ?? 0))} unsynced</span>
+      <span class="badge">${escapeHtml(String(summary.orphanSyncLinkCount ?? 0))} orphan links</span>
+    </div>
+    <div class="timeline-track" style="margin-top:10px; position:relative; height:24px; border-radius:999px; background:rgba(255,255,255,0.08); overflow:hidden;">
+      ${(timeline.timeSegments ?? []).map((segment) => {
+        const left = (segment.startMs / durationMs) * 100;
+        const width = Math.max(2, ((segment.endMs - segment.startMs) / durationMs) * 100);
+        const alpha = segment.isSynced ? 0.9 : 0.55;
+        return `<button type="button" class="timeline-segment-btn" data-segment-id="${escapeHtml(segment.segmentId)}" style="position:absolute; left:${left}%; width:${width}%; top:3px; bottom:3px; border:none; border-radius:999px; background:rgba(209,178,111,${alpha});" title="${escapeHtml(segment.text)}"></button>`;
+      }).join('')}
+    </div>
+    <div class="interactive-list" style="margin-top:12px">
+      ${(timeline.syncLinks ?? []).length === 0
+        ? '<div class="interactive-list-item empty">No transcript sync links yet.</div>'
+        : timeline.syncLinks.map((link) => `
+          <div class="interactive-list-item">
+            <div class="source-row">
+              <div>
+                <span class="project-title">${escapeHtml(formatMediaClock(link.startMs))} - ${escapeHtml(formatMediaClock(link.endMs))}</span>
+                <span class="source-meta">${escapeHtml(link.transcriptSourceTitle || link.transcriptSourceId || 'Transcript source')}</span>
+                <span class="source-meta">${escapeHtml(summarizeText(link.transcriptText, 140))}</span>
+                <span class="source-meta">${link.hasSegmentAnchor ? `Segment ${escapeHtml(link.segmentId || '')}` : 'No segment anchor'}</span>
+              </div>
+              <div class="inline-actions">
+                <button type="button" class="small timeline-sync-focus-btn" data-segment-id="${escapeHtml(link.segmentId || '')}"${link.segmentId ? '' : ' disabled'}>Focus</button>
+                <button type="button" class="small timeline-sync-edit-btn" data-link-id="${escapeHtml(link.id)}">Edit</button>
+                <button type="button" class="small timeline-sync-delete-btn" data-link-id="${escapeHtml(link.id)}">Delete</button>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+    </div>
+  `;
+  node.querySelectorAll('.timeline-segment-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      jumpToWorkspaceSegment(button.dataset.segmentId);
+    });
+  });
+  node.querySelectorAll('.timeline-sync-focus-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (!button.dataset.segmentId) return;
+      jumpToWorkspaceSegment(button.dataset.segmentId);
+    });
+  });
+  node.querySelectorAll('.timeline-sync-edit-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      beginTranscriptSyncEdit(button.dataset.linkId);
+    });
+  });
+  node.querySelectorAll('.timeline-sync-delete-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await deleteTranscriptSyncLinkById(button.dataset.linkId);
     });
   });
 }
@@ -5875,14 +6066,22 @@ async function runPatternAutocode() {
 }
 
 async function loadMediaTimelineForActiveSource() {
-  if (!state.selectedProjectId || !state.activeSourceId) return;
+  if (!state.selectedProjectId || !state.activeSourceId) {
+    state.mediaTimeline = null;
+    state.workspaceEditingSyncLinkId = null;
+    return;
+  }
   const source = getActiveSource();
   if (!source || (source.kind !== 'audio' && source.kind !== 'video')) {
     state.mediaTimeline = null;
+    state.workspaceEditingSyncLinkId = null;
     return;
   }
   const env = await getJson(`${API_BASE}/media-timeline?projectId=${encodeURIComponent(state.selectedProjectId)}&sourceId=${encodeURIComponent(source.id)}`);
   state.mediaTimeline = env.data.timeline ?? null;
+  if (state.workspaceEditingSyncLinkId && !state.selectedTranscriptSyncLinks.some((link) => link.id === state.workspaceEditingSyncLinkId && link.mediaSourceId === source.id)) {
+    state.workspaceEditingSyncLinkId = null;
+  }
 }
 
 async function queueTranscriptionJob() {
@@ -6175,7 +6374,7 @@ function captureWorkspaceMediaTime(targetId) {
   input.value = Number(mediaEl.currentTime ?? 0).toFixed(1);
 }
 
-async function saveWorkspaceMediaSegment() {
+async function saveWorkspaceMediaSegmentLegacy() {
   if (!state.selectedProjectId) return;
   const source = getActiveSource();
   const activeCode = state.selectedCodes.find((code) => code.id === state.workspaceSelectedCodeId) ?? null;
@@ -6239,6 +6438,101 @@ async function saveWorkspaceMediaSegment() {
     if (statusEl) statusEl.textContent = transcriptSourceId
       ? 'Media segment saved, coded, and synced to the transcript.'
       : 'Media segment saved and coded.';
+  } catch (err) {
+    if (statusEl) statusEl.textContent = `Workspace error: ${err.message}`;
+  }
+}
+
+async function saveWorkspaceMediaSegment() {
+  if (!state.selectedProjectId) return;
+  const source = getActiveSource();
+  if (!source || (source.kind !== 'audio' && source.kind !== 'video')) {
+    window.alert('Choose an audio or video source first.');
+    return;
+  }
+
+  const editingLink = getEditingTranscriptSyncLink();
+  if (!editingLink && !state.workspaceSelectedCodeId) {
+    window.alert('Choose an active code first.');
+    return;
+  }
+
+  const startEl = document.getElementById('workspace-media-start');
+  const endEl = document.getElementById('workspace-media-end');
+  const textEl = document.getElementById('workspace-media-text');
+  const transcriptSourceEl = document.getElementById('workspace-transcript-source-id');
+  const statusEl = document.getElementById('workspace-status');
+  const startSeconds = Number(startEl?.value ?? 0);
+  const endSeconds = Number(endEl?.value ?? 0);
+  const transcript = textEl?.value.trim() ?? '';
+
+  if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || endSeconds <= startSeconds) {
+    window.alert('Enter a valid media range where end is greater than start.');
+    return;
+  }
+  if (!transcript) {
+    window.alert('Enter a transcript excerpt or media note for the saved segment.');
+    return;
+  }
+
+  if (statusEl) statusEl.textContent = editingLink ? 'Updating transcript sync link...' : 'Saving media segment...';
+
+  try {
+    const startMs = Math.round(startSeconds * 1000);
+    const endMs = Math.round(endSeconds * 1000);
+    const transcriptSourceId = transcriptSourceEl?.value?.trim() || '';
+
+    if (editingLink) {
+      const payload = {
+        projectId: state.selectedProjectId,
+        mediaSourceId: source.id,
+        segmentId: editingLink.segmentId,
+        startMs,
+        endMs,
+        transcriptText: transcript
+      };
+      if (transcriptSourceId) {
+        payload.transcriptSourceId = transcriptSourceId;
+      }
+      await putJson(`${API_BASE}/transcript-sync-links/${encodeURIComponent(editingLink.id)}`, payload);
+      state.workspaceEditingSyncLinkId = null;
+    } else {
+      const segment = await createAndCodeSegment({
+        sourceId: source.id,
+        kind: 'time_range',
+        anchor: {
+          kind: 'time_range',
+          startMs,
+          endMs
+        },
+        text: transcript
+      });
+      if (transcriptSourceId) {
+        await postJson(`${API_BASE}/transcript-sync-links`, {
+          projectId: state.selectedProjectId,
+          mediaSourceId: source.id,
+          transcriptSourceId,
+          segmentId: segment.id,
+          startMs,
+          endMs,
+          transcriptText: transcript
+        });
+      }
+      if (textEl) textEl.value = '';
+    }
+
+    await loadSelectedProjectData();
+    await loadMediaTimelineForActiveSource();
+    renderAll();
+    if (statusEl) {
+      if (editingLink) {
+        statusEl.textContent = 'Transcript sync link updated.';
+      } else {
+        statusEl.textContent = transcriptSourceEl?.value?.trim()
+          ? 'Media segment saved, coded, and synced to the transcript.'
+          : 'Media segment saved and coded.';
+      }
+    }
   } catch (err) {
     if (statusEl) statusEl.textContent = `Workspace error: ${err.message}`;
   }
@@ -6428,6 +6722,7 @@ function renderSourceWorkspace() {
   const segmentSourceEl = document.getElementById('segment-source-id');
   const codeInputEl = document.getElementById('ca-code-id');
   const caseInputEl = document.getElementById('ca-case-id');
+  const transcriptSourceInput = document.getElementById('workspace-transcript-source-id');
   if (segmentSourceEl) segmentSourceEl.value = state.activeSourceId ?? '';
   if (codeInputEl) codeInputEl.value = state.workspaceSelectedCodeId ?? '';
   if (caseInputEl) caseInputEl.value = state.workspaceSelectedCaseId ?? '';
@@ -6442,6 +6737,7 @@ function renderSourceWorkspace() {
     statusEl.textContent = 'Select a source to start coding.';
     mediaPanel.style.display = 'none';
     mediaPlayer.innerHTML = '';
+    state.workspaceEditingSyncLinkId = null;
     return;
   }
 
@@ -6451,8 +6747,17 @@ function renderSourceWorkspace() {
     mediaPlayer.innerHTML = source.kind === 'video'
       ? `<div class="media-shell"><video id="workspace-media-element" controls src="${escapeHtml(source.contentUrl)}"></video></div>`
       : `<div class="media-shell"><audio id="workspace-media-element" controls src="${escapeHtml(source.contentUrl)}"></audio></div>`;
+    if (transcriptSourceInput && !transcriptSourceInput.value.trim()) {
+      const linkedTranscriptId = state.selectedTranscriptSyncLinks.find((link) => link.mediaSourceId === source.id)?.transcriptSourceId
+        ?? state.transcriptionJobs.find((job) => job.mediaSourceId === source.id && job.outputSourceId)?.outputSourceId
+        ?? state.selectedSources.find((entry) => entry.kind === 'transcript' && entry.id !== source.id)?.id
+        ?? '';
+      transcriptSourceInput.value = linkedTranscriptId;
+    }
   } else {
     mediaPlayer.innerHTML = '';
+    state.workspaceEditingSyncLinkId = null;
+    if (transcriptSourceInput) transcriptSourceInput.value = '';
   }
 
   const items = getWorkspaceItems(source);
@@ -11838,6 +12143,7 @@ document.getElementById('run-sentiment-analysis-btn')?.addEventListener('click',
 document.getElementById('workspace-source-select')?.addEventListener('change', (event) => {
   state.activeSourceId = event.target.value || null;
   state.workspaceSelectedItemKey = null;
+  state.workspaceEditingSyncLinkId = null;
   const segmentSourceEl = document.getElementById('segment-source-id');
   if (segmentSourceEl) segmentSourceEl.value = state.activeSourceId ?? '';
   void loadMediaTimelineForActiveSource().then(() => {
@@ -11876,6 +12182,9 @@ document.getElementById('refresh-workspace-btn')?.addEventListener('click', asyn
 
 document.getElementById('workspace-save-media-segment-btn')?.addEventListener('click', async () => {
   await saveWorkspaceMediaSegment();
+});
+document.getElementById('workspace-cancel-sync-edit-btn')?.addEventListener('click', () => {
+  cancelTranscriptSyncEdit();
 });
 document.getElementById('workspace-refresh-media-timeline-btn')?.addEventListener('click', async () => {
   await loadMediaTimelineForActiveSource();
