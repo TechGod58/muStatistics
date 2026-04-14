@@ -31,7 +31,7 @@ import {
 } from '@mu/auth';
 import { buildEvidenceSummaryPrompt, scoreEvidenceCoverage } from '@mu/ai';
 import { buildCodeByCaseView, buildCodeClusters, buildCodeCodeMatrix, buildCodeCooccurrence, buildCodeHierarchy, buildCodingComparison, buildCompoundQuery, buildConceptMap, buildFrameworkMatrix, buildInterRaterSummary, buildMapVisualization, buildMatrixCoding, buildPatternAutocode, buildQualitativeQueryReport, buildSentimentAnalysis, buildTextSearch, buildWordCloud, buildWordFrequency, retrieveEvidence, buildEvidenceExport } from '@mu/qual-engine';
-import { analyzeBootstrap, analyzeClusterAnalysis, analyzeCompareMeans, analyzeComplexSamples, analyzeCorrelation, analyzeCrosstab, analyzeDecisionTree, analyzeExactTest, analyzeFactorAnalysis, analyzeForecast, analyzeGeneralLinearModel, analyzeMissingValues, analyzeNeuralNetwork, analyzeNonparametricComparison, analyzePairedTTest, analyzeRegression, analyzeReliability, analyzeRepeatedMeasures, analyzeSurvivalAnalysis, analyzeTTest, buildCaseDataset, buildCustomTable, buildImputationPlan, describeDataset, runSyntax, transformDataset } from '@mu/quant-engine';
+import { analyzeBootstrap, analyzeClusterAnalysis, analyzeCompareMeans, analyzeComplexSamples, analyzeCorrelation, analyzeCrosstab, analyzeDecisionTree, analyzeExactTest, analyzeFactorAnalysis, analyzeForecast, analyzeGeneralizedEstimatingEquation, analyzeGeneralLinearModel, analyzeMissingValues, analyzeMixedModel, analyzeNeuralNetwork, analyzeNonparametricComparison, analyzePairedTTest, analyzeRegression, analyzeReliability, analyzeRepeatedMeasures, analyzeSurvivalAnalysis, analyzeTTest, buildCaseDataset, buildCustomTable, buildImputationPlan, describeDataset, runSyntax, transformDataset } from '@mu/quant-engine';
 import { fail, ok } from '@mu/shared-types';
 import { deleteProjectArtifacts, ensureDirectory, listProjectArtifacts, pruneProjectArtifacts, readStoredArtifact, resolveStorageRoot, writeProjectArtifact, writeProjectArtifactBytes } from '@mu/storage';
 import { formatAuditActionLabel } from '@mu/ui';
@@ -6588,6 +6588,86 @@ server.post('/general-linear-model', async (request, reply) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to run GLM.';
+    return reply.status(400).send(fail('INVALID', message));
+  }
+});
+
+server.post('/mixed-model', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    filters: unknown[];
+    recodes: unknown[];
+    analysis: unknown;
+    dependentField: string;
+    predictorFields: string[];
+    groupField: string;
+  }>;
+  const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
+  const dependentField = typeof body.dependentField === 'string' && body.dependentField.trim() ? body.dependentField.trim() : undefined;
+  const groupField = typeof body.groupField === 'string' && body.groupField.trim() ? body.groupField.trim() : undefined;
+  const predictorFields = Array.isArray(body.predictorFields) ? body.predictorFields.map((field) => String(field ?? '').trim()).filter(Boolean) : [];
+  if (!projectId || !dependentField || !groupField || predictorFields.length === 0) {
+    return reply.status(400).send(fail('INVALID', 'projectId, dependentField, groupField, and at least one predictor field are required.'));
+  }
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+
+  try {
+    const analysis = parseDatasetAnalysisOptions(body.analysis);
+    const base = await buildProjectDatasetPayload(projectId);
+    const dataset = transformDataset(base.dataset, {
+      filters: parseDatasetFilters(body.filters),
+      recodes: parseDatasetRecodes(body.recodes),
+      analysis
+    });
+    return ok({
+      mixedModel: analyzeMixedModel(dataset, dependentField, predictorFields, groupField, analysis)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to run mixed model.';
+    return reply.status(400).send(fail('INVALID', message));
+  }
+});
+
+server.post('/gee-model', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    filters: unknown[];
+    recodes: unknown[];
+    analysis: unknown;
+    dependentField: string;
+    predictorFields: string[];
+    clusterField: string;
+    family: string;
+    correlation: string;
+  }>;
+  const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
+  const dependentField = typeof body.dependentField === 'string' && body.dependentField.trim() ? body.dependentField.trim() : undefined;
+  const clusterField = typeof body.clusterField === 'string' && body.clusterField.trim() ? body.clusterField.trim() : undefined;
+  const predictorFields = Array.isArray(body.predictorFields) ? body.predictorFields.map((field) => String(field ?? '').trim()).filter(Boolean) : [];
+  const family = body.family === 'binomial' ? 'binomial' : 'gaussian';
+  const correlation = body.correlation === 'exchangeable' ? 'exchangeable' : 'independence';
+  if (!projectId || !dependentField || !clusterField || predictorFields.length === 0) {
+    return reply.status(400).send(fail('INVALID', 'projectId, dependentField, clusterField, and at least one predictor field are required.'));
+  }
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+
+  try {
+    const analysis = parseDatasetAnalysisOptions(body.analysis);
+    const base = await buildProjectDatasetPayload(projectId);
+    const dataset = transformDataset(base.dataset, {
+      filters: parseDatasetFilters(body.filters),
+      recodes: parseDatasetRecodes(body.recodes),
+      analysis
+    });
+    return ok({
+      geeModel: analyzeGeneralizedEstimatingEquation(dataset, dependentField, predictorFields, clusterField, family, correlation, analysis)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to run GEE model.';
     return reply.status(400).send(fail('INVALID', message));
   }
 });

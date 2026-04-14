@@ -9,6 +9,8 @@ import {
   analyzeCorrelation,
   analyzeCrosstab,
   analyzeFactorAnalysis,
+  analyzeGeneralizedEstimatingEquation,
+  analyzeMixedModel,
   analyzeNonparametricComparison,
   analyzePairedTTest,
   analyzeRegression,
@@ -263,6 +265,77 @@ describe('buildCaseDataset', () => {
     expect(logistic.diagnostics?.maxCooksDistance).not.toBeNull();
     expect(Array.isArray(logistic.multicollinearity)).toBe(true);
     expect(Array.isArray(logistic.influenceSummary)).toBe(true);
+  });
+
+  it('supports random-intercept mixed models and cluster-robust GEE analysis', () => {
+    const dataset = {
+      caseCount: 10,
+      fields: [
+        { key: 'case_id', label: 'Case ID', source: 'system', valueType: 'string' },
+        { key: 'case_label', label: 'Case Label', source: 'system', valueType: 'string' },
+        { key: 'outcome', label: 'Outcome', source: 'attribute', valueType: 'number' },
+        { key: 'binary_outcome', label: 'Binary outcome', source: 'attribute', valueType: 'number' },
+        { key: 'predictor_one', label: 'Predictor one', source: 'attribute', valueType: 'number' },
+        { key: 'predictor_two', label: 'Predictor two', source: 'attribute', valueType: 'number' },
+        { key: 'site', label: 'Site', source: 'attribute', valueType: 'string' },
+        { key: 'case_weight', label: 'Case weight', source: 'attribute', valueType: 'number' }
+      ],
+      rows: [
+        { case_id: 'case-1', case_label: 'Case 1', outcome: 10, binary_outcome: 0, predictor_one: 1, predictor_two: 2, site: 'North', case_weight: 1 },
+        { case_id: 'case-2', case_label: 'Case 2', outcome: 12, binary_outcome: 0, predictor_one: 2, predictor_two: 1, site: 'North', case_weight: 1 },
+        { case_id: 'case-3', case_label: 'Case 3', outcome: 14, binary_outcome: 0, predictor_one: 3, predictor_two: 2, site: 'North', case_weight: 1 },
+        { case_id: 'case-4', case_label: 'Case 4', outcome: 18, binary_outcome: 1, predictor_one: 4, predictor_two: 3, site: 'South', case_weight: 1.2 },
+        { case_id: 'case-5', case_label: 'Case 5', outcome: 20, binary_outcome: 1, predictor_one: 5, predictor_two: 4, site: 'South', case_weight: 1.1 },
+        { case_id: 'case-6', case_label: 'Case 6', outcome: 22, binary_outcome: 1, predictor_one: 6, predictor_two: 5, site: 'South', case_weight: 1.1 },
+        { case_id: 'case-7', case_label: 'Case 7', outcome: 11, binary_outcome: 0, predictor_one: 1.5, predictor_two: 2.5, site: 'East', case_weight: 0.9 },
+        { case_id: 'case-8', case_label: 'Case 8', outcome: 13, binary_outcome: 0, predictor_one: 2.5, predictor_two: 3.5, site: 'East', case_weight: 0.9 },
+        { case_id: 'case-9', case_label: 'Case 9', outcome: 17, binary_outcome: 1, predictor_one: 3.5, predictor_two: 4.5, site: 'West', case_weight: 1 },
+        { case_id: 'case-10', case_label: 'Case 10', outcome: 19, binary_outcome: 1, predictor_one: 4.5, predictor_two: 5.5, site: 'West', case_weight: 1 }
+      ],
+      notes: []
+    } as const;
+
+    const mixedModel = analyzeMixedModel(
+      dataset,
+      'outcome',
+      ['predictor_one', 'predictor_two'],
+      'site',
+      { weightField: 'case_weight' }
+    );
+    expect(mixedModel.groupCount).toBe(4);
+    expect(mixedModel.coefficients.length).toBe(3);
+    expect(mixedModel.groupEffects.length).toBe(4);
+    expect(mixedModel.metrics.intraclassCorrelation).not.toBeNull();
+    expect(mixedModel.diagnostics.maxVif).not.toBeNull();
+
+    const geeGaussian = analyzeGeneralizedEstimatingEquation(
+      dataset,
+      'outcome',
+      ['predictor_one', 'predictor_two'],
+      'site',
+      'gaussian',
+      'exchangeable',
+      { weightField: 'case_weight' }
+    );
+    expect(geeGaussian.family).toBe('gaussian');
+    expect(geeGaussian.clusterCount).toBe(4);
+    expect(geeGaussian.coefficients.length).toBe(3);
+    expect(geeGaussian.metrics.workingCorrelation).not.toBeNull();
+    expect(geeGaussian.diagnostics.maxVif).not.toBeNull();
+
+    const geeBinomial = analyzeGeneralizedEstimatingEquation(
+      dataset,
+      'binary_outcome',
+      ['predictor_one', 'predictor_two'],
+      'site',
+      'binomial',
+      'independence',
+      { weightField: 'case_weight' }
+    );
+    expect(geeBinomial.family).toBe('binomial');
+    expect(geeBinomial.coefficients.length).toBe(3);
+    expect(geeBinomial.metrics.pseudoRSquared).not.toBeNull();
+    expect(geeBinomial.coefficients.some((item) => item.oddsRatio !== null)).toBe(true);
   });
 
   it('supports reliability analysis and factor analysis over complete numeric rows', () => {

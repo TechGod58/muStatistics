@@ -383,6 +383,98 @@ export type GeneralLinearModelResult = {
   notes: string[];
 };
 
+export type MixedModelCoefficient = RegressionCoefficient & {
+  label: string;
+  termType: 'intercept' | 'fixed';
+  termField?: string;
+};
+
+export type MixedModelGroupEffect = {
+  groupValue: string;
+  caseCount: number;
+  weightedCount: number;
+  randomIntercept: number;
+  standardError: number | null;
+};
+
+export type MixedModelResult = {
+  dependentField: string;
+  dependentLabel: string;
+  predictorFields: string[];
+  predictorLabels: string[];
+  groupField: string;
+  groupLabel: string;
+  caseCount: number;
+  groupCount: number;
+  coefficients: MixedModelCoefficient[];
+  groupEffects: MixedModelGroupEffect[];
+  metrics: {
+    weightedCaseCount: number;
+    betweenGroupVariance: number | null;
+    withinGroupVariance: number | null;
+    intraclassCorrelation: number | null;
+    residualStdError: number | null;
+    rSquaredMarginal: number | null;
+    rSquaredConditional: number | null;
+    logLikelihood: number | null;
+    aic: number | null;
+    bic: number | null;
+  };
+  assumptions: AssumptionCheck[];
+  diagnostics: Record<string, number | null>;
+  notes: string[];
+};
+
+export type GeeFamily = 'gaussian' | 'binomial';
+export type GeeCorrelationStructure = 'independence' | 'exchangeable';
+
+export type GeeCoefficient = RegressionCoefficient & {
+  label: string;
+  termType: 'intercept' | 'predictor';
+  termField?: string;
+  modelStandardError: number | null;
+  robustStandardError: number | null;
+};
+
+export type GeeObservation = {
+  caseId: string | null;
+  caseLabel: string | null;
+  clusterValue: string;
+  actual: number;
+  predicted: number;
+  residual: number;
+};
+
+export type GeeResult = {
+  dependentField: string;
+  dependentLabel: string;
+  predictorFields: string[];
+  predictorLabels: string[];
+  clusterField: string;
+  clusterLabel: string;
+  family: GeeFamily;
+  correlation: GeeCorrelationStructure;
+  caseCount: number;
+  clusterCount: number;
+  coefficients: GeeCoefficient[];
+  observations: GeeObservation[];
+  metrics: {
+    weightedCaseCount: number;
+    meanClusterSize: number;
+    minClusterSize: number;
+    maxClusterSize: number;
+    workingCorrelation: number | null;
+    quasiLikelihood: number | null;
+    rSquared: number | null;
+    pseudoRSquared: number | null;
+    modelStatistic: number | null;
+    modelPValue: number | null;
+  };
+  assumptions: AssumptionCheck[];
+  diagnostics: Record<string, number | null>;
+  notes: string[];
+};
+
 export type RepeatedMeasureSummary = {
   field: string;
   label: string;
@@ -1777,6 +1869,131 @@ function computeBreuschPagan(
   } catch {
     return { statistic: null, pValue: null, rSquared: null };
   }
+}
+
+function safeInvertMatrix(matrix: number[][]): number[][] | null {
+  try {
+    return invertMatrix(matrix);
+  } catch {
+    return null;
+  }
+}
+
+function computeClusterRobustCovariance(
+  inverseInformation: number[][],
+  designMatrix: number[][],
+  scoreResiduals: number[],
+  weights: number[],
+  clusterValues: string[]
+): number[][] {
+  const parameterCount = inverseInformation.length;
+  const clusterScores = new Map<string, number[]>();
+  for (let rowIndex = 0; rowIndex < designMatrix.length; rowIndex += 1) {
+    const vector = designMatrix[rowIndex]!;
+    const weight = weights[rowIndex] ?? 1;
+    const residual = scoreResiduals[rowIndex] ?? 0;
+    const cluster = clusterValues[rowIndex] ?? '__cluster__';
+    const score = clusterScores.get(cluster) ?? new Array<number>(parameterCount).fill(0);
+    for (let index = 0; index < parameterCount; index += 1) {
+      score[index] += vector[index]! * residual * weight;
+    }
+    clusterScores.set(cluster, score);
+  }
+
+  const meat = Array.from({ length: parameterCount }, () => Array.from({ length: parameterCount }, () => 0));
+  for (const score of clusterScores.values()) {
+    for (let rowIndex = 0; rowIndex < parameterCount; rowIndex += 1) {
+      for (let columnIndex = 0; columnIndex < parameterCount; columnIndex += 1) {
+        meat[rowIndex]![columnIndex] += score[rowIndex]! * score[columnIndex]!;
+      }
+    }
+  }
+  return multiplyMatrices(multiplyMatrices(inverseInformation, meat), inverseInformation);
+}
+
+function fitBinaryLogit(
+  designMatrix: number[][],
+  outcomes: number[],
+  weights: number[],
+  maxIterations = 60
+): { coefficients: number[]; probabilities: number[]; information: number[][] } {
+  const parameterCount = designMatrix[0]?.length ?? 0;
+  const coefficients = new Array<number>(parameterCount).fill(0);
+  let probabilities = new Array<number>(designMatrix.length).fill(0.5);
+  let information = Array.from({ length: parameterCount }, () => Array.from({ length: parameterCount }, () => 0));
+
+  for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+    probabilities = designMatrix.map((vector) => {
+      const linear = coefficients.reduce((total, coefficient, index) => total + (coefficient * vector[index]!), 0);
+      return 1 / (1 + Math.exp(-linear));
+    });
+    information = Array.from({ length: parameterCount }, () => Array.from({ length: parameterCount }, () => 0));
+    const score = new Array<number>(parameterCount).fill(0);
+    for (let rowIndex = 0; rowIndex < designMatrix.length; rowIndex += 1) {
+      const vector = designMatrix[rowIndex]!;
+      const probability = Math.min(0.999999, Math.max(0.000001, probabilities[rowIndex]!));
+      const variance = probability * (1 - probability) * (weights[rowIndex] ?? 1);
+      const residual = outcomes[rowIndex]! - probability;
+      for (let i = 0; i < parameterCount; i += 1) {
+        score[i] += vector[i]! * residual * (weights[rowIndex] ?? 1);
+        for (let j = 0; j < parameterCount; j += 1) {
+          information[i]![j] += vector[i]! * vector[j]! * variance;
+        }
+      }
+    }
+    const step = solveLinearSystem(information, score);
+    const maxDelta = step.reduce((max, value) => Math.max(max, Math.abs(value)), 0);
+    for (let index = 0; index < parameterCount; index += 1) {
+      coefficients[index] += step[index] ?? 0;
+    }
+    if (maxDelta < 1e-6) break;
+  }
+
+  probabilities = designMatrix.map((vector) => {
+    const linear = coefficients.reduce((total, coefficient, index) => total + (coefficient * vector[index]!), 0);
+    return 1 / (1 + Math.exp(-linear));
+  });
+  information = Array.from({ length: parameterCount }, () => Array.from({ length: parameterCount }, () => 0));
+  for (let rowIndex = 0; rowIndex < designMatrix.length; rowIndex += 1) {
+    const vector = designMatrix[rowIndex]!;
+    const probability = Math.min(0.999999, Math.max(0.000001, probabilities[rowIndex]!));
+    const variance = probability * (1 - probability) * (weights[rowIndex] ?? 1);
+    for (let i = 0; i < parameterCount; i += 1) {
+      for (let j = 0; j < parameterCount; j += 1) {
+        information[i]![j] += vector[i]! * vector[j]! * variance;
+      }
+    }
+  }
+
+  return { coefficients, probabilities, information };
+}
+
+function estimateExchangeableWorkingCorrelation(
+  pearsonResiduals: number[],
+  clusterValues: string[],
+  weights: number[]
+): number | null {
+  const grouped = new Map<string, Array<{ residual: number; weight: number }>>();
+  for (let index = 0; index < pearsonResiduals.length; index += 1) {
+    const cluster = clusterValues[index] ?? '__cluster__';
+    const bucket = grouped.get(cluster) ?? [];
+    bucket.push({ residual: pearsonResiduals[index] ?? 0, weight: weights[index] ?? 1 });
+    grouped.set(cluster, bucket);
+  }
+  let numerator = 0;
+  let denominator = 0;
+  for (const rows of grouped.values()) {
+    if (rows.length < 2) continue;
+    for (let left = 0; left < rows.length; left += 1) {
+      for (let right = left + 1; right < rows.length; right += 1) {
+        const pairWeight = Math.sqrt(Math.max(0, rows[left]!.weight * rows[right]!.weight));
+        numerator += pairWeight * rows[left]!.residual * rows[right]!.residual;
+        denominator += pairWeight;
+      }
+    }
+  }
+  if (!(denominator > 0)) return null;
+  return Math.max(-0.95, Math.min(0.95, numerator / denominator));
 }
 
 function varimaxObjective(loadings: number[][]): number {
@@ -3432,6 +3649,518 @@ export function analyzeGeneralLinearModel(
     notes: [
       'GLM/ANCOVA is a first-pass weighted least-squares implementation with categorical dummy coding.',
       'Use the coefficient table and omnibus F statistic as exploratory output until the full SPSS GLM workflow is expanded.'
+    ]
+  };
+}
+
+export function analyzeMixedModel(
+  dataset: CaseDataset,
+  dependentFieldKey: string,
+  predictorFields: string[],
+  groupFieldKey: string,
+  options?: DatasetAnalysisOptions
+): MixedModelResult {
+  const uniquePredictors = [...new Set(predictorFields.map((field) => field.trim()).filter(Boolean))]
+    .filter((field) => field !== dependentFieldKey && field !== groupFieldKey);
+  if (!groupFieldKey || !groupFieldKey.trim()) {
+    throw new Error('Mixed model requires a grouping field for random intercepts.');
+  }
+  if (uniquePredictors.length === 0) {
+    throw new Error('Mixed model requires at least one numeric fixed predictor.');
+  }
+
+  const dependentField = requireDatasetField(dataset, dependentFieldKey, 'mixed-model dependent');
+  const groupField = requireDatasetField(dataset, groupFieldKey, 'mixed-model grouping');
+  const predictorMeta = uniquePredictors.map((field) => requireDatasetField(dataset, field, 'mixed-model predictor'));
+  const rows = analysisRows(dataset, [dependentFieldKey, groupFieldKey, ...uniquePredictors], options)
+    .map(({ row, weight }) => ({
+      caseId: typeof row.case_id === 'string' ? row.case_id : null,
+      caseLabel: typeof row.case_label === 'string' ? row.case_label : null,
+      y: row[dependentFieldKey],
+      x: uniquePredictors.map((field) => row[field]),
+      groupValue: row[groupFieldKey],
+      weight
+    }))
+    .filter((entry): entry is {
+      caseId: string | null;
+      caseLabel: string | null;
+      y: number;
+      x: number[];
+      groupValue: Exclude<DatasetValue, null>;
+      weight: number;
+    } =>
+      typeof entry.y === 'number'
+      && entry.x.every((value) => typeof value === 'number')
+      && entry.groupValue !== null
+      && entry.weight > 0
+    );
+
+  const groupSet = new Set(rows.map((entry) => formatValue(entry.groupValue)));
+  if (rows.length <= uniquePredictors.length + 1) {
+    throw new Error('Mixed model requires more usable rows than fixed-effect parameters.');
+  }
+  if (groupSet.size < 2) {
+    throw new Error('Mixed model requires at least two observed groups.');
+  }
+
+  const designMatrix = rows.map((entry) => [1, ...entry.x]);
+  const outcomes = rows.map((entry) => entry.y);
+  const weights = rows.map((entry) => entry.weight);
+  const weightedCaseCount = weights.reduce((total, value) => total + value, 0);
+  const parameterCount = uniquePredictors.length + 1;
+  const xtwx = Array.from({ length: parameterCount }, () => Array.from({ length: parameterCount }, () => 0));
+  const xtwy = Array.from({ length: parameterCount }, () => 0);
+  for (let rowIndex = 0; rowIndex < designMatrix.length; rowIndex += 1) {
+    const vector = designMatrix[rowIndex]!;
+    const y = outcomes[rowIndex]!;
+    const weight = weights[rowIndex]!;
+    for (let i = 0; i < parameterCount; i += 1) {
+      xtwy[i] += vector[i]! * y * weight;
+      for (let j = 0; j < parameterCount; j += 1) {
+        xtwx[i]![j] += vector[i]! * vector[j]! * weight;
+      }
+    }
+  }
+
+  const coefficients = solveLinearSystem(xtwx, xtwy);
+  const fixedPredictions = designMatrix.map((vector) => coefficients.reduce((total, coefficient, index) => total + (coefficient * vector[index]!), 0));
+  const fixedResiduals = outcomes.map((value, index) => value - fixedPredictions[index]!);
+
+  const groupedResiduals = new Map<string, { caseCount: number; weightedCount: number; residuals: number[]; weights: number[] }>();
+  for (let index = 0; index < rows.length; index += 1) {
+    const key = formatValue(rows[index]!.groupValue);
+    const bucket = groupedResiduals.get(key) ?? { caseCount: 0, weightedCount: 0, residuals: [], weights: [] };
+    bucket.caseCount += 1;
+    bucket.weightedCount += weights[index]!;
+    bucket.residuals.push(fixedResiduals[index]!);
+    bucket.weights.push(weights[index]!);
+    groupedResiduals.set(key, bucket);
+  }
+
+  const randomInterceptByGroup = new Map<string, number>();
+  for (const [groupValue, bucket] of groupedResiduals.entries()) {
+    randomInterceptByGroup.set(groupValue, weightedMean(bucket.residuals, bucket.weights) ?? 0);
+  }
+  const mixedPredictions = rows.map((entry, index) => {
+    const groupValue = formatValue(entry.groupValue);
+    return fixedPredictions[index]! + (randomInterceptByGroup.get(groupValue) ?? 0);
+  });
+  const mixedResiduals = outcomes.map((value, index) => value - mixedPredictions[index]!);
+
+  const yMean = outcomes.reduce((total, value, index) => total + (value * weights[index]!), 0) / weightedCaseCount;
+  const ssTotal = outcomes.reduce((total, value, index) => total + (weights[index]! * ((value - yMean) ** 2)), 0);
+  const ssFixedResidual = outcomes.reduce((total, value, index) => total + (weights[index]! * ((value - fixedPredictions[index]!) ** 2)), 0);
+  const ssMixedResidual = outcomes.reduce((total, value, index) => total + (weights[index]! * ((value - mixedPredictions[index]!) ** 2)), 0);
+
+  const groupEffectValues = [...groupedResiduals.entries()].map(([groupValue, bucket]) => ({
+    groupValue,
+    weightedCount: bucket.weightedCount,
+    randomIntercept: randomInterceptByGroup.get(groupValue) ?? 0,
+    caseCount: bucket.caseCount
+  }));
+  const betweenGroupVariance = weightedVariance(
+    groupEffectValues.map((item) => item.randomIntercept),
+    groupEffectValues.map((item) => item.weightedCount)
+  );
+  const withinGroupVariance = weightedVariance(mixedResiduals, weights);
+  const totalVariance = (betweenGroupVariance ?? 0) + (withinGroupVariance ?? 0);
+  const intraclassCorrelation = totalVariance > 0 ? (betweenGroupVariance ?? 0) / totalVariance : null;
+  const rSquaredMarginal = ssTotal === 0 ? 1 : 1 - (ssFixedResidual / ssTotal);
+  const rSquaredConditional = ssTotal === 0 ? 1 : 1 - (ssMixedResidual / ssTotal);
+  const residualStdError = withinGroupVariance === null ? null : Math.sqrt(Math.max(0, withinGroupVariance));
+  const sigmaSquared = weightedCaseCount > 0 ? ssMixedResidual / weightedCaseCount : null;
+  const logLikelihood = sigmaSquared && sigmaSquared > 0
+    ? -0.5 * weightedCaseCount * (Math.log(2 * Math.PI * sigmaSquared) + 1)
+    : null;
+  const informationInverse = safeInvertMatrix(xtwx);
+  const degreesOfFreedom = Math.max(1, rows.length - parameterCount);
+  const coefficientTable: MixedModelCoefficient[] = coefficients.map((coefficient, index) => {
+    const modelVariance = informationInverse && withinGroupVariance !== null
+      ? Math.max(0, informationInverse[index]![index]! * withinGroupVariance)
+      : null;
+    const standardError = modelVariance === null ? null : Math.sqrt(modelVariance);
+    const statistic = standardError && standardError > 0 ? coefficient / standardError : null;
+    return {
+      field: index === 0 ? '(Intercept)' : uniquePredictors[index - 1]!,
+      label: index === 0 ? 'Intercept' : predictorMeta[index - 1]!.label,
+      termType: index === 0 ? 'intercept' : 'fixed',
+      termField: index === 0 ? undefined : uniquePredictors[index - 1]!,
+      coefficient,
+      standardError,
+      statistic,
+      pValue: statistic === null ? null : studentTPValue(statistic, degreesOfFreedom),
+      confidenceInterval: standardError === null ? null : confidenceInterval95(coefficient, standardError, degreesOfFreedom),
+      oddsRatio: null
+    };
+  });
+
+  const groupEffects: MixedModelGroupEffect[] = groupEffectValues
+    .map((item) => ({
+      groupValue: item.groupValue,
+      caseCount: item.caseCount,
+      weightedCount: item.weightedCount,
+      randomIntercept: item.randomIntercept,
+      standardError: withinGroupVariance === null || item.weightedCount <= 0
+        ? null
+        : Math.sqrt(Math.max(0, withinGroupVariance / item.weightedCount))
+    }))
+    .sort((left, right) => right.weightedCount - left.weightedCount || left.groupValue.localeCompare(right.groupValue));
+
+  const vifByPredictor = computeVifByPredictor(rows.map((entry) => ({ x: entry.x, weight: entry.weight })), uniquePredictors);
+  const vifValues = Object.values(vifByPredictor).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  const maxVif = vifValues.length > 0 ? Math.max(...vifValues) : null;
+  const maxPredictorCorrelation = computeMaxPredictorCorrelation(rows.map((entry) => ({ x: entry.x, weight: entry.weight })));
+
+  return {
+    dependentField: dependentField.key,
+    dependentLabel: dependentField.label,
+    predictorFields: uniquePredictors,
+    predictorLabels: predictorMeta.map((item) => item.label),
+    groupField: groupField.key,
+    groupLabel: groupField.label,
+    caseCount: rows.length,
+    groupCount: groupSet.size,
+    coefficients: coefficientTable,
+    groupEffects: groupEffects.slice(0, 120),
+    metrics: {
+      weightedCaseCount,
+      betweenGroupVariance,
+      withinGroupVariance,
+      intraclassCorrelation,
+      residualStdError,
+      rSquaredMarginal,
+      rSquaredConditional,
+      logLikelihood,
+      aic: logLikelihood === null ? null : (2 * (parameterCount + 1)) - (2 * logLikelihood),
+      bic: logLikelihood === null ? null : ((Math.log(Math.max(2, rows.length)) * (parameterCount + 1)) - (2 * logLikelihood))
+    },
+    assumptions: [
+      buildAssumptionCheck(
+        'group_count',
+        'Observed groups',
+        groupSet.size >= 2 ? 'pass' : 'fail',
+        groupSet.size,
+        groupSet.size >= 2 ? 'At least two groups are present.' : 'Mixed model needs at least two groups.'
+      ),
+      buildAssumptionCheck(
+        'mean_cluster_size',
+        'Mean cluster size',
+        (rows.length / groupSet.size) >= 3 ? 'pass' : 'warn',
+        rows.length / groupSet.size,
+        (rows.length / groupSet.size) >= 3 ? 'Average group size is acceptable.' : 'Average group size is small; random effects may be unstable.'
+      ),
+      buildAssumptionCheck(
+        'multicollinearity',
+        'Multicollinearity (max VIF)',
+        maxVif === null ? 'warn' : maxVif <= 5 ? 'pass' : maxVif <= 10 ? 'warn' : 'fail',
+        maxVif,
+        maxVif === null
+          ? 'VIF could not be computed for all predictors.'
+          : maxVif <= 5
+            ? 'Fixed predictors are within typical collinearity bounds.'
+            : maxVif <= 10
+              ? 'Moderate collinearity detected among fixed predictors.'
+              : 'High collinearity detected among fixed predictors.'
+      )
+    ],
+    diagnostics: {
+      weightedCaseCount,
+      maxVif,
+      meanVif: vifValues.length > 0 ? vifValues.reduce((total, value) => total + value, 0) / vifValues.length : null,
+      maxPredictorCorrelation,
+      fixedResidualSumSquares: ssFixedResidual,
+      mixedResidualSumSquares: ssMixedResidual
+    },
+    notes: [
+      'Mixed model currently supports a random-intercept structure (group-level intercept shifts).',
+      'Fixed effects are fit with weighted least squares, then group random intercepts are estimated from residual means.',
+      'Use this as exploratory output while full REML/mixed-effects parity is still being expanded.'
+    ]
+  };
+}
+
+export function analyzeGeneralizedEstimatingEquation(
+  dataset: CaseDataset,
+  dependentFieldKey: string,
+  predictorFields: string[],
+  clusterFieldKey: string,
+  family: GeeFamily = 'gaussian',
+  correlation: GeeCorrelationStructure = 'independence',
+  options?: DatasetAnalysisOptions
+): GeeResult {
+  const uniquePredictors = [...new Set(predictorFields.map((field) => field.trim()).filter(Boolean))]
+    .filter((field) => field !== dependentFieldKey && field !== clusterFieldKey);
+  if (!clusterFieldKey || !clusterFieldKey.trim()) {
+    throw new Error('GEE requires a cluster field.');
+  }
+  if (uniquePredictors.length === 0) {
+    throw new Error('GEE requires at least one numeric predictor.');
+  }
+  const dependentField = requireDatasetField(dataset, dependentFieldKey, 'GEE dependent');
+  const clusterField = requireDatasetField(dataset, clusterFieldKey, 'GEE cluster');
+  const predictorMeta = uniquePredictors.map((field) => requireDatasetField(dataset, field, 'GEE predictor'));
+  const normalizeBinary = (value: DatasetValue): number | null => {
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value)) return null;
+      return value >= 0.5 ? 1 : 0;
+    }
+    if (typeof value === 'boolean') return value ? 1 : 0;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['1', 'true', 'yes', 'y', 'event', 'success', 'positive'].includes(normalized)) return 1;
+      if (['0', 'false', 'no', 'n', 'none', 'failure', 'negative'].includes(normalized)) return 0;
+    }
+    return null;
+  };
+
+  const rows = analysisRows(dataset, [dependentFieldKey, clusterFieldKey, ...uniquePredictors], options)
+    .map(({ row, weight }) => ({
+      caseId: typeof row.case_id === 'string' ? row.case_id : null,
+      caseLabel: typeof row.case_label === 'string' ? row.case_label : null,
+      yRaw: row[dependentFieldKey],
+      x: uniquePredictors.map((field) => row[field]),
+      clusterValue: row[clusterFieldKey],
+      weight
+    }))
+    .filter((entry): entry is {
+      caseId: string | null;
+      caseLabel: string | null;
+      yRaw: DatasetValue;
+      x: number[];
+      clusterValue: Exclude<DatasetValue, null>;
+      weight: number;
+    } =>
+      entry.x.every((value) => typeof value === 'number')
+      && entry.clusterValue !== null
+      && entry.weight > 0
+      && (family === 'gaussian' ? typeof entry.yRaw === 'number' : normalizeBinary(entry.yRaw) !== null)
+    );
+
+  const parameterCount = uniquePredictors.length + 1;
+  if (rows.length <= parameterCount) {
+    throw new Error('GEE requires more usable rows than model parameters.');
+  }
+
+  const designMatrix = rows.map((entry) => [1, ...entry.x]);
+  const outcomes = rows.map((entry) => family === 'gaussian' ? Number(entry.yRaw) : (normalizeBinary(entry.yRaw) ?? 0));
+  const weights = rows.map((entry) => entry.weight);
+  const clusterValues = rows.map((entry) => formatValue(entry.clusterValue));
+  const weightedCaseCount = weights.reduce((total, value) => total + value, 0);
+  const clusterCounts = new Map<string, number>();
+  for (const cluster of clusterValues) {
+    clusterCounts.set(cluster, (clusterCounts.get(cluster) ?? 0) + 1);
+  }
+  const clusterSizeValues = [...clusterCounts.values()];
+  const clusterCount = clusterCounts.size;
+  if (clusterCount < 2) {
+    throw new Error('GEE requires at least two observed clusters.');
+  }
+
+  let coefficients: number[] = [];
+  let predicted: number[] = [];
+  let scoreResiduals: number[] = [];
+  let information: number[][] = Array.from({ length: parameterCount }, () => Array.from({ length: parameterCount }, () => 0));
+  let modelCovariance: number[][] = Array.from({ length: parameterCount }, () => Array.from({ length: parameterCount }, () => 0));
+  let quasiLikelihood: number | null = null;
+  let rSquared: number | null = null;
+  let pseudoRSquared: number | null = null;
+  let modelStatistic: number | null = null;
+  let modelPValue: number | null = null;
+
+  if (family === 'gaussian') {
+    const xtwx = Array.from({ length: parameterCount }, () => Array.from({ length: parameterCount }, () => 0));
+    const xtwy = Array.from({ length: parameterCount }, () => 0);
+    for (let rowIndex = 0; rowIndex < designMatrix.length; rowIndex += 1) {
+      const vector = designMatrix[rowIndex]!;
+      const y = outcomes[rowIndex]!;
+      const weight = weights[rowIndex]!;
+      for (let i = 0; i < parameterCount; i += 1) {
+        xtwy[i] += vector[i]! * y * weight;
+        for (let j = 0; j < parameterCount; j += 1) {
+          xtwx[i]![j] += vector[i]! * vector[j]! * weight;
+        }
+      }
+    }
+    coefficients = solveLinearSystem(xtwx, xtwy);
+    predicted = designMatrix.map((vector) => coefficients.reduce((total, coefficient, index) => total + (coefficient * vector[index]!), 0));
+    scoreResiduals = outcomes.map((value, index) => value - predicted[index]!);
+    information = xtwx;
+    const inverseInformation = safeInvertMatrix(information);
+    if (!inverseInformation) {
+      throw new Error('Unable to invert GEE information matrix for gaussian family.');
+    }
+    const residualSumSquares = outcomes.reduce((total, value, index) => total + (weights[index]! * ((value - predicted[index]!) ** 2)), 0);
+    const modelScale = residualSumSquares / Math.max(1, rows.length - parameterCount);
+    modelCovariance = inverseInformation.map((row) => row.map((value) => value * modelScale));
+    quasiLikelihood = -0.5 * residualSumSquares;
+    const yMean = outcomes.reduce((total, value, index) => total + (value * weights[index]!), 0) / weightedCaseCount;
+    const ssTotal = outcomes.reduce((total, value, index) => total + (weights[index]! * ((value - yMean) ** 2)), 0);
+    rSquared = ssTotal === 0 ? 1 : 1 - (residualSumSquares / ssTotal);
+    const dfModel = Math.max(1, parameterCount - 1);
+    const dfResidual = Math.max(1, rows.length - parameterCount);
+    const msModel = Math.max(0, ssTotal - residualSumSquares) / dfModel;
+    const msResidual = residualSumSquares / dfResidual;
+    modelStatistic = msResidual > 0 ? msModel / msResidual : null;
+    modelPValue = modelStatistic === null ? null : fDistributionPValue(modelStatistic, dfModel, dfResidual);
+  } else {
+    const fitted = fitBinaryLogit(designMatrix, outcomes, weights);
+    coefficients = fitted.coefficients;
+    predicted = fitted.probabilities.map((value) => Math.min(0.999999, Math.max(0.000001, value)));
+    information = fitted.information;
+    scoreResiduals = outcomes.map((value, index) => value - predicted[index]!);
+    const inverseInformation = safeInvertMatrix(information);
+    if (!inverseInformation) {
+      throw new Error('Unable to invert GEE information matrix for binomial family.');
+    }
+    modelCovariance = inverseInformation;
+    const logLikelihood = outcomes.reduce((total, value, index) =>
+      total + (weights[index]! * ((value * Math.log(predicted[index]!)) + ((1 - value) * Math.log(1 - predicted[index]!)))), 0);
+    quasiLikelihood = logLikelihood;
+    const meanY = outcomes.reduce((total, value, index) => total + (value * weights[index]!), 0) / weightedCaseCount;
+    const boundedMeanY = Math.min(0.999999, Math.max(0.000001, meanY));
+    const nullLogLikelihood = outcomes.reduce((total, value, index) =>
+      total + (weights[index]! * ((value * Math.log(boundedMeanY)) + ((1 - value) * Math.log(1 - boundedMeanY)))), 0);
+    pseudoRSquared = nullLogLikelihood === 0 ? null : 1 - (logLikelihood / nullLogLikelihood);
+    modelStatistic = -2 * (nullLogLikelihood - logLikelihood);
+    modelPValue = modelStatistic === null ? null : chiSquarePValue(modelStatistic, Math.max(1, parameterCount - 1));
+  }
+
+  const inverseInformation = safeInvertMatrix(information);
+  if (!inverseInformation) {
+    throw new Error('Unable to invert GEE information matrix.');
+  }
+  const robustCovariance = computeClusterRobustCovariance(inverseInformation, designMatrix, scoreResiduals, weights, clusterValues);
+  const robustSe = robustCovariance.map((row, index) => {
+    const variance = row[index] ?? null;
+    return variance !== null && variance >= 0 ? Math.sqrt(variance) : null;
+  });
+  const modelSe = modelCovariance.map((row, index) => {
+    const variance = row[index] ?? null;
+    return variance !== null && variance >= 0 ? Math.sqrt(variance) : null;
+  });
+  const coefficientTable: GeeCoefficient[] = coefficients.map((coefficient, index) => {
+    const robustStandardError = robustSe[index] ?? null;
+    const modelStandardError = modelSe[index] ?? null;
+    const standardError = (robustStandardError && Number.isFinite(robustStandardError) && robustStandardError > 0)
+      ? robustStandardError
+      : modelStandardError;
+    const statistic = standardError && standardError > 0 ? coefficient / standardError : null;
+    return {
+      field: index === 0 ? '(Intercept)' : uniquePredictors[index - 1]!,
+      label: index === 0 ? 'Intercept' : predictorMeta[index - 1]!.label,
+      termType: index === 0 ? 'intercept' : 'predictor',
+      termField: index === 0 ? undefined : uniquePredictors[index - 1]!,
+      coefficient,
+      standardError,
+      modelStandardError,
+      robustStandardError,
+      statistic,
+      pValue: statistic === null ? null : normalTwoSidedPValue(statistic),
+      confidenceInterval: standardError === null ? null : {
+        level: 0.95,
+        lower: coefficient - (1.959963984540054 * standardError),
+        upper: coefficient + (1.959963984540054 * standardError)
+      },
+      oddsRatio: family === 'binomial' ? Math.exp(coefficient) : null
+    };
+  });
+
+  const pearsonResiduals = predicted.map((probability, index) => {
+    if (family === 'gaussian') {
+      const scale = modelSe[0] && modelSe[0]! > 0 ? modelSe[0]! : 1;
+      return scoreResiduals[index]! / Math.max(1e-12, scale);
+    }
+    const denominator = Math.sqrt(Math.max(1e-12, probability * (1 - probability)));
+    return scoreResiduals[index]! / denominator;
+  });
+  const workingCorrelation = correlation === 'exchangeable'
+    ? estimateExchangeableWorkingCorrelation(pearsonResiduals, clusterValues, weights)
+    : null;
+
+  const vifByPredictor = computeVifByPredictor(rows.map((entry) => ({ x: entry.x, weight: entry.weight })), uniquePredictors);
+  const vifValues = Object.values(vifByPredictor).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  const maxVif = vifValues.length > 0 ? Math.max(...vifValues) : null;
+  const maxPredictorCorrelation = computeMaxPredictorCorrelation(rows.map((entry) => ({ x: entry.x, weight: entry.weight })));
+
+  return {
+    dependentField: dependentField.key,
+    dependentLabel: dependentField.label,
+    predictorFields: uniquePredictors,
+    predictorLabels: predictorMeta.map((item) => item.label),
+    clusterField: clusterField.key,
+    clusterLabel: clusterField.label,
+    family,
+    correlation,
+    caseCount: rows.length,
+    clusterCount,
+    coefficients: coefficientTable,
+    observations: rows.slice(0, 50).map((entry, index) => ({
+      caseId: entry.caseId,
+      caseLabel: entry.caseLabel,
+      clusterValue: clusterValues[index]!,
+      actual: outcomes[index]!,
+      predicted: predicted[index]!,
+      residual: scoreResiduals[index]!
+    })),
+    metrics: {
+      weightedCaseCount,
+      meanClusterSize: rows.length / clusterCount,
+      minClusterSize: Math.min(...clusterSizeValues),
+      maxClusterSize: Math.max(...clusterSizeValues),
+      workingCorrelation,
+      quasiLikelihood,
+      rSquared,
+      pseudoRSquared,
+      modelStatistic,
+      modelPValue
+    },
+    assumptions: [
+      buildAssumptionCheck(
+        'cluster_count',
+        'Observed clusters',
+        clusterCount >= 2 ? 'pass' : 'fail',
+        clusterCount,
+        clusterCount >= 2 ? 'At least two clusters are present.' : 'GEE requires at least two clusters.'
+      ),
+      buildAssumptionCheck(
+        'mean_cluster_size',
+        'Mean cluster size',
+        (rows.length / clusterCount) >= 3 ? 'pass' : 'warn',
+        rows.length / clusterCount,
+        (rows.length / clusterCount) >= 3 ? 'Average cluster size is acceptable.' : 'Average cluster size is small for stable robust covariance.'
+      ),
+      buildAssumptionCheck(
+        'multicollinearity',
+        'Multicollinearity (max VIF)',
+        maxVif === null ? 'warn' : maxVif <= 5 ? 'pass' : maxVif <= 10 ? 'warn' : 'fail',
+        maxVif,
+        maxVif === null
+          ? 'VIF could not be computed for all predictors.'
+          : maxVif <= 5
+            ? 'Predictors are within typical collinearity bounds.'
+            : maxVif <= 10
+              ? 'Moderate collinearity detected.'
+              : 'High collinearity detected.'
+      )
+    ],
+    diagnostics: {
+      weightedCaseCount,
+      maxVif,
+      meanVif: vifValues.length > 0 ? vifValues.reduce((total, value) => total + value, 0) / vifValues.length : null,
+      maxPredictorCorrelation,
+      workingCorrelation,
+      minClusterSize: Math.min(...clusterSizeValues),
+      maxClusterSize: Math.max(...clusterSizeValues),
+      meanClusterSize: rows.length / clusterCount
+    },
+    notes: [
+      'GEE uses cluster-robust (sandwich) covariance with first-pass working correlation support.',
+      family === 'binomial'
+        ? 'Binomial GEE currently supports a logit link with binary outcomes and robust standard errors.'
+        : 'Gaussian GEE currently supports identity link with robust standard errors.',
+      correlation === 'exchangeable'
+        ? 'Exchangeable working correlation is currently summarized as a scalar estimate.'
+        : 'Independence working correlation is used for estimating equations.'
     ]
   };
 }

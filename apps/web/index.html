@@ -1292,6 +1292,8 @@
           <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="cluster">Cluster</button>
           <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="tree">Decision tree</button>
           <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="glm">GLM/ANCOVA</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="mixed">Mixed model</button>
+          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="gee">GEE</button>
           <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="repeated">Repeated measures</button>
           <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="survival">Survival</button>
           <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="complex">Complex samples</button>
@@ -1330,6 +1332,8 @@
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="cluster-analysis">Cluster analysis</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="decision-tree">Decision tree</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="general-linear-model">GLM/ANCOVA</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="mixed-model">Mixed model</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="gee-model">GEE</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="repeated-measures">Repeated measures</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="survival-analysis">Survival analysis</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="complex-samples">Complex samples</button>
@@ -1466,6 +1470,12 @@
             </section>
             <section class="quant-output-panel" data-quant-output="general-linear-model" hidden>
               <div id="general-linear-model-result">Choose a dependent variable plus factors/covariates, then run GLM.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="mixed-model" hidden>
+              <div id="mixed-model-result">Choose a dependent variable, predictors, and grouping field, then run mixed model.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="gee-model" hidden>
+              <div id="gee-model-result">Choose a dependent variable, predictors, and cluster field, then run GEE.</div>
             </section>
             <section class="quant-output-panel" data-quant-output="repeated-measures" hidden>
               <div id="repeated-measures-result">Choose repeated numeric measure fields, then run repeated measures.</div>
@@ -2446,6 +2456,70 @@
               </label>
             </div>
             <div class="small-muted" style="margin-top:16px">Factors are dummy-coded with a baseline level. Results open in the Output Viewer.</div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="mixed">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Mixed model (random intercept)</h2>
+                <p class="small-muted" style="margin:0">Fit fixed predictors with group-level random intercept adjustments.</p>
+              </div>
+              <button id="run-mixed-model-btn" type="button" class="small">Run mixed model</button>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Dependent field</span>
+                <select id="mixed-dependent-field"></select>
+              </label>
+              <label class="field">
+                <span>Fixed predictors</span>
+                <select id="mixed-predictor-fields" multiple size="8"></select>
+              </label>
+              <label class="field">
+                <span>Grouping field</span>
+                <select id="mixed-group-field"></select>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Current implementation supports random intercepts. Results open in the Output Viewer.</div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="gee">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Generalized estimating equations (GEE)</h2>
+                <p class="small-muted" style="margin:0">Run cluster-aware gaussian or binomial models with robust covariance.</p>
+              </div>
+              <button id="run-gee-model-btn" type="button" class="small">Run GEE</button>
+            </div>
+            <div class="grid grid-4 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Dependent field</span>
+                <select id="gee-dependent-field"></select>
+              </label>
+              <label class="field">
+                <span>Numeric predictors</span>
+                <select id="gee-predictor-fields" multiple size="8"></select>
+              </label>
+              <label class="field">
+                <span>Cluster field</span>
+                <select id="gee-cluster-field"></select>
+              </label>
+              <label class="field">
+                <span>Family</span>
+                <select id="gee-family">
+                  <option value="gaussian" selected>gaussian</option>
+                  <option value="binomial">binomial</option>
+                </select>
+              </label>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Working correlation</span>
+                <select id="gee-correlation">
+                  <option value="independence" selected>independence</option>
+                  <option value="exchangeable">exchangeable</option>
+                </select>
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:16px">Binomial family expects a binary dependent outcome. Results open in the Output Viewer.</div>
           </article>
           <article class="panel" data-quant-parent="model" data-quant-subsection="repeated">
             <div class="section-header">

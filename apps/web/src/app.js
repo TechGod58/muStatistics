@@ -120,6 +120,8 @@ const state = {
   clusterAnalysisResult: null,
   decisionTreeResult: null,
   generalLinearModelResult: null,
+  mixedModelResult: null,
+  geeModelResult: null,
   repeatedMeasuresResult: null,
   survivalAnalysisResult: null,
   complexSamplesResult: null,
@@ -600,6 +602,8 @@ function getAvailableQuantOutputPages() {
     { view: 'cluster-analysis', title: 'Cluster analysis', ready: Boolean(state.clusterAnalysisResult) },
     { view: 'decision-tree', title: 'Decision tree', ready: Boolean(state.decisionTreeResult) },
     { view: 'general-linear-model', title: 'GLM/ANCOVA', ready: Boolean(state.generalLinearModelResult) },
+    { view: 'mixed-model', title: 'Mixed model', ready: Boolean(state.mixedModelResult) },
+    { view: 'gee-model', title: 'GEE model', ready: Boolean(state.geeModelResult) },
     { view: 'repeated-measures', title: 'Repeated measures', ready: Boolean(state.repeatedMeasuresResult) },
     { view: 'survival-analysis', title: 'Survival analysis', ready: Boolean(state.survivalAnalysisResult) },
     { view: 'complex-samples', title: 'Complex samples', ready: Boolean(state.complexSamplesResult) },
@@ -893,6 +897,8 @@ function mapAnalysisKindToOutputView(kind) {
     case 'cluster_analysis': return 'cluster-analysis';
     case 'decision_tree': return 'decision-tree';
     case 'general_linear_model': return 'general-linear-model';
+    case 'mixed_model': return 'mixed-model';
+    case 'gee_model': return 'gee-model';
     case 'repeated_measures': return 'repeated-measures';
     case 'survival_analysis': return 'survival-analysis';
     case 'complex_samples': return 'complex-samples';
@@ -994,6 +1000,16 @@ function describeQuantAnalysis(analysisKind, analysis = {}) {
         title: 'GLM/ANCOVA',
         detail: `${analysis.dependentField ?? 'dependent'} by ${(analysis.factorFields ?? []).join(', ') || 'factors'} ${(analysis.covariateFields ?? []).join(', ') || ''}`.trim()
       };
+    case 'mixed_model':
+      return {
+        title: 'Mixed model',
+        detail: `${analysis.dependentField ?? 'dependent'} ~ ${(analysis.predictorFields ?? []).join(', ') || 'predictors'} | ${analysis.groupField ?? 'group'}`
+      };
+    case 'gee_model':
+      return {
+        title: 'GEE model',
+        detail: `${analysis.dependentField ?? 'dependent'} ~ ${(analysis.predictorFields ?? []).join(', ') || 'predictors'} clustered by ${analysis.clusterField ?? 'cluster'}`
+      };
     case 'repeated_measures':
       return {
         title: 'Repeated measures',
@@ -1065,6 +1081,8 @@ function quantOutputTitle(view) {
     'cluster-analysis': 'Cluster analysis',
     'decision-tree': 'Decision tree',
     'general-linear-model': 'GLM/ANCOVA',
+    'mixed-model': 'Mixed model',
+    'gee-model': 'GEE model',
     'repeated-measures': 'Repeated measures',
     'survival-analysis': 'Survival analysis',
     'complex-samples': 'Complex samples',
@@ -1096,6 +1114,8 @@ function getAllCompiledReportViews() {
     'cluster-analysis',
     'decision-tree',
     'general-linear-model',
+    'mixed-model',
+    'gee-model',
     'repeated-measures',
     'survival-analysis',
     'complex-samples',
@@ -1124,6 +1144,8 @@ function getDefaultCommitteePackViews() {
     'cluster-analysis',
     'decision-tree',
     'general-linear-model',
+    'mixed-model',
+    'gee-model',
     'repeated-measures',
     'survival-analysis',
     'complex-samples',
@@ -2236,6 +2258,8 @@ async function loadSelectedProjectData() {
   state.clusterAnalysisResult = null;
   state.decisionTreeResult = null;
   state.generalLinearModelResult = null;
+  state.mixedModelResult = null;
+  state.geeModelResult = null;
   state.repeatedMeasuresResult = null;
   state.survivalAnalysisResult = null;
   state.complexSamplesResult = null;
@@ -2377,6 +2401,8 @@ function formatAnalysisKindLabel(kind) {
     case 'cluster_analysis': return 'cluster analysis';
     case 'decision_tree': return 'decision tree';
     case 'general_linear_model': return 'GLM/ANCOVA';
+    case 'mixed_model': return 'mixed model';
+    case 'gee_model': return 'GEE model';
     case 'repeated_measures': return 'repeated measures';
     case 'survival_analysis': return 'survival analysis';
     case 'complex_samples': return 'complex samples';
@@ -2687,6 +2713,34 @@ async function runSavedAnalysisJob(savedJob) {
         covariateFields: Array.isArray(analysis.covariateFields) ? analysis.covariateFields : []
       });
       state.generalLinearModelResult = env.data.generalLinearModel;
+      break;
+    }
+    case 'mixed_model': {
+      const env = await postJson(`${API_BASE}/mixed-model`, {
+        projectId: state.selectedProjectId,
+        filters: state.selectedDatasetFilters,
+        recodes: state.selectedDatasetRecodes,
+        analysis: getAnalysisOptionsPayload(),
+        dependentField: analysis.dependentField,
+        predictorFields: Array.isArray(analysis.predictorFields) ? analysis.predictorFields : [],
+        groupField: analysis.groupField
+      });
+      state.mixedModelResult = env.data.mixedModel;
+      break;
+    }
+    case 'gee_model': {
+      const env = await postJson(`${API_BASE}/gee-model`, {
+        projectId: state.selectedProjectId,
+        filters: state.selectedDatasetFilters,
+        recodes: state.selectedDatasetRecodes,
+        analysis: getAnalysisOptionsPayload(),
+        dependentField: analysis.dependentField,
+        predictorFields: Array.isArray(analysis.predictorFields) ? analysis.predictorFields : [],
+        clusterField: analysis.clusterField,
+        family: analysis.family,
+        correlation: analysis.correlation
+      });
+      state.geeModelResult = env.data.geeModel;
       break;
     }
     case 'repeated_measures': {
@@ -8678,6 +8732,228 @@ function renderGeneralLinearModel() {
   });
 }
 
+function renderMixedModel() {
+  const dependentEl = document.getElementById('mixed-dependent-field');
+  const predictorsEl = document.getElementById('mixed-predictor-fields');
+  const groupEl = document.getElementById('mixed-group-field');
+  const runBtn = document.getElementById('run-mixed-model-btn');
+  const resultEl = document.getElementById('mixed-model-result');
+  if (!dependentEl || !predictorsEl || !groupEl || !runBtn || !resultEl) return;
+
+  const options = getDatasetAnalysisFieldOptions();
+  const numericOptions = options.filter((option) => option.valueType === 'number');
+  const previousDependent = dependentEl.value;
+  const previousPredictors = getSelectedValues(predictorsEl);
+  const previousGroup = groupEl.value;
+  dependentEl.innerHTML = numericOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`).join('');
+  dependentEl.value = numericOptions.some((option) => option.key === previousDependent) ? previousDependent : numericOptions[0]?.key ?? '';
+  predictorsEl.innerHTML = numericOptions
+    .filter((option) => option.key !== dependentEl.value)
+    .map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`)
+    .join('');
+  for (const option of predictorsEl.options) {
+    option.selected = previousPredictors.includes(option.value) && option.value !== dependentEl.value;
+  }
+  if (getSelectedValues(predictorsEl).length === 0) {
+    numericOptions.filter((option) => option.key !== dependentEl.value).slice(0, 4).forEach((option) => {
+      const target = [...predictorsEl.options].find((candidate) => candidate.value === option.key);
+      if (target) target.selected = true;
+    });
+  }
+  groupEl.innerHTML = options
+    .filter((option) => option.key !== dependentEl.value)
+    .map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${escapeHtml(option.valueType)})</option>`)
+    .join('');
+  groupEl.value = options.some((option) => option.key === previousGroup && option.key !== dependentEl.value)
+    ? previousGroup
+    : options.find((option) => option.key !== dependentEl.value)?.key ?? '';
+  runBtn.disabled = !dependentEl.value || !groupEl.value || getSelectedValues(predictorsEl).length === 0;
+
+  if (!state.mixedModelResult) {
+    resultEl.innerHTML = '<p>Choose dependent field, fixed predictors, and grouping field, then run mixed model.</p>';
+    return;
+  }
+
+  const result = state.mixedModelResult;
+  resultEl.innerHTML = buildOutputViewer({
+    eyebrow: 'Mixed model',
+    title: `${result.dependentLabel} random-intercept model`,
+    summary: `${result.caseCount} usable row(s) across ${result.groupCount} group(s). ICC ${formatStatValue(result.metrics.intraclassCorrelation, 5)}.`,
+    metrics: [
+      { label: 'Rows', value: result.caseCount },
+      { label: 'Groups', value: result.groupCount },
+      { label: 'R² marginal', value: formatStatValue(result.metrics.rSquaredMarginal, 5) },
+      { label: 'R² conditional', value: formatStatValue(result.metrics.rSquaredConditional, 5) }
+    ],
+    sections: [
+      buildOutputSection(
+        'Fixed effects',
+        buildOutputTable(
+          ['Term', 'B', 'Std. error', 't', 'p', '95% CI'],
+          result.coefficients.map((coefficient) => [
+            escapeHtml(coefficient.label ?? coefficient.field),
+            formatStatValue(coefficient.coefficient, 6),
+            formatStatValue(coefficient.standardError, 6),
+            formatStatValue(coefficient.statistic, 5),
+            formatStatValue(coefficient.pValue, 5),
+            escapeHtml(formatConfidenceInterval(coefficient.confidenceInterval, 5))
+          ])
+        )
+      ),
+      buildOutputSection(
+        'Random intercepts by group',
+        buildOutputTable(
+          ['Group', 'Rows', 'Weighted rows', 'Random intercept', 'Std. error'],
+          result.groupEffects.map((group) => [
+            escapeHtml(group.groupValue),
+            String(group.caseCount),
+            formatStatValue(group.weightedCount, 3),
+            formatStatValue(group.randomIntercept, 6),
+            formatStatValue(group.standardError, 6)
+          ])
+        )
+      ),
+      buildOutputSection(
+        'Variance components',
+        buildOutputTable(
+          ['Component', 'Value'],
+          [
+            ['Between-group variance', formatStatValue(result.metrics.betweenGroupVariance, 6)],
+            ['Within-group variance', formatStatValue(result.metrics.withinGroupVariance, 6)],
+            ['Intraclass correlation (ICC)', formatStatValue(result.metrics.intraclassCorrelation, 6)],
+            ['Residual std. error', formatStatValue(result.metrics.residualStdError, 6)],
+            ['AIC', formatStatValue(result.metrics.aic, 3)],
+            ['BIC', formatStatValue(result.metrics.bic, 3)]
+          ]
+        )
+      ),
+      buildAssumptionsSection(result.assumptions),
+      buildOutputSection(
+        'Diagnostics',
+        buildOutputTable(
+          ['Metric', 'Value'],
+          Object.entries(result.diagnostics ?? {}).map(([key, value]) => [escapeHtml(key), formatStatValue(value, 6)])
+        )
+      ),
+      result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
+    ].filter(Boolean)
+  });
+}
+
+function renderGeeModel() {
+  const dependentEl = document.getElementById('gee-dependent-field');
+  const predictorsEl = document.getElementById('gee-predictor-fields');
+  const clusterEl = document.getElementById('gee-cluster-field');
+  const familyEl = document.getElementById('gee-family');
+  const correlationEl = document.getElementById('gee-correlation');
+  const runBtn = document.getElementById('run-gee-model-btn');
+  const resultEl = document.getElementById('gee-model-result');
+  if (!dependentEl || !predictorsEl || !clusterEl || !familyEl || !correlationEl || !runBtn || !resultEl) return;
+
+  const options = getDatasetAnalysisFieldOptions();
+  const numericOptions = options.filter((option) => option.valueType === 'number');
+  const previousDependent = dependentEl.value;
+  const previousPredictors = getSelectedValues(predictorsEl);
+  const previousCluster = clusterEl.value;
+  dependentEl.innerHTML = options.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${escapeHtml(option.valueType)})</option>`).join('');
+  dependentEl.value = options.some((option) => option.key === previousDependent) ? previousDependent : options[0]?.key ?? '';
+  predictorsEl.innerHTML = numericOptions
+    .filter((option) => option.key !== dependentEl.value)
+    .map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`)
+    .join('');
+  for (const option of predictorsEl.options) {
+    option.selected = previousPredictors.includes(option.value) && option.value !== dependentEl.value;
+  }
+  if (getSelectedValues(predictorsEl).length === 0) {
+    numericOptions.filter((option) => option.key !== dependentEl.value).slice(0, 4).forEach((option) => {
+      const target = [...predictorsEl.options].find((candidate) => candidate.value === option.key);
+      if (target) target.selected = true;
+    });
+  }
+  clusterEl.innerHTML = options
+    .filter((option) => option.key !== dependentEl.value)
+    .map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${escapeHtml(option.valueType)})</option>`)
+    .join('');
+  clusterEl.value = options.some((option) => option.key === previousCluster && option.key !== dependentEl.value)
+    ? previousCluster
+    : options.find((option) => option.key !== dependentEl.value)?.key ?? '';
+  runBtn.disabled = !dependentEl.value || !clusterEl.value || getSelectedValues(predictorsEl).length === 0;
+
+  if (!state.geeModelResult) {
+    resultEl.innerHTML = '<p>Choose dependent field, predictors, and cluster field, then run GEE.</p>';
+    return;
+  }
+
+  const result = state.geeModelResult;
+  resultEl.innerHTML = buildOutputViewer({
+    eyebrow: 'GEE',
+    title: `${result.dependentLabel} ${result.family} model`,
+    summary: `${result.caseCount} usable row(s), ${result.clusterCount} cluster(s), robust covariance with ${result.correlation} working correlation.`,
+    metrics: [
+      { label: 'Rows', value: result.caseCount },
+      { label: 'Clusters', value: result.clusterCount },
+      { label: 'Model statistic', value: formatStatValue(result.metrics.modelStatistic, 5) },
+      { label: 'Model p', value: formatStatValue(result.metrics.modelPValue, 5) }
+    ],
+    sections: [
+      buildOutputSection(
+        'Coefficients',
+        buildOutputTable(
+          ['Term', 'B', 'Robust SE', 'Model SE', 'z', 'p', '95% CI', 'Odds ratio'],
+          result.coefficients.map((coefficient) => [
+            escapeHtml(coefficient.label ?? coefficient.field),
+            formatStatValue(coefficient.coefficient, 6),
+            formatStatValue(coefficient.robustStandardError, 6),
+            formatStatValue(coefficient.modelStandardError, 6),
+            formatStatValue(coefficient.statistic, 5),
+            formatStatValue(coefficient.pValue, 5),
+            escapeHtml(formatConfidenceInterval(coefficient.confidenceInterval, 5)),
+            formatStatValue(coefficient.oddsRatio, 5)
+          ])
+        )
+      ),
+      buildOutputSection(
+        'Cluster summary',
+        buildOutputTable(
+          ['Metric', 'Value'],
+          [
+            ['Weighted rows', formatStatValue(result.metrics.weightedCaseCount, 3)],
+            ['Mean cluster size', formatStatValue(result.metrics.meanClusterSize, 3)],
+            ['Min cluster size', formatStatValue(result.metrics.minClusterSize, 3)],
+            ['Max cluster size', formatStatValue(result.metrics.maxClusterSize, 3)],
+            ['Working correlation', formatStatValue(result.metrics.workingCorrelation, 5)],
+            ['Quasi-likelihood', formatStatValue(result.metrics.quasiLikelihood, 5)],
+            ['R²', formatStatValue(result.metrics.rSquared, 5)],
+            ['Pseudo R²', formatStatValue(result.metrics.pseudoRSquared, 5)]
+          ]
+        )
+      ),
+      buildOutputSection(
+        'Observation preview',
+        buildOutputTable(
+          ['Case', 'Cluster', 'Actual', 'Predicted', 'Residual'],
+          result.observations.map((item) => [
+            escapeHtml(item.caseLabel ?? item.caseId ?? 'case'),
+            escapeHtml(item.clusterValue),
+            formatStatValue(item.actual, 6),
+            formatStatValue(item.predicted, 6),
+            formatStatValue(item.residual, 6)
+          ])
+        )
+      ),
+      buildAssumptionsSection(result.assumptions),
+      buildOutputSection(
+        'Diagnostics',
+        buildOutputTable(
+          ['Metric', 'Value'],
+          Object.entries(result.diagnostics ?? {}).map(([key, value]) => [escapeHtml(key), formatStatValue(value, 6)])
+        )
+      ),
+      result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
+    ].filter(Boolean)
+  });
+}
+
 function renderRepeatedMeasures() {
   const fieldsEl = document.getElementById('repeated-measures-fields');
   const runBtn = document.getElementById('run-repeated-measures-btn');
@@ -10387,6 +10663,8 @@ function renderAll() {
   renderClusterAnalysis();
   renderDecisionTree();
   renderGeneralLinearModel();
+  renderMixedModel();
+  renderGeeModel();
   renderRepeatedMeasures();
   renderSurvivalAnalysis();
   renderComplexSamples();
@@ -11907,6 +12185,80 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       dependentField,
       factorFields,
       covariateFields
+    });
+    renderAll();
+  });
+
+  document.getElementById('run-mixed-model-btn')?.addEventListener('click', async () => {
+    if (!state.selectedProjectId) { alert('Select a project first.'); return; }
+    const dependentField = document.getElementById('mixed-dependent-field')?.value;
+    const predictorFields = getSelectedValues(document.getElementById('mixed-predictor-fields'));
+    const groupField = document.getElementById('mixed-group-field')?.value;
+    if (!dependentField || !groupField || predictorFields.length === 0) {
+      alert('Choose dependent field, grouping field, and at least one predictor.');
+      return;
+    }
+    if (predictorFields.includes(dependentField) || predictorFields.includes(groupField) || dependentField === groupField) {
+      alert('Dependent, predictor, and grouping fields must be different.');
+      return;
+    }
+    const env = await postJson(`${API_BASE}/mixed-model`, {
+      projectId: state.selectedProjectId,
+      filters: state.selectedDatasetFilters,
+      recodes: state.selectedDatasetRecodes,
+      analysis: getAnalysisOptionsPayload(),
+      dependentField,
+      predictorFields,
+      groupField
+    });
+    state.mixedModelResult = env.data.mixedModel;
+    setLastQuantAnalysis('mixed_model', {
+      filters: cloneJson(state.selectedDatasetFilters),
+      recodes: cloneJson(state.selectedDatasetRecodes),
+      analysisOptions: getAnalysisOptionsPayload(),
+      dependentField,
+      predictorFields,
+      groupField
+    });
+    renderAll();
+  });
+
+  document.getElementById('run-gee-model-btn')?.addEventListener('click', async () => {
+    if (!state.selectedProjectId) { alert('Select a project first.'); return; }
+    const dependentField = document.getElementById('gee-dependent-field')?.value;
+    const predictorFields = getSelectedValues(document.getElementById('gee-predictor-fields'));
+    const clusterField = document.getElementById('gee-cluster-field')?.value;
+    const family = document.getElementById('gee-family')?.value === 'binomial' ? 'binomial' : 'gaussian';
+    const correlation = document.getElementById('gee-correlation')?.value === 'exchangeable' ? 'exchangeable' : 'independence';
+    if (!dependentField || !clusterField || predictorFields.length === 0) {
+      alert('Choose dependent field, cluster field, and at least one predictor.');
+      return;
+    }
+    if (predictorFields.includes(dependentField) || predictorFields.includes(clusterField) || dependentField === clusterField) {
+      alert('Dependent, predictor, and cluster fields must be different.');
+      return;
+    }
+    const env = await postJson(`${API_BASE}/gee-model`, {
+      projectId: state.selectedProjectId,
+      filters: state.selectedDatasetFilters,
+      recodes: state.selectedDatasetRecodes,
+      analysis: getAnalysisOptionsPayload(),
+      dependentField,
+      predictorFields,
+      clusterField,
+      family,
+      correlation
+    });
+    state.geeModelResult = env.data.geeModel;
+    setLastQuantAnalysis('gee_model', {
+      filters: cloneJson(state.selectedDatasetFilters),
+      recodes: cloneJson(state.selectedDatasetRecodes),
+      analysisOptions: getAnalysisOptionsPayload(),
+      dependentField,
+      predictorFields,
+      clusterField,
+      family,
+      correlation
     });
     renderAll();
   });
