@@ -1980,6 +1980,46 @@ export async function insertAnnotation(annotation: Annotation): Promise<Annotati
   return annotation;
 }
 
+export async function updateAnnotation(annotation: Annotation): Promise<Annotation | null> {
+  const result = await pool.query(
+    `UPDATE annotations
+     SET target_type = $3,
+         target_id = $4,
+         quote_text = $5,
+         note = $6,
+         start_offset = $7,
+         end_offset = $8,
+         color_token = $9,
+         updated_at = $10
+     WHERE id = $1 AND project_id = $2`,
+    [
+      annotation.id,
+      annotation.projectId,
+      annotation.targetType,
+      annotation.targetId,
+      annotation.quoteText,
+      annotation.note,
+      annotation.startOffset,
+      annotation.endOffset,
+      annotation.colorToken,
+      annotation.updatedAt
+    ]
+  );
+  if (!result.rowCount || result.rowCount < 1) return null;
+  await touchProject(annotation.projectId);
+  return annotation;
+}
+
+export async function deleteAnnotation(id: string, projectId: string): Promise<boolean> {
+  const result = await pool.query(
+    `DELETE FROM annotations WHERE id = $1 AND project_id = $2`,
+    [id, projectId]
+  );
+  if (!result.rowCount || result.rowCount < 1) return false;
+  await touchProject(projectId);
+  return true;
+}
+
 export async function listRelationships(projectId: string): Promise<RelationshipRecord[]> {
   const { rows } = await pool.query(
     `SELECT * FROM relationships WHERE project_id = $1 ORDER BY updated_at DESC, created_at DESC`,
@@ -2018,6 +2058,44 @@ export async function insertRelationship(relationship: RelationshipRecord): Prom
   );
   await touchProject(relationship.projectId);
   return relationship;
+}
+
+export async function updateRelationship(relationship: RelationshipRecord): Promise<RelationshipRecord | null> {
+  const result = await pool.query(
+    `UPDATE relationships
+     SET relationship_type = $3,
+         left_target_type = $4,
+         left_target_id = $5,
+         right_target_type = $6,
+         right_target_id = $7,
+         note = $8,
+         updated_at = $9
+     WHERE id = $1 AND project_id = $2`,
+    [
+      relationship.id,
+      relationship.projectId,
+      relationship.relationshipType,
+      relationship.leftTargetType,
+      relationship.leftTargetId,
+      relationship.rightTargetType,
+      relationship.rightTargetId,
+      relationship.note,
+      relationship.updatedAt
+    ]
+  );
+  if (!result.rowCount || result.rowCount < 1) return null;
+  await touchProject(relationship.projectId);
+  return relationship;
+}
+
+export async function deleteRelationship(id: string, projectId: string): Promise<boolean> {
+  const result = await pool.query(
+    `DELETE FROM relationships WHERE id = $1 AND project_id = $2`,
+    [id, projectId]
+  );
+  if (!result.rowCount || result.rowCount < 1) return false;
+  await touchProject(projectId);
+  return true;
 }
 
 export async function listProjectReferences(projectId: string): Promise<ProjectReference[]> {

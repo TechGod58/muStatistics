@@ -80,8 +80,8 @@ import {
   insertCase, listCases,
   insertMemo, listMemos,
   insertAttribute, listAttributes,
-  insertAnnotation, listAnnotations,
-  insertRelationship, listRelationships,
+  insertAnnotation, listAnnotations, updateAnnotation, deleteAnnotation,
+  insertRelationship, listRelationships, updateRelationship, deleteRelationship,
   insertProjectReference, listProjectReferences, deleteProjectReference,
   insertTranscriptSyncLink, listTranscriptSyncLinks, updateTranscriptSyncLink, deleteTranscriptSyncLink, deleteTranscriptSyncLinksByMediaSource,
   insertTranscriptionJob, listTranscriptionJobs, updateTranscriptionJob,
@@ -1865,6 +1865,99 @@ function formatEvidenceFilterLabels(query: ReturnType<typeof parseEvidenceQuery>
     query.searchText ? `Search: ${query.searchText}` : null,
     query.memoOnly ? 'Memo-backed only' : null
   ].filter((value): value is string => Boolean(value));
+}
+
+type CodingDisagreementMode = 'all' | 'coder_a_only' | 'coder_b_only' | 'either_only';
+
+function parseCodingDisagreementMode(value: unknown): CodingDisagreementMode {
+  return value === 'coder_a_only' || value === 'coder_b_only' || value === 'either_only'
+    ? value
+    : 'all';
+}
+
+function parsePositiveInteger(value: unknown, fallback: number, min = 1, max = 500): number {
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim()
+      ? Number.parseInt(value, 10)
+      : Number.NaN;
+  if (!Number.isFinite(parsed)) return fallback;
+  const bounded = Math.floor(parsed);
+  if (bounded < min) return min;
+  if (bounded > max) return max;
+  return bounded;
+}
+
+function parseOptionalPositiveInteger(value: unknown, min = 1, max = 500): number | null {
+  if (!(typeof value === 'number' || (typeof value === 'string' && value.trim()))) return null;
+  return parsePositiveInteger(value, min, min, max);
+}
+
+function parseOptionalBoundedNumber(value: unknown, min: number, max: number): number | null {
+  if (!(typeof value === 'number' || (typeof value === 'string' && value.trim()))) return null;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function averageNullable(values: Array<number | null | undefined>): number | null {
+  const usable = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  if (!usable.length) return null;
+  return usable.reduce((total, value) => total + value, 0) / usable.length;
+}
+
+function applyCodingComparisonFilters(
+  comparison: ReturnType<typeof buildCodingComparison>,
+  options: {
+    disagreementMode: CodingDisagreementMode;
+    disagreementLimit: number;
+  }
+) {
+  const filtered = comparison.disagreements.filter((item) => {
+    if (options.disagreementMode === 'coder_a_only') return item.coderAApplied && !item.coderBApplied;
+    if (options.disagreementMode === 'coder_b_only') return !item.coderAApplied && item.coderBApplied;
+    if (options.disagreementMode === 'either_only') return item.coderAApplied !== item.coderBApplied;
+    return true;
+  });
+  const limited = filtered.slice(0, options.disagreementLimit);
+  return {
+    ...comparison,
+    disagreements: limited,
+    disagreementMode: options.disagreementMode,
+    disagreementLimit: options.disagreementLimit,
+    disagreementTotalCount: comparison.disagreements.length,
+    disagreementFilteredCount: limited.length
+  };
+}
+
+function applyInterRaterSummaryFilters(
+  summary: ReturnType<typeof buildInterRaterSummary>,
+  options: {
+    minKappa: number | null;
+    maxRows: number | null;
+  }
+) {
+  const sortedRows = [...summary.rows].sort((left, right) => {
+    const leftKappa = typeof left.cohensKappa === 'number' ? left.cohensKappa : Number.POSITIVE_INFINITY;
+    const rightKappa = typeof right.cohensKappa === 'number' ? right.cohensKappa : Number.POSITIVE_INFINITY;
+    return leftKappa - rightKappa;
+  });
+  const filteredRows = options.minKappa === null
+    ? sortedRows
+    : sortedRows.filter((row) => typeof row.cohensKappa === 'number' && row.cohensKappa <= options.minKappa!);
+  const visibleRows = options.maxRows === null
+    ? filteredRows
+    : filteredRows.slice(0, options.maxRows);
+  return {
+    ...summary,
+    rows: visibleRows,
+    rowTotalCount: summary.rows.length,
+    rowFilteredCount: filteredRows.length,
+    minKappaFilter: options.minKappa,
+    maxRowsFilter: options.maxRows,
+    averageAgreement: averageNullable(visibleRows.map((row) => row.percentAgreement)),
+    averageKappa: averageNullable(visibleRows.map((row) => row.cohensKappa))
+  };
 }
 
 function formatSegmentAnchorForEvidence(segment: { kind: string; anchor: any }): string {
@@ -3651,8 +3744,6 @@ server.get('/retrieval', async (request, reply) => {
     coCodeId: string;
     caseId: string;
     coderId: string;
-    coderA: string;
-    coderB: string;
     searchText: string;
     memoOnly: string;
   }>;
@@ -4207,6 +4298,8 @@ server.get('/coding-comparison', async (request, reply) => {
     codeId: string;
     coderA: string;
     coderB: string;
+    disagreementMode: string;
+    disagreementLimit: string;
   }>;
   const projectId = requireProjectId(reply, query.projectId);
   if (!projectId) return;
@@ -4225,19 +4318,24 @@ server.get('/coding-comparison', async (request, reply) => {
     memoOnly: query.memoOnly
   });
   try {
+    const disagreementMode = parseCodingDisagreementMode(query.disagreementMode);
+    const disagreementLimit = parsePositiveInteger(query.disagreementLimit, 100, 1, 500);
     return ok({
-      comparison: buildCodingComparison({
-        query: evidenceQuery,
-        codeId: query.codeId.trim(),
-        coderA: typeof query.coderA === 'string' ? query.coderA : undefined,
-        coderB: typeof query.coderB === 'string' ? query.coderB : undefined,
-        sources: payload.sources,
-        segments: payload.segments,
-        applications: payload.codeApplications,
-        cases: payload.cases,
-        memos: payload.memos,
-        codes: payload.codes
-      })
+      comparison: applyCodingComparisonFilters(
+        buildCodingComparison({
+          query: evidenceQuery,
+          codeId: query.codeId.trim(),
+          coderA: typeof query.coderA === 'string' ? query.coderA : undefined,
+          coderB: typeof query.coderB === 'string' ? query.coderB : undefined,
+          sources: payload.sources,
+          segments: payload.segments,
+          applications: payload.codeApplications,
+          cases: payload.cases,
+          memos: payload.memos,
+          codes: payload.codes
+        }),
+        { disagreementMode, disagreementLimit }
+      )
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to compare coding agreement.';
@@ -4258,6 +4356,8 @@ server.get('/inter-rater-summary', async (request, reply) => {
     memoOnly: string;
     coderA: string;
     coderB: string;
+    minKappa: string;
+    maxRows: string;
   }>;
   const projectId = requireProjectId(reply, query.projectId);
   if (!projectId) return;
@@ -4273,18 +4373,23 @@ server.get('/inter-rater-summary', async (request, reply) => {
     memoOnly: query.memoOnly
   });
   try {
+    const minKappa = parseOptionalBoundedNumber(query.minKappa, -1, 1);
+    const maxRows = parseOptionalPositiveInteger(query.maxRows, 1, 500);
     return ok({
-      summary: buildInterRaterSummary({
-        query: evidenceQuery,
-        coderA: typeof query.coderA === 'string' ? query.coderA : undefined,
-        coderB: typeof query.coderB === 'string' ? query.coderB : undefined,
-        sources: payload.sources,
-        segments: payload.segments,
-        applications: payload.codeApplications,
-        cases: payload.cases,
-        memos: payload.memos,
-        codes: payload.codes
-      })
+      summary: applyInterRaterSummaryFilters(
+        buildInterRaterSummary({
+          query: evidenceQuery,
+          coderA: typeof query.coderA === 'string' ? query.coderA : undefined,
+          coderB: typeof query.coderB === 'string' ? query.coderB : undefined,
+          sources: payload.sources,
+          segments: payload.segments,
+          applications: payload.codeApplications,
+          cases: payload.cases,
+          memos: payload.memos,
+          codes: payload.codes
+        }),
+        { minKappa, maxRows }
+      )
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to build the inter-rater summary.';
@@ -4305,6 +4410,7 @@ server.post('/autocode/keywords', async (request, reply) => {
     caseId: string;
     searchText: string;
     memoOnly: string | boolean;
+    dryRun: boolean;
   }>;
   const projectId = typeof body.projectId === 'string' ? body.projectId : '';
   if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
@@ -4350,9 +4456,12 @@ server.post('/autocode/keywords', async (request, reply) => {
       .filter((item) => item.codeId === codeId && item.coderId === (request.session.username ?? 'system'))
       .map((item) => `${item.segmentId}::${item.codeId}::${item.coderId}`)
   );
+  const dryRun = body.dryRun === true;
 
   let createdCount = 0;
   let skippedCount = 0;
+  let wouldCreateCount = 0;
+  let wouldSkipCount = 0;
   const matchedSegments: Array<{ segmentId: string; sourceId: string; keyword: string; text: string }> = [];
   for (const match of matches) {
     const haystack = match.segment.text.toLowerCase();
@@ -4367,6 +4476,11 @@ server.post('/autocode/keywords', async (request, reply) => {
     const dedupeKey = `${match.segment.id}::${codeId}::${request.session.username ?? 'system'}`;
     if (existingKeys.has(dedupeKey)) {
       skippedCount += 1;
+      wouldSkipCount += 1;
+      continue;
+    }
+    wouldCreateCount += 1;
+    if (dryRun) {
       continue;
     }
     const created = await insertCodeApplication(createCodeApplication({
@@ -4389,16 +4503,29 @@ server.post('/autocode/keywords', async (request, reply) => {
       details: { codeId, keyword, segmentId: match.segment.id }
     });
   }
+  if (dryRun) {
+    await recordAuditEvent({
+      request,
+      projectId,
+      action: 'autocode.keyword.preview',
+      entityType: 'autocode_preview',
+      entityId: `autocode-preview-${randomUUID()}`,
+      details: { codeId, keywordCount: keywords.length, matchedCount: matchedSegments.length, wouldCreateCount, wouldSkipCount }
+    });
+  }
 
   return ok({
     autocode: {
       method: 'keyword',
+      dryRun,
       codeId,
       keywords,
       scopeCount: matches.length,
       matchedCount: matchedSegments.length,
       createdCount,
       skippedCount,
+      wouldCreateCount,
+      wouldSkipCount,
       matches: matchedSegments.slice(0, 50)
     }
   });
@@ -4419,6 +4546,7 @@ server.post('/autocode/patterns', async (request, reply) => {
     caseId: string;
     searchText: string;
     memoOnly: string | boolean;
+    dryRun: boolean;
   }>;
   const projectId = typeof body.projectId === 'string' ? body.projectId : '';
   if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
@@ -4462,13 +4590,21 @@ server.post('/autocode/patterns', async (request, reply) => {
       .filter((item) => item.codeId === codeId && item.coderId === (request.session.username ?? 'system'))
       .map((item) => `${item.segmentId}::${item.codeId}::${item.coderId}`)
   );
+  const dryRun = body.dryRun === true;
 
   let createdCount = 0;
   let skippedCount = 0;
+  let wouldCreateCount = 0;
+  let wouldSkipCount = 0;
   for (const hit of autocode.hits) {
     const dedupeKey = `${hit.segmentId}::${codeId}::${request.session.username ?? 'system'}`;
     if (existingKeys.has(dedupeKey)) {
       skippedCount += 1;
+      wouldSkipCount += 1;
+      continue;
+    }
+    wouldCreateCount += 1;
+    if (dryRun) {
       continue;
     }
     const created = await insertCodeApplication(createCodeApplication({
@@ -4497,10 +4633,28 @@ server.post('/autocode/patterns', async (request, reply) => {
       }
     });
   }
+  if (dryRun) {
+    await recordAuditEvent({
+      request,
+      projectId,
+      action: 'autocode.pattern.preview',
+      entityType: 'autocode_preview',
+      entityId: `autocode-preview-${randomUUID()}`,
+      details: {
+        codeId,
+        patternCount: autocode.patterns.length,
+        matchedCount: autocode.matchedCount,
+        wouldCreateCount,
+        wouldSkipCount,
+        matchMode: autocode.matchMode
+      }
+    });
+  }
 
   return ok({
     autocode: {
       method: 'pattern',
+      dryRun,
       codeId,
       patterns: autocode.patterns,
       expandedPatterns: autocode.expandedPatterns,
@@ -4509,6 +4663,8 @@ server.post('/autocode/patterns', async (request, reply) => {
       matchedCount: autocode.matchedCount,
       createdCount,
       skippedCount,
+      wouldCreateCount,
+      wouldSkipCount,
       matches: autocode.hits.slice(0, 50)
     }
   });
@@ -4908,6 +5064,10 @@ server.get('/exports/reports', async (request, reply) => {
     coderId: string;
     coderA: string;
     coderB: string;
+    disagreementMode: string;
+    disagreementLimit: string;
+    minKappa: string;
+    maxRows: string;
     searchText: string;
     memoOnly: string;
   }>;
@@ -4960,7 +5120,19 @@ server.get('/exports/reports', async (request, reply) => {
     sources: payload.sources,
     transcriptSyncLinks: payload.transcriptSyncLinks
   });
+  const disagreementMode = parseCodingDisagreementMode(query.disagreementMode);
+  const disagreementLimit = parsePositiveInteger(query.disagreementLimit, 100, 1, 500);
+  const minKappa = parseOptionalBoundedNumber(query.minKappa, -1, 1);
+  const maxRows = parseOptionalPositiveInteger(query.maxRows, 1, 500);
   const queryLabels = formatEvidenceFilterLabels(evidenceQuery);
+  if (kind === 'coding-comparison') {
+    if (disagreementMode !== 'all') queryLabels.push(`Disagreement mode: ${disagreementMode}`);
+    if (disagreementLimit > 0) queryLabels.push(`Disagreement limit: ${disagreementLimit}`);
+  }
+  if (kind === 'inter-rater-summary') {
+    if (minKappa !== null) queryLabels.push(`Kappa threshold <= ${minKappa.toFixed(4)}`);
+    if (maxRows !== null) queryLabels.push(`Max rows: ${maxRows}`);
+  }
   const evidenceReport = buildEvidenceReport(evidenceBundle, queryLabels);
   const report = kind === 'codebook'
     ? buildProjectCodebookReport({
@@ -5043,25 +5215,10 @@ server.get('/exports/reports', async (request, reply) => {
               ? buildCodingComparisonReport({
                 project: payload.project,
                 queryLabels,
-                comparison: buildCodingComparison({
-                  query: evidenceQuery,
-                  codeId: typeof query.codeId === 'string' ? query.codeId.trim() : '',
-                  coderA: typeof query.coderA === 'string' ? query.coderA : undefined,
-                  coderB: typeof query.coderB === 'string' ? query.coderB : undefined,
-                  sources: payload.sources,
-                  segments: payload.segments,
-                  applications: payload.codeApplications,
-                  cases: payload.cases,
-                  memos: payload.memos,
-                  codes: payload.codes
-                })
-              })
-              : kind === 'inter-rater-summary'
-                ? buildInterRaterSummaryReport({
-                  project: payload.project,
-                  queryLabels,
-                  summary: buildInterRaterSummary({
+                comparison: applyCodingComparisonFilters(
+                  buildCodingComparison({
                     query: evidenceQuery,
+                    codeId: typeof query.codeId === 'string' ? query.codeId.trim() : '',
                     coderA: typeof query.coderA === 'string' ? query.coderA : undefined,
                     coderB: typeof query.coderB === 'string' ? query.coderB : undefined,
                     sources: payload.sources,
@@ -5070,7 +5227,28 @@ server.get('/exports/reports', async (request, reply) => {
                     cases: payload.cases,
                     memos: payload.memos,
                     codes: payload.codes
-                  })
+                  }),
+                  { disagreementMode, disagreementLimit }
+                )
+              })
+              : kind === 'inter-rater-summary'
+                ? buildInterRaterSummaryReport({
+                  project: payload.project,
+                  queryLabels,
+                  summary: applyInterRaterSummaryFilters(
+                    buildInterRaterSummary({
+                      query: evidenceQuery,
+                      coderA: typeof query.coderA === 'string' ? query.coderA : undefined,
+                      coderB: typeof query.coderB === 'string' ? query.coderB : undefined,
+                      sources: payload.sources,
+                      segments: payload.segments,
+                      applications: payload.codeApplications,
+                      cases: payload.cases,
+                      memos: payload.memos,
+                      codes: payload.codes
+                    }),
+                    { minKappa, maxRows }
+                  )
                 })
               : kind === 'query-report'
                 ? buildQualitativeQuerySummaryReport({
@@ -5481,6 +5659,84 @@ server.post('/annotations', async (request, reply) => {
   return ok({ annotation: created });
 });
 
+server.put('/annotations/:annotationId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ annotationId: string }>;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    targetType: string;
+    targetId: string;
+    quoteText: string;
+    note: string;
+    startOffset: number | null;
+    endOffset: number | null;
+    colorToken: string;
+  }>;
+  const annotationId = typeof params.annotationId === 'string' ? params.annotationId.trim() : '';
+  if (!annotationId) return reply.status(400).send(fail('INVALID', 'annotationId is required.'));
+  const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+  if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
+  const existing = (await listAnnotations(projectId)).find((item) => item.id === annotationId);
+  if (!existing) return reply.status(404).send(fail('NOT_FOUND', 'Annotation not found.'));
+
+  const updated = createAnnotation({
+    ...existing,
+    targetType: body.targetType === undefined ? existing.targetType : parseAnnotationTargetType(body.targetType),
+    targetId: typeof body.targetId === 'string' && body.targetId.trim() ? body.targetId.trim() : existing.targetId,
+    quoteText: body.quoteText === undefined ? existing.quoteText : String(body.quoteText ?? ''),
+    note: body.note === undefined ? existing.note : String(body.note ?? ''),
+    startOffset: body.startOffset === undefined
+      ? existing.startOffset
+      : (typeof body.startOffset === 'number' ? Math.max(0, Math.floor(body.startOffset)) : null),
+    endOffset: body.endOffset === undefined
+      ? existing.endOffset
+      : (typeof body.endOffset === 'number' ? Math.max(0, Math.floor(body.endOffset)) : null),
+    colorToken: typeof body.colorToken === 'string' && body.colorToken.trim() ? body.colorToken.trim() : existing.colorToken,
+    updatedAt: new Date().toISOString()
+  });
+  const saved = await updateAnnotation(updated);
+  if (!saved) return reply.status(404).send(fail('NOT_FOUND', 'Annotation not found.'));
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'annotation.update',
+    entityType: 'annotation',
+    entityId: saved.id,
+    details: {
+      targetType: saved.targetType,
+      targetId: saved.targetId,
+      colorToken: saved.colorToken,
+      startOffset: saved.startOffset,
+      endOffset: saved.endOffset
+    }
+  });
+  return ok({ annotation: saved });
+});
+
+server.delete('/annotations/:annotationId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ annotationId: string }>;
+  const query = (request.query ?? {}) as Partial<{ projectId: string }>;
+  const annotationId = typeof params.annotationId === 'string' ? params.annotationId.trim() : '';
+  if (!annotationId) return reply.status(400).send(fail('INVALID', 'annotationId is required.'));
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const removed = await deleteAnnotation(annotationId, projectId);
+  if (!removed) return reply.status(404).send(fail('NOT_FOUND', 'Annotation not found.'));
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'annotation.delete',
+    entityType: 'annotation',
+    entityId: annotationId,
+    details: {}
+  });
+  return ok({ removed: true });
+});
+
 // ── Relationships ─────────────────────────────────────────────────────────────
 
 server.get('/relationships', async (request, reply) => {
@@ -5540,6 +5796,83 @@ server.post('/relationships', async (request, reply) => {
     }
   });
   return ok({ relationship: created });
+});
+
+server.put('/relationships/:relationshipId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ relationshipId: string }>;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    relationshipType: string;
+    leftTargetType: string;
+    leftTargetId: string;
+    rightTargetType: string;
+    rightTargetId: string;
+    note: string;
+  }>;
+  const relationshipId = typeof params.relationshipId === 'string' ? params.relationshipId.trim() : '';
+  if (!relationshipId) return reply.status(400).send(fail('INVALID', 'relationshipId is required.'));
+  const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+  if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
+  const existing = (await listRelationships(projectId)).find((item) => item.id === relationshipId);
+  if (!existing) return reply.status(404).send(fail('NOT_FOUND', 'Relationship not found.'));
+
+  const leftTargetId = body.leftTargetId === undefined ? existing.leftTargetId : String(body.leftTargetId ?? '').trim();
+  const rightTargetId = body.rightTargetId === undefined ? existing.rightTargetId : String(body.rightTargetId ?? '').trim();
+  if (!leftTargetId || !rightTargetId) {
+    return reply.status(400).send(fail('INVALID', 'Both relationship targets are required.'));
+  }
+  const updated = createRelationship({
+    ...existing,
+    relationshipType: body.relationshipType === undefined ? existing.relationshipType : parseRelationshipType(body.relationshipType),
+    leftTargetType: body.leftTargetType === undefined ? existing.leftTargetType : parseRelationshipTargetType(body.leftTargetType),
+    leftTargetId,
+    rightTargetType: body.rightTargetType === undefined ? existing.rightTargetType : parseRelationshipTargetType(body.rightTargetType),
+    rightTargetId,
+    note: body.note === undefined ? existing.note : String(body.note ?? ''),
+    updatedAt: new Date().toISOString()
+  });
+  const saved = await updateRelationship(updated);
+  if (!saved) return reply.status(404).send(fail('NOT_FOUND', 'Relationship not found.'));
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'relationship.update',
+    entityType: 'relationship',
+    entityId: saved.id,
+    details: {
+      relationshipType: saved.relationshipType,
+      leftTargetType: saved.leftTargetType,
+      leftTargetId: saved.leftTargetId,
+      rightTargetType: saved.rightTargetType,
+      rightTargetId: saved.rightTargetId
+    }
+  });
+  return ok({ relationship: saved });
+});
+
+server.delete('/relationships/:relationshipId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ relationshipId: string }>;
+  const query = (request.query ?? {}) as Partial<{ projectId: string }>;
+  const relationshipId = typeof params.relationshipId === 'string' ? params.relationshipId.trim() : '';
+  if (!relationshipId) return reply.status(400).send(fail('INVALID', 'relationshipId is required.'));
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const removed = await deleteRelationship(relationshipId, projectId);
+  if (!removed) return reply.status(404).send(fail('NOT_FOUND', 'Relationship not found.'));
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'relationship.delete',
+    entityType: 'relationship',
+    entityId: relationshipId,
+    details: {}
+  });
+  return ok({ removed: true });
 });
 
 server.get('/references', async (request, reply) => {

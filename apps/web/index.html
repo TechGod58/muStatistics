@@ -698,7 +698,11 @@
                   <input id="annotation-color-token" type="text" value="amber" />
                 </label>
               </div>
-              <button type="submit">Save annotation</button>
+              <div class="inline-actions">
+                <button type="submit">Save annotation</button>
+                <button id="annotation-cancel-edit-btn" type="button" class="small" style="display:none">Cancel edit</button>
+              </div>
+              <div id="annotation-edit-note" class="small-muted">Create a new annotation.</div>
             </form>
           </article>
           <article class="panel" data-qual-parent="capture" data-qual-subsection="annotate">
@@ -747,7 +751,11 @@
                 <span>Link note</span>
                 <textarea id="relationship-note" rows="2" placeholder="Why these two items belong together"></textarea>
               </label>
-              <button type="submit">Save link</button>
+              <div class="inline-actions">
+                <button type="submit">Save link</button>
+                <button id="relationship-cancel-edit-btn" type="button" class="small" style="display:none">Cancel edit</button>
+              </div>
+              <div id="relationship-edit-note" class="small-muted">Create a new see-also link.</div>
             </form>
           </article>
         </section>
@@ -973,6 +981,29 @@
                 <input id="comparison-coder-b" type="text" placeholder="username" />
               </label>
             </div>
+            <div class="grid grid-4 compact-grid" style="margin-top:12px">
+              <label class="field">
+                <span>Disagreement mode</span>
+                <select id="comparison-disagreement-mode">
+                  <option value="all" selected>all disagreements</option>
+                  <option value="coder_a_only">A only</option>
+                  <option value="coder_b_only">B only</option>
+                  <option value="either_only">either coder only</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Disagreement limit</span>
+                <input id="comparison-disagreement-limit" type="number" min="1" max="500" value="100" />
+              </label>
+              <label class="field">
+                <span>Inter-rater max rows</span>
+                <input id="inter-rater-max-rows" type="number" min="1" max="500" placeholder="all" />
+              </label>
+              <label class="field">
+                <span>Kappa threshold (&lt;=)</span>
+                <input id="inter-rater-min-kappa" type="number" min="-1" max="1" step="0.01" placeholder="all" />
+              </label>
+            </div>
             <div class="grid grid-2 compact-grid" style="margin-top:12px">
               <label class="field">
                 <span>Autocode keywords</span>
@@ -1001,6 +1032,13 @@
                   <select id="autocode-expand-synonyms">
                     <option value="true" selected>yes</option>
                     <option value="false">no</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Autocode run mode</span>
+                  <select id="autocode-dry-run">
+                    <option value="false" selected>apply coding</option>
+                    <option value="true">preview only</option>
                   </select>
                 </label>
               </div>

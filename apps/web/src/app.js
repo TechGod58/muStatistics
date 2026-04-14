@@ -41,7 +41,9 @@ const state = {
   selectedCases: [],
   selectedMemos: [],
   selectedAnnotations: [],
+  editingAnnotationId: null,
   selectedRelationships: [],
+  editingRelationshipId: null,
   selectedReferences: [],
   selectedTranscriptSyncLinks: [],
   selectedAttributes: [],
@@ -2075,7 +2077,9 @@ async function loadSelectedProjectData() {
     state.selectedCases = [];
       state.selectedMemos = [];
       state.selectedAnnotations = [];
+      state.editingAnnotationId = null;
       state.selectedRelationships = [];
+      state.editingRelationshipId = null;
       state.selectedReferences = [];
       state.selectedTranscriptSyncLinks = [];
     state.selectedAttributes = [];
@@ -2201,7 +2205,13 @@ async function loadSelectedProjectData() {
   state.selectedCases = casesEnv.data.items ?? [];
     state.selectedMemos = memosEnv.data.items ?? [];
     state.selectedAnnotations = annotationsEnv.data.items ?? [];
+    if (state.editingAnnotationId && !state.selectedAnnotations.some((annotation) => annotation.id === state.editingAnnotationId)) {
+      state.editingAnnotationId = null;
+    }
     state.selectedRelationships = relationshipsEnv.data.items ?? [];
+    if (state.editingRelationshipId && !state.selectedRelationships.some((relationship) => relationship.id === state.editingRelationshipId)) {
+      state.editingRelationshipId = null;
+    }
     state.selectedReferences = referencesEnv.data.items ?? [];
     state.selectedTranscriptSyncLinks = transcriptSyncEnv.data.items ?? [];
   if (state.workspaceEditingSyncLinkId && !state.selectedTranscriptSyncLinks.some((link) => link.id === state.workspaceEditingSyncLinkId)) {
@@ -3444,7 +3454,7 @@ function renderMemos() {
   }
 }
 
-function renderAnnotations() {
+function renderAnnotationsLegacy() {
   const node = document.getElementById('annotations-list');
   if (!node) return;
   node.innerHTML = '';
@@ -3475,7 +3485,7 @@ function renderAnnotations() {
   }
 }
 
-function renderRelationships() {
+function renderRelationshipsLegacy() {
   const node = document.getElementById('relationships-list');
   if (!node) return;
   node.innerHTML = '';
@@ -3505,6 +3515,212 @@ function renderRelationships() {
     });
     li.querySelector('.relationship-open-right-btn')?.addEventListener('click', () => {
       focusRelationshipTarget(relationship.rightTargetType, relationship.rightTargetId);
+    });
+    node.appendChild(li);
+  }
+}
+
+function syncAnnotationFormState() {
+  const submitButton = document.querySelector('#annotation-form button[type="submit"]');
+  const cancelButton = document.getElementById('annotation-cancel-edit-btn');
+  const note = document.getElementById('annotation-edit-note');
+  const editing = Boolean(state.editingAnnotationId);
+  if (submitButton) submitButton.textContent = editing ? 'Update annotation' : 'Save annotation';
+  if (cancelButton) cancelButton.style.display = editing ? '' : 'none';
+  if (note) note.textContent = editing
+    ? `Editing annotation ${state.editingAnnotationId}.`
+    : 'Create a new annotation.';
+}
+
+function beginAnnotationEdit(annotationId) {
+  const annotation = state.selectedAnnotations.find((item) => item.id === annotationId) ?? null;
+  if (!annotation) return;
+  state.editingAnnotationId = annotation.id;
+  const form = document.getElementById('annotation-form');
+  if (!form) return;
+  const targetTypeEl = document.getElementById('annotation-target-type');
+  const targetIdEl = document.getElementById('annotation-target-id');
+  const quoteTextEl = document.getElementById('annotation-quote-text');
+  const noteEl = document.getElementById('annotation-note');
+  const startOffsetEl = document.getElementById('annotation-start-offset');
+  const endOffsetEl = document.getElementById('annotation-end-offset');
+  const colorTokenEl = document.getElementById('annotation-color-token');
+  if (targetTypeEl) targetTypeEl.value = annotation.targetType;
+  if (targetIdEl) targetIdEl.value = annotation.targetId;
+  if (quoteTextEl) quoteTextEl.value = annotation.quoteText || '';
+  if (noteEl) noteEl.value = annotation.note || '';
+  if (startOffsetEl) startOffsetEl.value = annotation.startOffset === null || annotation.startOffset === undefined ? '' : String(annotation.startOffset);
+  if (endOffsetEl) endOffsetEl.value = annotation.endOffset === null || annotation.endOffset === undefined ? '' : String(annotation.endOffset);
+  if (colorTokenEl) colorTokenEl.value = annotation.colorToken || 'amber';
+  syncAnnotationFormState();
+  renderAnnotations();
+}
+
+function cancelAnnotationEdit() {
+  state.editingAnnotationId = null;
+  const form = document.getElementById('annotation-form');
+  if (form) form.reset();
+  const targetTypeEl = document.getElementById('annotation-target-type');
+  const targetIdEl = document.getElementById('annotation-target-id');
+  const colorTokenEl = document.getElementById('annotation-color-token');
+  if (targetTypeEl) targetTypeEl.value = 'segment';
+  if (targetIdEl) targetIdEl.value = '';
+  if (colorTokenEl) colorTokenEl.value = 'amber';
+  syncAnnotationFormState();
+  renderAnnotations();
+}
+
+async function deleteAnnotationById(annotationId) {
+  if (!state.selectedProjectId || !annotationId) return;
+  const confirmed = window.confirm('Delete this annotation?');
+  if (!confirmed) return;
+  await deleteJson(`${API_BASE}/annotations/${encodeURIComponent(annotationId)}?projectId=${encodeURIComponent(state.selectedProjectId)}`);
+  if (state.editingAnnotationId === annotationId) {
+    cancelAnnotationEdit();
+  }
+  await loadSelectedProjectData();
+  renderAll();
+}
+
+function renderAnnotations() {
+  const node = document.getElementById('annotations-list');
+  if (!node) return;
+  node.innerHTML = '';
+  if (state.selectedAnnotations.length === 0) {
+    node.innerHTML = '<li class="interactive-list-item empty">No annotations yet.</li>';
+    return;
+  }
+  for (const annotation of state.selectedAnnotations) {
+    const li = document.createElement('li');
+    li.className = `interactive-list-item${state.editingAnnotationId === annotation.id ? ' active' : ''}`;
+    li.innerHTML = `
+      <div class="source-row">
+        <div>
+          <span class="project-title">${escapeHtml(annotation.note)}</span>
+          <span class="source-meta">${escapeHtml(annotation.id)}</span>
+          <span class="source-meta">${escapeHtml(annotation.targetType)} | ${escapeHtml(annotation.targetId)}</span>
+          <span class="source-meta">${escapeHtml(summarizeText(annotation.quoteText || '', 120))}</span>
+        </div>
+        <div class="inline-actions">
+          <span class="badge" style="${getCodeToneStyle(annotation.colorToken)}">annot</span>
+          <button type="button" class="small annotation-edit-btn">Edit</button>
+          <button type="button" class="small annotation-delete-btn">Delete</button>
+        </div>
+      </div>
+    `;
+    li.style.cursor = 'pointer';
+    li.title = 'Click to reuse this target in the annotation form';
+    li.addEventListener('click', () => {
+      setAnnotationTarget(annotation.targetType, annotation.targetId);
+    });
+    li.querySelector('.annotation-edit-btn')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      beginAnnotationEdit(annotation.id);
+    });
+    li.querySelector('.annotation-delete-btn')?.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      await deleteAnnotationById(annotation.id);
+    });
+    node.appendChild(li);
+  }
+}
+
+function syncRelationshipFormState() {
+  const submitButton = document.querySelector('#relationship-form button[type="submit"]');
+  const cancelButton = document.getElementById('relationship-cancel-edit-btn');
+  const note = document.getElementById('relationship-edit-note');
+  const editing = Boolean(state.editingRelationshipId);
+  if (submitButton) submitButton.textContent = editing ? 'Update link' : 'Save link';
+  if (cancelButton) cancelButton.style.display = editing ? '' : 'none';
+  if (note) note.textContent = editing
+    ? `Editing relationship ${state.editingRelationshipId}.`
+    : 'Create a new see-also link.';
+}
+
+function beginRelationshipEdit(relationshipId) {
+  const relationship = state.selectedRelationships.find((item) => item.id === relationshipId) ?? null;
+  if (!relationship) return;
+  state.editingRelationshipId = relationship.id;
+  const relationshipTypeEl = document.getElementById('relationship-type');
+  const leftTargetTypeEl = document.getElementById('relationship-left-target-type');
+  const leftTargetIdEl = document.getElementById('relationship-left-target-id');
+  const rightTargetTypeEl = document.getElementById('relationship-right-target-type');
+  const rightTargetIdEl = document.getElementById('relationship-right-target-id');
+  const noteEl = document.getElementById('relationship-note');
+  if (relationshipTypeEl) relationshipTypeEl.value = relationship.relationshipType;
+  if (leftTargetTypeEl) leftTargetTypeEl.value = relationship.leftTargetType;
+  if (leftTargetIdEl) leftTargetIdEl.value = relationship.leftTargetId;
+  if (rightTargetTypeEl) rightTargetTypeEl.value = relationship.rightTargetType;
+  if (rightTargetIdEl) rightTargetIdEl.value = relationship.rightTargetId;
+  if (noteEl) noteEl.value = relationship.note || '';
+  syncRelationshipFormState();
+  renderRelationships();
+}
+
+function cancelRelationshipEdit() {
+  state.editingRelationshipId = null;
+  const form = document.getElementById('relationship-form');
+  if (form) form.reset();
+  const relationshipTypeEl = document.getElementById('relationship-type');
+  const leftTargetTypeEl = document.getElementById('relationship-left-target-type');
+  const rightTargetTypeEl = document.getElementById('relationship-right-target-type');
+  if (relationshipTypeEl) relationshipTypeEl.value = 'see_also';
+  if (leftTargetTypeEl) leftTargetTypeEl.value = 'segment';
+  if (rightTargetTypeEl) rightTargetTypeEl.value = 'segment';
+  syncRelationshipFormState();
+  renderRelationships();
+}
+
+async function deleteRelationshipById(relationshipId) {
+  if (!state.selectedProjectId || !relationshipId) return;
+  const confirmed = window.confirm('Delete this see-also link?');
+  if (!confirmed) return;
+  await deleteJson(`${API_BASE}/relationships/${encodeURIComponent(relationshipId)}?projectId=${encodeURIComponent(state.selectedProjectId)}`);
+  if (state.editingRelationshipId === relationshipId) {
+    cancelRelationshipEdit();
+  }
+  await loadSelectedProjectData();
+  renderAll();
+}
+
+function renderRelationships() {
+  const node = document.getElementById('relationships-list');
+  if (!node) return;
+  node.innerHTML = '';
+  if (state.selectedRelationships.length === 0) {
+    node.innerHTML = '<li class="interactive-list-item empty">No see-also links yet.</li>';
+    return;
+  }
+  for (const relationship of state.selectedRelationships) {
+    const li = document.createElement('li');
+    li.className = `interactive-list-item${state.editingRelationshipId === relationship.id ? ' active' : ''}`;
+    li.innerHTML = `
+      <div class="source-row">
+        <div>
+          <span class="project-title">${escapeHtml(relationship.relationshipType)}</span>
+          <span class="source-meta">${escapeHtml(relationship.leftTargetType)} | ${escapeHtml(relationship.leftTargetId)}</span>
+          <span class="source-meta">${escapeHtml(relationship.rightTargetType)} | ${escapeHtml(relationship.rightTargetId)}</span>
+          <span class="source-meta">${escapeHtml(relationship.note || 'No note')}</span>
+        </div>
+        <div class="inline-actions">
+          <button type="button" class="small relationship-open-left-btn">Open left</button>
+          <button type="button" class="small relationship-open-right-btn">Open right</button>
+          <button type="button" class="small relationship-edit-btn">Edit</button>
+          <button type="button" class="small relationship-delete-btn">Delete</button>
+        </div>
+      </div>
+    `;
+    li.querySelector('.relationship-open-left-btn')?.addEventListener('click', () => {
+      focusRelationshipTarget(relationship.leftTargetType, relationship.leftTargetId);
+    });
+    li.querySelector('.relationship-open-right-btn')?.addEventListener('click', () => {
+      focusRelationshipTarget(relationship.rightTargetType, relationship.rightTargetId);
+    });
+    li.querySelector('.relationship-edit-btn')?.addEventListener('click', () => {
+      beginRelationshipEdit(relationship.id);
+    });
+    li.querySelector('.relationship-delete-btn')?.addEventListener('click', async () => {
+      await deleteRelationshipById(relationship.id);
     });
     node.appendChild(li);
   }
@@ -5569,10 +5785,15 @@ function readQualitativeQueryInputs() {
     comparisonCodeId: document.getElementById('comparison-code-id')?.value?.trim() || '',
     comparisonCoderA: document.getElementById('comparison-coder-a')?.value?.trim() || '',
     comparisonCoderB: document.getElementById('comparison-coder-b')?.value?.trim() || '',
+    comparisonDisagreementMode: document.getElementById('comparison-disagreement-mode')?.value || 'all',
+    comparisonDisagreementLimit: Number(document.getElementById('comparison-disagreement-limit')?.value || 100),
+    interRaterMaxRows: Number(document.getElementById('inter-rater-max-rows')?.value || 0),
+    interRaterMinKappa: document.getElementById('inter-rater-min-kappa')?.value?.trim() || '',
     autocodeKeywords: document.getElementById('autocode-keywords')?.value?.trim() || '',
     autocodePatterns: document.getElementById('autocode-patterns')?.value?.trim() || '',
     autocodeExpandSynonyms: document.getElementById('autocode-expand-synonyms')?.value !== 'false',
-    autocodeMatchMode: document.getElementById('autocode-match-mode')?.value || 'phrase'
+    autocodeMatchMode: document.getElementById('autocode-match-mode')?.value || 'phrase',
+    autocodeDryRun: document.getElementById('autocode-dry-run')?.value === 'true'
   };
 }
 
@@ -5597,10 +5818,15 @@ function applyQualitativeQueryInputs(query = {}) {
     ['comparison-code-id', query.comparisonCodeId ?? ''],
     ['comparison-coder-a', query.comparisonCoderA ?? ''],
     ['comparison-coder-b', query.comparisonCoderB ?? ''],
+    ['comparison-disagreement-mode', query.comparisonDisagreementMode ?? 'all'],
+    ['comparison-disagreement-limit', query.comparisonDisagreementLimit ?? 100],
+    ['inter-rater-max-rows', query.interRaterMaxRows || ''],
+    ['inter-rater-min-kappa', query.interRaterMinKappa ?? ''],
     ['autocode-keywords', query.autocodeKeywords ?? ''],
     ['autocode-patterns', query.autocodePatterns ?? ''],
     ['autocode-expand-synonyms', query.autocodeExpandSynonyms === false ? 'false' : 'true'],
-    ['autocode-match-mode', query.autocodeMatchMode ?? 'phrase']
+    ['autocode-match-mode', query.autocodeMatchMode ?? 'phrase'],
+    ['autocode-dry-run', query.autocodeDryRun ? 'true' : 'false']
   ];
   for (const [id, value] of assignments) {
     const el = document.getElementById(id);
@@ -5966,8 +6192,14 @@ async function runCodingComparison() {
   params.set('codeId', codeId);
   const coderA = document.getElementById('comparison-coder-a')?.value?.trim() || '';
   const coderB = document.getElementById('comparison-coder-b')?.value?.trim() || '';
+  const disagreementMode = document.getElementById('comparison-disagreement-mode')?.value || 'all';
+  const disagreementLimit = Number(document.getElementById('comparison-disagreement-limit')?.value || 100);
   if (coderA) params.set('coderA', coderA);
   if (coderB) params.set('coderB', coderB);
+  if (disagreementMode) params.set('disagreementMode', disagreementMode);
+  if (Number.isFinite(disagreementLimit) && disagreementLimit > 0) {
+    params.set('disagreementLimit', String(Math.floor(disagreementLimit)));
+  }
   const env = await getJson(`${API_BASE}/coding-comparison?${params.toString()}`);
   state.codingComparisonResult = env.data.comparison ?? null;
   renderCodingComparison();
@@ -5981,8 +6213,12 @@ async function runInterRaterSummary() {
   const params = buildEvidenceQueryParams();
   const coderA = document.getElementById('comparison-coder-a')?.value?.trim() || '';
   const coderB = document.getElementById('comparison-coder-b')?.value?.trim() || '';
+  const maxRows = Number(document.getElementById('inter-rater-max-rows')?.value || 0);
+  const minKappa = document.getElementById('inter-rater-min-kappa')?.value?.trim() || '';
   if (coderA) params.set('coderA', coderA);
   if (coderB) params.set('coderB', coderB);
+  if (Number.isFinite(maxRows) && maxRows > 0) params.set('maxRows', String(Math.floor(maxRows)));
+  if (minKappa) params.set('minKappa', minKappa);
   const env = await getJson(`${API_BASE}/inter-rater-summary?${params.toString()}`);
   state.interRaterSummaryResult = env.data.summary ?? null;
   renderInterRaterSummary();
@@ -6024,9 +6260,12 @@ async function runKeywordAutocode() {
     segmentKind: query.segmentKind,
     caseId: query.caseId,
     searchText: query.searchText,
-    memoOnly: query.memoOnly
+    memoOnly: query.memoOnly,
+    dryRun: query.autocodeDryRun
   });
-  await loadSelectedProjectData();
+  if (!query.autocodeDryRun) {
+    await loadSelectedProjectData();
+  }
   state.autocodeResult = env.data.autocode ?? null;
   renderAll();
 }
@@ -6058,9 +6297,12 @@ async function runPatternAutocode() {
     segmentKind: query.segmentKind,
     caseId: query.caseId,
     searchText: query.searchText,
-    memoOnly: query.memoOnly
+    memoOnly: query.memoOnly,
+    dryRun: query.autocodeDryRun
   });
-  await loadSelectedProjectData();
+  if (!query.autocodeDryRun) {
+    await loadSelectedProjectData();
+  }
   state.autocodeResult = env.data.autocode ?? null;
   renderAll();
 }
@@ -10718,7 +10960,14 @@ function renderCodingComparison() {
   }
 
   const result = state.codingComparisonResult;
-  summaryEl.textContent = `${result.codeName} across ${result.universeSegmentCount} segment(s): agreement ${formatStatValue(result.percentAgreement, 4)}, kappa ${formatStatValue(result.cohensKappa, 4)}.`;
+  const disagreementMode = result.disagreementMode || 'all';
+  const disagreementShown = typeof result.disagreementFilteredCount === 'number'
+    ? result.disagreementFilteredCount
+    : result.disagreements.length;
+  const disagreementTotal = typeof result.disagreementTotalCount === 'number'
+    ? result.disagreementTotalCount
+    : result.disagreementCount;
+  summaryEl.textContent = `${result.codeName} across ${result.universeSegmentCount} segment(s): agreement ${formatStatValue(result.percentAgreement, 4)}, kappa ${formatStatValue(result.cohensKappa, 4)}. Showing ${disagreementShown} of ${disagreementTotal} disagreement row(s) (${disagreementMode}).`;
   resultEl.innerHTML = buildOutputViewer({
     eyebrow: 'Coding comparison',
     title: `${result.codeName}: ${result.coderA} vs ${result.coderB}`,
@@ -10726,6 +10975,7 @@ function renderCodingComparison() {
     metrics: [
       { label: 'Agreement', value: result.agreementCount },
       { label: 'Disagreement', value: result.disagreementCount },
+      { label: 'Disagreement rows shown', value: disagreementShown },
       { label: 'Both applied', value: result.bothAppliedCount },
       { label: 'Neither applied', value: result.neitherAppliedCount }
     ],
@@ -10744,7 +10994,7 @@ function renderCodingComparison() {
       ),
       result.disagreements.length
         ? buildOutputSection(
-          'Disagreement examples',
+          `Disagreement examples (${disagreementMode})`,
           buildOutputTable(
             ['Source', 'Segment', result.coderA, result.coderB, 'Excerpt'],
             result.disagreements.map((item) => [
@@ -10771,13 +11021,25 @@ function renderInterRaterSummary() {
     return;
   }
   const result = state.interRaterSummaryResult;
-  summaryEl.textContent = `${result.rows.length} code(s) compared for ${result.coderA} vs ${result.coderB}. Average kappa ${formatStatValue(result.averageKappa, 4)}.`;
+  const rowTotalCount = typeof result.rowTotalCount === 'number' ? result.rowTotalCount : result.rows.length;
+  const rowFilteredCount = typeof result.rowFilteredCount === 'number' ? result.rowFilteredCount : result.rows.length;
+  const filterParts = [];
+  if (result.minKappaFilter !== null && result.minKappaFilter !== undefined && result.minKappaFilter !== '') {
+    const minKappaValue = Number(result.minKappaFilter);
+    filterParts.push(Number.isFinite(minKappaValue) ? `kappa <= ${formatStatValue(minKappaValue, 4)}` : `kappa <= ${escapeHtml(String(result.minKappaFilter))}`);
+  }
+  if (result.maxRowsFilter) {
+    filterParts.push(`top ${result.maxRowsFilter}`);
+  }
+  const filterSummary = filterParts.length ? ` Filters: ${filterParts.join(', ')}.` : '';
+  summaryEl.textContent = `${result.rows.length} code(s) shown for ${result.coderA} vs ${result.coderB} (from ${rowTotalCount}, filtered ${rowFilteredCount}). Average kappa ${formatStatValue(result.averageKappa, 4)}.${filterSummary}`;
   resultEl.innerHTML = buildOutputViewer({
     eyebrow: 'Inter-rater summary',
     title: `${result.coderA} vs ${result.coderB}`,
     summary: `Average agreement ${formatStatValue(result.averageAgreement, 4)} with average kappa ${formatStatValue(result.averageKappa, 4)}.`,
     metrics: [
-      { label: 'Codes', value: result.rows.length },
+      { label: 'Codes shown', value: result.rows.length },
+      { label: 'Codes before filter', value: rowTotalCount },
       { label: 'Average agreement', value: formatStatValue(result.averageAgreement, 4) },
       { label: 'Average kappa', value: formatStatValue(result.averageKappa, 4) }
     ],
@@ -10810,18 +11072,23 @@ function renderAutocodeResult() {
     return;
   }
   const result = state.autocodeResult;
-  summaryEl.textContent = `${result.createdCount} code application(s) created, ${result.skippedCount} skipped, ${result.matchedCount} matched segment(s).`;
+  const dryRun = result.dryRun === true;
+  summaryEl.textContent = dryRun
+    ? `Preview mode: ${result.matchedCount} matched segment(s), ${result.wouldCreateCount ?? 0} would be created, ${result.wouldSkipCount ?? 0} already coded.`
+    : `${result.createdCount} code application(s) created, ${result.skippedCount} skipped, ${result.matchedCount} matched segment(s).`;
   resultEl.innerHTML = buildOutputViewer({
     eyebrow: result.method === 'pattern' ? 'Pattern autocoding' : 'Keyword autocoding',
     title: result.method === 'pattern'
       ? `${result.codeId} from ${result.patterns.join(', ')}`
       : `${result.codeId} from ${result.keywords.join(', ')}`,
-    summary: `${result.createdCount} application(s) created across ${result.scopeCount} scoped segment(s).`,
+    summary: dryRun
+      ? `Preview only across ${result.scopeCount} scoped segment(s); no coding changes were written.`
+      : `${result.createdCount} application(s) created across ${result.scopeCount} scoped segment(s).`,
     metrics: [
       { label: 'Scope segments', value: result.scopeCount },
       { label: 'Matched', value: result.matchedCount },
-      { label: 'Created', value: result.createdCount },
-      { label: 'Skipped', value: result.skippedCount }
+      { label: dryRun ? 'Would create' : 'Created', value: dryRun ? (result.wouldCreateCount ?? 0) : result.createdCount },
+      { label: dryRun ? 'Would skip' : 'Skipped', value: dryRun ? (result.wouldSkipCount ?? 0) : result.skippedCount }
     ],
     sections: [
       result.method === 'pattern'
@@ -10936,7 +11203,9 @@ function renderAll() {
   renderCases();
     renderMemos();
     renderAnnotations();
+    syncAnnotationFormState();
     renderRelationships();
+    syncRelationshipFormState();
     renderReferences();
     renderAttributes();
   renderSegments();
@@ -11299,7 +11568,7 @@ document.getElementById('annotation-form')?.addEventListener('submit', async (ev
     const endOffsetRaw = document.getElementById('annotation-end-offset').value;
     const colorToken = document.getElementById('annotation-color-token').value.trim() || 'amber';
     if (!note) { alert('Annotation note is required.'); return; }
-    await postJson(`${API_BASE}/annotations`, {
+    const payload = {
       projectId: state.selectedProjectId,
       targetType,
       targetId,
@@ -11308,12 +11577,22 @@ document.getElementById('annotation-form')?.addEventListener('submit', async (ev
       startOffset: startOffsetRaw === '' ? null : Number(startOffsetRaw),
       endOffset: endOffsetRaw === '' ? null : Number(endOffsetRaw),
       colorToken
-    });
-    event.target.reset();
-    document.getElementById('annotation-target-type').value = 'segment';
-    document.getElementById('annotation-target-id').value = '';
-    document.getElementById('annotation-color-token').value = 'amber';
+    };
+    if (state.editingAnnotationId) {
+      await putJson(`${API_BASE}/annotations/${encodeURIComponent(state.editingAnnotationId)}`, payload);
+      cancelAnnotationEdit();
+    } else {
+      await postJson(`${API_BASE}/annotations`, payload);
+      event.target.reset();
+      document.getElementById('annotation-target-type').value = 'segment';
+      document.getElementById('annotation-target-id').value = '';
+      document.getElementById('annotation-color-token').value = 'amber';
+    }
     await loadSelectedProjectData(); renderAll();
+  });
+
+  document.getElementById('annotation-cancel-edit-btn')?.addEventListener('click', () => {
+    cancelAnnotationEdit();
   });
 
   document.getElementById('attribute-form').addEventListener('submit', async (event) => {
@@ -11483,7 +11762,7 @@ document.getElementById('relationship-form')?.addEventListener('submit', async (
     alert('Both relationship targets are required.');
     return;
   }
-  await postJson(`${API_BASE}/relationships`, {
+  const payload = {
     projectId: state.selectedProjectId,
     relationshipType,
     leftTargetType,
@@ -11491,10 +11770,20 @@ document.getElementById('relationship-form')?.addEventListener('submit', async (
     rightTargetType,
     rightTargetId,
     note
-  });
-  document.getElementById('relationship-note').value = '';
+  };
+  if (state.editingRelationshipId) {
+    await putJson(`${API_BASE}/relationships/${encodeURIComponent(state.editingRelationshipId)}`, payload);
+    cancelRelationshipEdit();
+  } else {
+    await postJson(`${API_BASE}/relationships`, payload);
+    document.getElementById('relationship-note').value = '';
+  }
   await loadSelectedProjectData();
   renderAll();
+});
+
+document.getElementById('relationship-cancel-edit-btn')?.addEventListener('click', () => {
+  cancelRelationshipEdit();
 });
 
   document.getElementById('load-sql-tables-btn')?.addEventListener('click', async () => {
@@ -13244,7 +13533,9 @@ document.getElementById('run-merge-review-btn')?.addEventListener('click', async
       await downloadReportPackage('coding-comparison', 'docx', {
         codeId: document.getElementById('comparison-code-id')?.value?.trim() || document.getElementById('retrieval-code-id')?.value?.trim() || '',
         coderA: document.getElementById('comparison-coder-a')?.value?.trim() || '',
-        coderB: document.getElementById('comparison-coder-b')?.value?.trim() || ''
+        coderB: document.getElementById('comparison-coder-b')?.value?.trim() || '',
+        disagreementMode: document.getElementById('comparison-disagreement-mode')?.value || 'all',
+        disagreementLimit: document.getElementById('comparison-disagreement-limit')?.value?.trim() || '100'
       });
     } catch (err) {
       window.alert(`Coding comparison Word export failed: ${err.message}`);
@@ -13255,7 +13546,9 @@ document.getElementById('run-merge-review-btn')?.addEventListener('click', async
     try {
       await downloadReportPackage('inter-rater-summary', 'docx', {
         coderA: document.getElementById('comparison-coder-a')?.value?.trim() || '',
-        coderB: document.getElementById('comparison-coder-b')?.value?.trim() || ''
+        coderB: document.getElementById('comparison-coder-b')?.value?.trim() || '',
+        minKappa: document.getElementById('inter-rater-min-kappa')?.value?.trim() || '',
+        maxRows: document.getElementById('inter-rater-max-rows')?.value?.trim() || ''
       });
     } catch (err) {
       window.alert(`Inter-rater Word export failed: ${err.message}`);
