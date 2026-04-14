@@ -1867,6 +1867,109 @@ function formatEvidenceFilterLabels(query: ReturnType<typeof parseEvidenceQuery>
   ].filter((value): value is string => Boolean(value));
 }
 
+function formatSegmentAnchorForEvidence(segment: { kind: string; anchor: any }): string {
+  if (segment.kind === 'text_range') {
+    const start = typeof segment.anchor?.start === 'number' ? Math.max(0, Math.round(segment.anchor.start)) : 0;
+    const end = typeof segment.anchor?.end === 'number' ? Math.max(start, Math.round(segment.anchor.end)) : start;
+    return `Chars ${start}-${end}`;
+  }
+  if (segment.kind === 'time_range') {
+    const startMs = typeof segment.anchor?.startMs === 'number' ? Math.max(0, Math.round(segment.anchor.startMs)) : 0;
+    const endMs = typeof segment.anchor?.endMs === 'number' ? Math.max(startMs, Math.round(segment.anchor.endMs)) : startMs;
+    return `${(startMs / 1000).toFixed(1)}s-${(endMs / 1000).toFixed(1)}s`;
+  }
+  if (segment.kind === 'page_region') {
+    const page = typeof segment.anchor?.page === 'number' ? Math.max(1, Math.round(segment.anchor.page)) : 1;
+    const hasBox = ['x', 'y', 'w', 'h'].every((key) => typeof segment.anchor?.[key] === 'number' && Number.isFinite(segment.anchor?.[key]));
+    if (hasBox) {
+      const x = Math.round(segment.anchor.x);
+      const y = Math.round(segment.anchor.y);
+      const w = Math.round(segment.anchor.w);
+      const h = Math.round(segment.anchor.h);
+      return `Page ${page} [${x},${y},${w},${h}]`;
+    }
+    return `Page ${page}`;
+  }
+  return 'Unspecified anchor';
+}
+
+function enrichEvidenceBundleWithContext(params: {
+  bundle: ReturnType<typeof buildEvidenceExport>;
+  segments: Array<{ id: string; kind: string; anchor: any }>;
+  sources: Array<{ id: string; kind: string; title: string }>;
+  transcriptSyncLinks: Array<{
+    id: string;
+    segmentId: string | null;
+    transcriptSourceId: string;
+    startMs: number;
+    endMs: number;
+    transcriptText: string;
+  }>;
+}) {
+  const segmentById = new Map(params.segments.map((segment) => [segment.id, segment]));
+  const sourceById = new Map(params.sources.map((source) => [source.id, source]));
+  const sourceTitleById = new Map(params.sources.map((source) => [source.id, source.title]));
+  const syncLinksBySegmentId = new Map<string, typeof params.transcriptSyncLinks>();
+  for (const link of params.transcriptSyncLinks) {
+    if (!link.segmentId) continue;
+    const list = syncLinksBySegmentId.get(link.segmentId) ?? [];
+    list.push(link);
+    syncLinksBySegmentId.set(link.segmentId, list);
+  }
+
+  const matches = params.bundle.matches.map((match) => {
+    const segment = segmentById.get(match.segmentId) ?? null;
+    const source = sourceById.get(match.sourceId) ?? null;
+    const syncLinks = syncLinksBySegmentId.get(match.segmentId) ?? [];
+    return {
+      ...match,
+      segmentKind: segment?.kind ?? null,
+      sourceKind: source?.kind ?? null,
+      anchorSummary: segment ? formatSegmentAnchorForEvidence(segment) : null,
+      transcriptSyncCount: syncLinks.length,
+      transcriptSyncLinks: syncLinks.map((link) => ({
+        id: link.id,
+        transcriptSourceId: link.transcriptSourceId,
+        transcriptSourceTitle: sourceTitleById.get(link.transcriptSourceId) ?? null,
+        startMs: link.startMs,
+        endMs: link.endMs,
+        transcriptText: link.transcriptText
+      }))
+    };
+  });
+
+  const sourceKindCounts = new Map<string, number>();
+  let mediaMatchCount = 0;
+  let transcriptLinkedMatchCount = 0;
+  let transcriptLinkCount = 0;
+  for (const match of matches) {
+    const sourceKind = typeof match.sourceKind === 'string' && match.sourceKind.trim()
+      ? match.sourceKind
+      : 'unknown';
+    sourceKindCounts.set(sourceKind, (sourceKindCounts.get(sourceKind) ?? 0) + 1);
+    if (sourceKind === 'audio' || sourceKind === 'video') {
+      mediaMatchCount += 1;
+    }
+    if (match.transcriptSyncCount > 0) {
+      transcriptLinkedMatchCount += 1;
+      transcriptLinkCount += match.transcriptSyncCount;
+    }
+  }
+
+  return {
+    ...params.bundle,
+    matches,
+    evidenceContext: {
+      mediaMatchCount,
+      transcriptLinkedMatchCount,
+      transcriptLinkCount,
+      sourceKindCoverage: [...sourceKindCounts.entries()]
+        .map(([sourceKind, count]) => ({ sourceKind, count }))
+        .sort((left, right) => right.count - left.count || left.sourceKind.localeCompare(right.sourceKind))
+    }
+  };
+}
+
 function buildMediaTimeline(params: {
   sourceId: string;
   segments: Array<{ id: string; sourceId: string; kind: string; anchor: any; text: string }>;
@@ -4663,10 +4766,16 @@ server.get('/exports/evidence', async (request, reply) => {
     cases: payload.cases,
     memos: payload.memos
   });
-  const evidenceBundle = buildEvidenceExport({
+  const evidenceBundleBase = buildEvidenceExport({
     project: { id: payload.project.id, name: payload.project.name },
     retrieval,
     codes: payload.codes
+  });
+  const evidenceBundle = enrichEvidenceBundleWithContext({
+    bundle: evidenceBundleBase,
+    segments: payload.segments,
+    sources: payload.sources,
+    transcriptSyncLinks: payload.transcriptSyncLinks
   });
   const filters = formatEvidenceFilterLabels(evidenceQuery);
   const report = buildEvidenceReport(evidenceBundle, filters);
@@ -4837,13 +4946,19 @@ server.get('/exports/reports', async (request, reply) => {
     cases: payload.cases,
     memos: payload.memos
   });
-  const evidenceBundle = buildEvidenceExport({
+  const evidenceBundleBase = buildEvidenceExport({
     project: {
       id: payload.project.id,
       name: payload.project.name
     },
     retrieval,
     codes: payload.codes
+  });
+  const evidenceBundle = enrichEvidenceBundleWithContext({
+    bundle: evidenceBundleBase,
+    segments: payload.segments,
+    sources: payload.sources,
+    transcriptSyncLinks: payload.transcriptSyncLinks
   });
   const queryLabels = formatEvidenceFilterLabels(evidenceQuery);
   const evidenceReport = buildEvidenceReport(evidenceBundle, queryLabels);

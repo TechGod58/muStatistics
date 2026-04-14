@@ -35,11 +35,29 @@ export type EvidenceReportBundle = {
   project: { id: string; name: string; description?: string };
   exportedAt: string;
   codebook: Array<{ id: string; name: string; description: string; colorToken: string }>;
+  evidenceContext?: {
+    mediaMatchCount: number;
+    transcriptLinkedMatchCount: number;
+    transcriptLinkCount: number;
+    sourceKindCoverage: Array<{ sourceKind: string; count: number }>;
+  };
   matches: Array<{
     segmentId: string;
     sourceId: string;
     sourceTitle: string | null;
+    sourceKind?: string | null;
+    segmentKind?: string | null;
+    anchorSummary?: string | null;
     text: string;
+    transcriptSyncCount?: number;
+    transcriptSyncLinks?: Array<{
+      id: string;
+      transcriptSourceId: string;
+      transcriptSourceTitle: string | null;
+      startMs: number;
+      endMs: number;
+      transcriptText: string;
+    }>;
     codes: Array<{ codeId: string; coderId: string; caseId: string | null; confidence: number }>;
     cases: Array<{ caseId: string; label: string }>;
     memos: Array<{ memoId: string; title: string; body: string }>;
@@ -55,7 +73,11 @@ export type EvidenceReport = {
     uniqueSources: number;
     uniqueCases: number;
     uniqueCodes: number;
+    mediaMatches: number;
+    transcriptLinkedMatches: number;
+    transcriptLinkCount: number;
   };
+  sourceKindCoverage: Array<{ sourceKind: string; count: number }>;
   sourceCoverage: Array<{ sourceId: string; sourceTitle: string; count: number }>;
   caseCoverage: Array<{ caseId: string; label: string; count: number }>;
   codeCoverage: Array<{ codeId: string; codeName: string; count: number }>;
@@ -389,6 +411,10 @@ export function buildEvidenceReport(bundle: EvidenceReportBundle, filters: strin
   const sourceCoverage = new Map<string, { label: string; count: number }>();
   const caseCoverage = new Map<string, { label: string; count: number }>();
   const codeCoverage = new Map<string, { label: string; count: number }>();
+  const sourceKindCoverage = new Map<string, number>();
+  let inferredMediaMatches = 0;
+  let inferredTranscriptLinkedMatches = 0;
+  let inferredTranscriptLinkCount = 0;
 
   for (const match of bundle.matches) {
     const sourceEntry = sourceCoverage.get(match.sourceId) ?? {
@@ -412,7 +438,37 @@ export function buildEvidenceReport(bundle: EvidenceReportBundle, filters: strin
       codeEntry.count += 1;
       codeCoverage.set(code.codeId, codeEntry);
     }
+
+    const sourceKind = typeof match.sourceKind === 'string' && match.sourceKind.trim()
+      ? match.sourceKind.trim()
+      : 'unknown';
+    sourceKindCoverage.set(sourceKind, (sourceKindCoverage.get(sourceKind) ?? 0) + 1);
+    if (sourceKind === 'audio' || sourceKind === 'video') {
+      inferredMediaMatches += 1;
+    }
+    const transcriptSyncCount = typeof match.transcriptSyncCount === 'number'
+      ? Math.max(0, Math.round(match.transcriptSyncCount))
+      : Array.isArray(match.transcriptSyncLinks) ? match.transcriptSyncLinks.length : 0;
+    if (transcriptSyncCount > 0) {
+      inferredTranscriptLinkedMatches += 1;
+      inferredTranscriptLinkCount += transcriptSyncCount;
+    }
   }
+
+  const mediaMatches = typeof bundle.evidenceContext?.mediaMatchCount === 'number'
+    ? bundle.evidenceContext.mediaMatchCount
+    : inferredMediaMatches;
+  const transcriptLinkedMatches = typeof bundle.evidenceContext?.transcriptLinkedMatchCount === 'number'
+    ? bundle.evidenceContext.transcriptLinkedMatchCount
+    : inferredTranscriptLinkedMatches;
+  const transcriptLinkCount = typeof bundle.evidenceContext?.transcriptLinkCount === 'number'
+    ? bundle.evidenceContext.transcriptLinkCount
+    : inferredTranscriptLinkCount;
+  const sourceKindRows = Array.isArray(bundle.evidenceContext?.sourceKindCoverage) && bundle.evidenceContext.sourceKindCoverage.length > 0
+    ? bundle.evidenceContext.sourceKindCoverage
+    : [...sourceKindCoverage.entries()]
+      .map(([sourceKind, count]) => ({ sourceKind, count }))
+      .sort((left, right) => right.count - left.count || left.sourceKind.localeCompare(right.sourceKind));
 
   return {
     title: `${bundle.project.name} Evidence Report`,
@@ -422,8 +478,12 @@ export function buildEvidenceReport(bundle: EvidenceReportBundle, filters: strin
       totalMatches: bundle.matches.length,
       uniqueSources,
       uniqueCases,
-      uniqueCodes
+      uniqueCodes,
+      mediaMatches,
+      transcriptLinkedMatches,
+      transcriptLinkCount
     },
+    sourceKindCoverage: sourceKindRows,
     sourceCoverage: [...sourceCoverage.entries()]
       .map(([sourceId, item]) => ({ sourceId, sourceTitle: item.label, count: item.count }))
       .sort((left, right) => sortCoverage({ label: left.sourceTitle, count: left.count }, { label: right.sourceTitle, count: right.count }))
@@ -447,12 +507,21 @@ function buildEvidenceStructuredReport(report: EvidenceReport): StructuredReport
     exportedAt: report.exportedAt,
     subtitleLines: [
       `Filters: ${report.filters.length > 0 ? report.filters.join(' | ') : 'none'}`,
-      `Matches: ${report.summary.totalMatches} | Sources: ${report.summary.uniqueSources} | Cases: ${report.summary.uniqueCases} | Codes: ${report.summary.uniqueCodes}`
+      `Matches: ${report.summary.totalMatches} | Sources: ${report.summary.uniqueSources} | Cases: ${report.summary.uniqueCases} | Codes: ${report.summary.uniqueCodes}`,
+      `Media matches: ${report.summary.mediaMatches} | Transcript-linked matches: ${report.summary.transcriptLinkedMatches} | Transcript links: ${report.summary.transcriptLinkCount}`
     ],
     sections: [
       {
         heading: 'Coverage',
         tables: [
+          {
+            title: 'Source kind coverage',
+            headers: ['Source kind', 'Matches'],
+            rows: report.sourceKindCoverage.map((entry) => [
+              entry.sourceKind,
+              String(entry.count)
+            ])
+          },
           {
             title: 'Source coverage',
             headers: ['Source', 'Source ID', 'Matches'],
@@ -499,16 +568,19 @@ function buildEvidenceStructuredReport(report: EvidenceReport): StructuredReport
       },
       {
         heading: 'Evidence appendix',
-        paragraphs: ['Each row captures the excerpt, linked codes, linked cases, and the first attached memo when present.'],
+        paragraphs: ['Each row captures source/anchor context, linked coding, transcript sync depth, and the first attached memo when present.'],
         tables: [
           {
             title: 'Evidence bundle',
-            headers: ['Source', 'Segment', 'Codes', 'Cases', 'Excerpt', 'Memo'],
+            headers: ['Source', 'Kind', 'Anchor', 'Segment', 'Codes', 'Cases', 'Transcript links', 'Excerpt', 'Memo'],
             rows: report.matches.map((match) => [
               match.sourceTitle ?? match.sourceId,
+              match.sourceKind ?? match.segmentKind ?? 'unknown',
+              match.anchorSummary ?? 'n/a',
               match.segmentId,
               match.codes.map((code) => code.codeId).join(', ') || 'none',
               match.cases.map((caseItem) => caseItem.label).join(', ') || 'none',
+              String(match.transcriptSyncCount ?? match.transcriptSyncLinks?.length ?? 0),
               truncateCell(summarizeText(match.text, 220), 220),
               truncateCell(match.memos[0] ? summarizeText(match.memos[0].body || match.memos[0].title, 120) : 'none', 120)
             ])
@@ -768,9 +840,12 @@ export function buildCaseSummariesReport(input: CaseSummariesInput): StructuredR
 export function buildAppendixReport(input: AppendixReportInput): StructuredReport {
   const evidenceRows = input.report.matches.map((match) => [
     match.sourceTitle ?? match.sourceId,
+    match.sourceKind ?? match.segmentKind ?? 'unknown',
+    match.anchorSummary ?? 'n/a',
     match.segmentId,
     match.codes.map((code) => code.codeId).join(', ') || 'none',
     match.cases.map((caseItem) => caseItem.label).join(', ') || 'none',
+    String(match.transcriptSyncCount ?? match.transcriptSyncLinks?.length ?? 0),
     truncateCell(summarizeText(match.text, 220), 220),
     truncateCell(match.memos[0] ? summarizeText(match.memos[0].body || match.memos[0].title, 100) : 'none', 100)
   ]);
@@ -780,7 +855,8 @@ export function buildAppendixReport(input: AppendixReportInput): StructuredRepor
     exportedAt: input.report.exportedAt,
     subtitleLines: [
       `Filters: ${input.report.filters.length > 0 ? input.report.filters.join(' | ') : 'none'}`,
-      `Matches: ${input.report.summary.totalMatches} | Sources: ${input.report.summary.uniqueSources} | Cases: ${input.report.summary.uniqueCases} | Codes: ${input.report.summary.uniqueCodes}`
+      `Matches: ${input.report.summary.totalMatches} | Sources: ${input.report.summary.uniqueSources} | Cases: ${input.report.summary.uniqueCases} | Codes: ${input.report.summary.uniqueCodes}`,
+      `Media matches: ${input.report.summary.mediaMatches} | Transcript-linked matches: ${input.report.summary.transcriptLinkedMatches} | Transcript links: ${input.report.summary.transcriptLinkCount}`
     ],
     sections: [
       {
@@ -819,6 +895,14 @@ export function buildAppendixReport(input: AppendixReportInput): StructuredRepor
               code.codeId,
               String(code.count)
             ])
+          },
+          {
+            title: 'Source kind coverage',
+            headers: ['Source kind', 'Matches'],
+            rows: input.report.sourceKindCoverage.map((entry) => [
+              entry.sourceKind,
+              String(entry.count)
+            ])
           }
         ]
       },
@@ -842,7 +926,7 @@ export function buildAppendixReport(input: AppendixReportInput): StructuredRepor
         tables: [
           {
             title: 'Evidence review table',
-            headers: ['Source', 'Segment', 'Codes', 'Cases', 'Excerpt', 'Memo'],
+            headers: ['Source', 'Kind', 'Anchor', 'Segment', 'Codes', 'Cases', 'Transcript links', 'Excerpt', 'Memo'],
             rows: evidenceRows
           }
         ]
