@@ -10,6 +10,11 @@ Its practical goal is narrower than full IBM SPSS + NVivo parity:
 - basic descriptive statistics
 - export for downstream reporting
 
+## Legal and license
+
+- Legal notice: `LEGAL_NOTICE.md`
+- License: `LICENSE.txt` (Proprietary Non-Commercial)
+
 ## Current direction
 
 This project is being shaped around the workflows a university research or assessment team uses most often:
@@ -26,6 +31,7 @@ Current SPSS/NVivo coverage and remaining gaps are tracked in `docs/product/pari
 Pilot readiness and pre-pilot validation steps are tracked in `docs/product/pilot-readiness-checklist.md`.
 Portable runtime and packaging notes live in `docs/deployment/portable-mode.md`.
 SQL and Microsoft Office integration-hook notes live in `docs/deployment/integration-hooks.md`.
+Production hardening and deployment validation runbooks live in `docs/deployment/production-hardening.md`.
 
 ## Current implementation
 
@@ -97,5 +103,8 @@ Before a pilot run, use:
 - `pnpm -r test`
 - `pnpm -r build`
 - `pnpm test:e2e:smoke`
+- `pnpm test:e2e:hardening`
+- `pnpm test:perf:baseline`
+- `pnpm test:perf:gate`
 
 `scripts/e2e-smoke.mjs` exercises the main mixed-methods pilot workflow from login through import, coding, derivation, analysis, export, backup, and restore.

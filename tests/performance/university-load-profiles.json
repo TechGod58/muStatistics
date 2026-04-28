@@ -1,0 +1,60 @@
+{
+  "notes": "Target load profiles for university pilot and deployment hardening. Use MU_PERF_PROFILE=<profileId> to run one profile.",
+  "profiles": [
+    {
+      "id": "pilot_lab_25",
+      "description": "Department pilot lab with moderate concurrency and mixed quant/collab activity.",
+      "virtualUsers": 25,
+      "rowCount": 3000,
+      "iterations": 2,
+      "thinkTimeMs": 100,
+      "provisionBatchSize": 10,
+      "operations": [
+        "descriptives",
+        "compare_means",
+        "regression",
+        "t_tests",
+        "crosstabs",
+        "presence_ping",
+        "project_message_post",
+        "project_message_get"
+      ]
+    },
+    {
+      "id": "classroom_peak_60",
+      "description": "Peak class usage with heavy read/analysis and frequent presence pings.",
+      "virtualUsers": 60,
+      "rowCount": 2500,
+      "iterations": 2,
+      "thinkTimeMs": 50,
+      "provisionBatchSize": 12,
+      "operations": [
+        "descriptives",
+        "compare_means",
+        "t_tests",
+        "crosstabs",
+        "presence_ping",
+        "presence_ping",
+        "project_message_get"
+      ]
+    },
+    {
+      "id": "campus_peak_100",
+      "description": "Campus pilot target from collaboration requirements (100 active connections).",
+      "virtualUsers": 100,
+      "rowCount": 2000,
+      "iterations": 1,
+      "thinkTimeMs": 0,
+      "provisionBatchSize": 15,
+      "operations": [
+        "descriptives",
+        "compare_means",
+        "regression",
+        "t_tests",
+        "presence_ping",
+        "project_message_post",
+        "project_message_get"
+      ]
+    }
+  ]
+}

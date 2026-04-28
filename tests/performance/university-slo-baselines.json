@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "notes": "Deployment SLO baselines for university load profiles. Update only after verified perf hardening runs.",
+  "lockedAt": "2026-04-21T18:57:22.079Z",
+  "lockedBy": "scripts/perf-university-load.mjs",
+  "profiles": {
+    "pilot_lab_25": {
+      "maxDurationMs": 137930,
+      "maxErrorRate": 0.01,
+      "minThroughputOpsPerSec": 2.94,
+      "operations": {
+        "descriptives": {
+          "p95Ms": 17652,
+          "maxMs": 22978
+        },
+        "compare_means": {
+          "p95Ms": 17580,
+          "maxMs": 22031
+        },
+        "regression": {
+          "p95Ms": 16104,
+          "maxMs": 21482
+        },
+        "t_tests": {
+          "p95Ms": 18010,
+          "maxMs": 22607
+        },
+        "crosstabs": {
+          "p95Ms": 16687,
+          "maxMs": 20983
+        },
+        "presence_ping": {
+          "p95Ms": 8465,
+          "maxMs": 10569
+        },
+        "project_message_post": {
+          "p95Ms": 9900,
+          "maxMs": 14087
+        },
+        "project_message_get": {
+          "p95Ms": 4485,
+          "maxMs": 6061
+        }
+      }
+    },
+    "classroom_peak_60": {
+      "maxDurationMs": 287582,
+      "maxErrorRate": 0.01,
+      "minThroughputOpsPerSec": 2.96,
+      "operations": {
+        "descriptives": {
+          "p95Ms": 38768,
+          "maxMs": 51686
+        },
+        "compare_means": {
+          "p95Ms": 39950,
+          "maxMs": 51383
+        },
+        "t_tests": {
+          "p95Ms": 40735,
+          "maxMs": 49795
+        },
+        "crosstabs": {
+          "p95Ms": 40867,
+          "maxMs": 50449
+        },
+        "presence_ping": {
+          "p95Ms": 28165,
+          "maxMs": 36450
+        },
+        "project_message_get": {
+          "p95Ms": 24216,
+          "maxMs": 28846
+        }
+      }
+    },
+    "campus_peak_100": {
+      "maxDurationMs": 337008,
+      "maxErrorRate": 0.01,
+      "minThroughputOpsPerSec": 2.1,
+      "operations": {
+        "descriptives": {
+          "p95Ms": 88466,
+          "maxMs": 116475
+        },
+        "compare_means": {
+          "p95Ms": 94248,
+          "maxMs": 112478
+        },
+        "regression": {
+          "p95Ms": 94649,
+          "maxMs": 114184
+        },
+        "t_tests": {
+          "p95Ms": 91313,
+          "maxMs": 110707
+        },
+        "presence_ping": {
+          "p95Ms": 59859,
+          "maxMs": 77562
+        },
+        "project_message_post": {
+          "p95Ms": 2814,
+          "maxMs": 10503
+        },
+        "project_message_get": {
+          "p95Ms": 185,
+          "maxMs": 240
+        }
+      }
+    }
+  }
+}

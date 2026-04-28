@@ -92,13 +92,22 @@
       <!-- Tab bar -->
       <div class="tab-shell">
         <nav class="tab-bar">
-          <button class="tab-btn active" data-tab="collaboration">Collaboration</button>
-          <button class="tab-btn" data-tab="projects">Projects</button>
-          <button class="tab-btn" data-tab="qualitative">Qualitative</button>
-          <button class="tab-btn" data-tab="quantitative">Quantitative</button>
-          <button class="tab-btn" data-tab="status">Status</button>
+          <div class="tab-row" role="tablist" aria-label="Primary workspace tabs">
+            <button id="tab-btn-collaboration" class="tab-btn active" data-tab="collaboration" type="button" role="tab" aria-selected="true" aria-controls="tab-collaboration" tabindex="0">Collaboration</button>
+            <button id="tab-btn-projects" class="tab-btn" data-tab="projects" type="button" role="tab" aria-selected="false" aria-controls="tab-projects" tabindex="-1">Projects</button>
+            <button id="tab-btn-qualitative" class="tab-btn" data-tab="qualitative" type="button" role="tab" aria-selected="false" aria-controls="tab-qualitative" tabindex="-1">Qualitative</button>
+            <button id="tab-btn-quantitative" class="tab-btn" data-tab="quantitative" type="button" role="tab" aria-selected="false" aria-controls="tab-quantitative" tabindex="-1">Quantitative</button>
+            <button id="tab-btn-status" class="tab-btn" data-tab="status" type="button" role="tab" aria-selected="false" aria-controls="tab-status" tabindex="-1">Status</button>
+          </div>
+          <div class="tab-guide-row">
+            <button type="button" class="tab-guide-btn active" data-guide-tab="collaboration">Collaboration User Instructions</button>
+            <button type="button" class="tab-guide-btn" data-guide-tab="projects">Projects User Instructions</button>
+            <button type="button" class="tab-guide-btn" data-guide-tab="qualitative">Qualitative User Instructions</button>
+            <button type="button" class="tab-guide-btn" data-guide-tab="quantitative">Quantitative User Instructions</button>
+            <button type="button" class="tab-guide-btn" data-guide-tab="status">Status User Instructions</button>
+          </div>
         </nav>
-        <button id="global-chat-btn" class="secondary-action" type="button">Open chat</button>
+        <button id="global-chat-btn" class="secondary-action" type="button">Open Group Chat</button>
       </div>
 
       <!-- ── Projects tab ── -->
@@ -130,7 +139,7 @@
           </div>
         </div>
       </section>
-      <div class="tab-panel active" id="tab-collaboration">
+      <div class="tab-panel active" id="tab-collaboration" role="tabpanel" aria-labelledby="tab-btn-collaboration" aria-hidden="false" tabindex="0">
         <section class="tab-intro">
           <div>
             <p class="eyebrow">Collaboration</p>
@@ -138,40 +147,82 @@
           </div>
           <p class="small-muted">This is the operational layer for ownership, professor presence, and day-to-day coordination.</p>
         </section>
-        <section class="tab-overview">
-          <article class="panel overview-card">
-            <span class="workspace-label">Projects</span>
-            <strong id="project-count">0</strong>
-            <p class="small-muted">Projects available to your account.</p>
-          </article>
-          <article class="panel overview-card">
-            <span class="workspace-label">Members</span>
-            <strong id="member-count">0</strong>
-            <p class="small-muted">Users attached to the selected workspace.</p>
-          </article>
-          <article class="panel overview-card">
-            <span class="workspace-label">Active now</span>
-            <strong id="active-user-count">0</strong>
-            <p class="small-muted">Live presence in the current project.</p>
-          </article>
-          <article class="panel overview-card">
-            <span class="workspace-label">Recent chat</span>
-            <strong id="message-preview-count">0</strong>
-            <p class="small-muted">Popup chat is available for the selected project.</p>
-          </article>
-        </section>
-        <section class="tab-layout tab-layout-wide">
-          <article class="panel">
-            <div class="section-header">
-              <div>
-                <h2 style="margin-bottom:6px">Workspace selection</h2>
-                <p class="small-muted" style="margin:0">Choose the project you want to coordinate, then manage membership and mode around it.</p>
+        <section class="workspace-shell-3col collaboration-shell">
+          <aside class="workspace-rail collaboration-rail">
+            <article class="panel">
+              <div class="section-header">
+                <div>
+                  <h2 style="margin-bottom:6px">Workspace selection</h2>
+                  <p class="small-muted" style="margin:0">Choose the project you want to coordinate, then manage membership and mode around it.</p>
+                </div>
               </div>
-            </div>
-            <ul id="projects-list" class="interactive-list" style="margin-top:16px"></ul>
-          </article>
+              <ul id="projects-list" class="interactive-list" style="margin-top:16px"></ul>
+            </article>
 
-          <div class="stack gap-12">
+            <article class="panel">
+              <div class="section-header">
+                <h2>Members of selected project</h2>
+                <span class="small-muted">Owners and collaborators</span>
+              </div>
+              <ul id="members-list" class="interactive-list" style="margin-top:16px"></ul>
+            </article>
+
+            <article class="panel">
+              <div class="section-header">
+                <h2>Active now</h2>
+                <span class="small-muted">Live presence</span>
+              </div>
+              <ul id="active-users-list" class="interactive-list" style="margin-top:16px"></ul>
+            </article>
+          </aside>
+
+          <section class="workspace-canvas collaboration-canvas">
+            <article class="panel">
+              <div class="section-header">
+                <div>
+                  <h2 style="margin-bottom:6px">Live activity</h2>
+                  <p class="small-muted" style="margin:0">Watch project-level activity and message readiness while coordinating with the team.</p>
+                </div>
+              </div>
+              <div class="tab-overview" style="margin-top:14px">
+                <article class="panel overview-card">
+                  <span class="workspace-label">Projects</span>
+                  <strong id="project-count">0</strong>
+                  <p class="small-muted">Projects available to your account.</p>
+                </article>
+                <article class="panel overview-card">
+                  <span class="workspace-label">Members</span>
+                  <strong id="member-count">0</strong>
+                  <p class="small-muted">Users attached to the selected workspace.</p>
+                </article>
+                <article class="panel overview-card">
+                  <span class="workspace-label">Active now</span>
+                  <strong id="active-user-count">0</strong>
+                  <p class="small-muted">Live presence in the current project.</p>
+                </article>
+                <article class="panel overview-card">
+                  <span class="workspace-label">Recent chat</span>
+                  <strong id="message-preview-count">0</strong>
+                  <p class="small-muted">Popup chat is available for the selected project.</p>
+                </article>
+              </div>
+            </article>
+
+            <article class="panel">
+              <div class="section-header">
+                <h2>Project chat</h2>
+                <span class="small-muted">Popup only</span>
+              </div>
+              <p class="small-muted" style="margin:16px 0 0">
+                Use the popup chat window for project conversation. Saved history remains exportable without pinning the text thread inside this tab.
+              </p>
+              <div class="inline-actions" style="margin-top:16px">
+                <button id="collaboration-chat-btn" type="button" class="small">Open popup chat</button>
+              </div>
+            </article>
+          </section>
+
+          <aside class="workspace-inspector collaboration-inspector">
             <article class="panel">
               <h2>Share project</h2>
               <form id="member-form" class="stack gap-12">
@@ -212,45 +263,13 @@
                 <p class="small-muted" id="collaboration-mode-help">Collaborative projects support professor presence alerts and popup project chat.</p>
               </div>
             </article>
-          </div>
-        </section>
-
-        <section class="tab-layout">
-          <article class="panel">
-            <div class="section-header">
-              <h2>Members of selected project</h2>
-              <span class="small-muted">Owners and collaborators</span>
-            </div>
-            <ul id="members-list" class="interactive-list" style="margin-top:16px"></ul>
-          </article>
-
-          <div class="stack gap-12">
-            <article class="panel">
-              <div class="section-header">
-                <h2>Active now</h2>
-                <span class="small-muted">Live presence</span>
-              </div>
-              <ul id="active-users-list" class="interactive-list" style="margin-top:16px"></ul>
-            </article>
-            <article class="panel">
-              <div class="section-header">
-                <h2>Project chat</h2>
-                <span class="small-muted">Popup only</span>
-              </div>
-              <p class="small-muted" style="margin:16px 0 0">
-                Use the popup chat window for project conversation. Saved history remains exportable without pinning the text thread inside this tab.
-              </p>
-              <div class="inline-actions" style="margin-top:16px">
-                <button id="collaboration-chat-btn" type="button" class="small">Open popup chat</button>
-              </div>
-            </article>
-          </div>
+          </aside>
         </section>
 
       </div>
 
       <!-- ── Qualitative tab ── -->
-      <div class="tab-panel" id="tab-projects">
+      <div class="tab-panel" id="tab-projects" role="tabpanel" aria-labelledby="tab-btn-projects" aria-hidden="true" tabindex="-1" hidden>
         <section class="tab-intro">
           <div>
             <p class="eyebrow">Project setup</p>
@@ -258,89 +277,131 @@
           </div>
           <p class="small-muted">Project history and saved chat stay anchored here even if the interaction layout changes later.</p>
         </section>
-        <section class="tab-overview">
-          <article class="panel overview-card">
-            <span class="workspace-label">Projects</span>
-            <strong id="project-secondary-count">0</strong>
-            <p class="small-muted">Project shells available for work.</p>
-          </article>
-          <article class="panel overview-card">
-            <span class="workspace-label">Selected</span>
-            <strong id="project-selection-status">None</strong>
-            <p class="small-muted">Current active project shell.</p>
-          </article>
-          <article class="panel overview-card">
-            <span class="workspace-label">Saved chat</span>
-            <strong id="project-chat-history-count">0</strong>
-            <p class="small-muted">Stored chat remains available through popup chat and export.</p>
-          </article>
+        <section class="workspace-submenu projects-view-menu">
+          <button type="button" class="workspace-submenu-btn" data-projects-menu="list">Project list</button>
+          <button type="button" class="workspace-submenu-btn" data-projects-menu="overview">Overview</button>
+          <button type="button" class="workspace-submenu-btn" data-projects-menu="chat-tools">Chat tools</button>
+          <button type="button" class="workspace-submenu-btn" data-projects-menu="settings">Settings</button>
         </section>
-        <section class="tab-layout tab-layout-wide">
-          <div class="stack gap-12">
-            <article class="panel">
-              <h2>Create project</h2>
-              <form id="project-form" class="stack gap-12">
+        <section class="workspace-shell-3col projects-shell">
+          <aside class="workspace-rail projects-rail" data-projects-view-container>
+            <article class="panel" data-projects-view-item data-projects-view="list">
+              <div class="section-header">
+                <div>
+                  <h2 style="margin-bottom:6px">Project list</h2>
+                  <p class="small-muted" style="margin:0">Select the project shell you want to open across the rest of the app.</p>
+                </div>
+                <span class="badge" id="project-secondary-count">0</span>
+              </div>
+              <div class="grid grid-2 compact-grid" style="margin-top:14px">
                 <label class="field">
-                  <span>Project name</span>
-                  <input id="project-name" type="text" placeholder="Customer interviews Q2" required />
+                  <span>Filter name</span>
+                  <input type="text" placeholder="Search project name" />
                 </label>
                 <label class="field">
-                  <span>Description</span>
-                  <textarea id="project-description" rows="2" placeholder="Short description"></textarea>
-                </label>
-                <label class="field">
-                  <span>Workspace mode</span>
-                  <select id="project-workspace-mode">
-                    <option value="solo" selected>solo</option>
+                  <span>Mode</span>
+                  <select>
+                    <option value="" selected>All modes</option>
+                    <option value="solo">solo</option>
                     <option value="collaborative">collaborative</option>
                   </select>
                 </label>
-                <button type="submit">Save project</button>
-              </form>
-              <p class="small-muted">Start here. After you save a project, the collaboration, qualitative, and quantitative tools will unlock for that project.</p>
+              </div>
+              <ul id="projects-secondary-list" class="interactive-list" style="margin-top:16px"></ul>
             </article>
-            <article class="panel stat-card">
-              <h2>Selected project</h2>
-              <div id="project-hub-card">Create a project here, or select an existing one from the list.</div>
-              <div class="stack gap-12" style="margin-top:16px">
-                <button id="delete-project-btn" type="button" class="secondary-action">Delete selected project</button>
-                <p class="small-muted">Only project owners can delete a project. Deletion removes its project data and stored artifacts.</p>
+          </aside>
+
+          <section class="workspace-canvas projects-canvas" data-projects-view-container>
+            <article class="panel" data-projects-view-item data-projects-view="overview" hidden>
+              <div class="section-header">
+                <div>
+                  <h2 style="margin-bottom:6px">Selected project summary</h2>
+                  <p class="small-muted" style="margin:0">Current active project shell and working context.</p>
+                </div>
+                <span class="small-muted">Selected: <strong id="project-selection-status">None</strong></span>
+              </div>
+              <div id="project-hub-card" style="margin-top:14px">Create a project here, or select an existing one from the list.</div>
+              <div class="tab-overview" style="margin-top:16px">
+                <article class="panel overview-card">
+                  <span class="workspace-label">Saved chat</span>
+                  <strong id="project-chat-history-count">0</strong>
+                  <p class="small-muted">Stored chat remains available through popup chat and export.</p>
+                </article>
+                <article class="panel overview-card">
+                  <span class="workspace-label">Status</span>
+                  <strong>Ready</strong>
+                  <p class="small-muted">Project list and setup controls are available in this shell.</p>
+                </article>
               </div>
             </article>
-          </div>
-          <article class="panel">
-            <div class="section-header">
-              <div>
-                <h2>Project list</h2>
-                <p class="small-muted" style="margin:0">Select the project shell you want to open across the rest of the app.</p>
+
+            <article class="panel" data-projects-view-item data-projects-view="chat-tools" hidden>
+              <div class="section-header">
+                <div>
+                  <h2 style="margin-bottom:6px">Project activity and chat tools</h2>
+                  <p class="small-muted" style="margin:0">
+                    Chat entry stays in the popup window. Use this panel for launch and export only.
+                  </p>
+                </div>
+                <span class="small-muted" id="project-chat-tools-count">0 saved messages</span>
               </div>
-            </div>
-            <ul id="projects-secondary-list" class="interactive-list" style="margin-top:16px"></ul>
-          </article>
-        </section>
-        <section>
-          <article class="panel">
-            <div class="section-header">
-              <div>
-                <h2 style="margin-bottom:6px">Project chat tools</h2>
-                <p class="small-muted" style="margin:0">
-                  Chat entry stays in the popup window. Use this panel for launch and export only.
-                </p>
+              <div class="inline-actions" style="margin-top:14px">
+                <button id="project-chat-popup-btn" type="button" class="small">Open popup chat</button>
+                <button id="export-chat-history-word-btn" type="button" class="small">Chat history Word</button>
+                <button id="export-chat-history-excel-btn" type="button" class="small">Chat history Excel</button>
+                <button id="export-chat-history-json-btn" type="button" class="small">Chat history JSON</button>
               </div>
-              <span class="small-muted" id="project-chat-tools-count">0 saved messages</span>
-            </div>
-            <div class="inline-actions" style="margin-top:14px">
-              <button id="project-chat-popup-btn" type="button" class="small">Open popup chat</button>
-              <button id="export-chat-history-word-btn" type="button" class="small">Chat history Word</button>
-              <button id="export-chat-history-excel-btn" type="button" class="small">Chat history Excel</button>
-              <button id="export-chat-history-json-btn" type="button" class="small">Chat history JSON</button>
-            </div>
-            <p class="small-muted" style="margin-top:14px">The text thread itself is no longer fixed inside the Projects tab.</p>
-          </article>
+              <p class="small-muted" style="margin-top:14px">The text thread itself is no longer fixed inside the Projects tab.</p>
+            </article>
+          </section>
+
+          <aside class="workspace-inspector projects-inspector" data-projects-view-container>
+            <details class="panel" data-projects-view-item data-projects-view="settings" hidden open>
+              <summary><strong>Create project</strong></summary>
+              <div class="stack gap-12" style="margin-top:14px">
+                <form id="project-form" class="stack gap-12">
+                  <label class="field">
+                    <span>Project name</span>
+                    <input id="project-name" type="text" placeholder="Customer interviews Q2" required />
+                  </label>
+                  <label class="field">
+                    <span>Description</span>
+                    <textarea id="project-description" rows="2" placeholder="Short description"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>Workspace mode</span>
+                    <select id="project-workspace-mode">
+                      <option value="solo" selected>solo</option>
+                      <option value="collaborative">collaborative</option>
+                    </select>
+                  </label>
+                  <button type="submit">Save project</button>
+                </form>
+                <div id="project-form-status" class="small-muted" role="status" aria-live="polite">Enter project details, then save.</div>
+                <p class="small-muted">After you save a project, collaboration, qualitative, and quantitative tools unlock for that project.</p>
+              </div>
+            </details>
+
+            <details class="panel stat-card" data-projects-view-item data-projects-view="settings" hidden>
+              <summary><strong>Selected project</strong></summary>
+              <div class="stack gap-12" style="margin-top:14px">
+                <label class="field">
+                  <span>Current selection</span>
+                  <input id="selected-project-management" type="text" value="No project selected" disabled />
+                </label>
+                <p class="small-muted">Use project owner controls to manage lifecycle and workspace settings.</p>
+                <div class="stack gap-12" style="margin-top:8px; padding:12px; border:1px solid rgba(255,107,107,0.35); border-radius:12px; background:rgba(255,107,107,0.08)">
+                  <button id="delete-project-btn" type="button" class="danger">Delete selected project</button>
+                  <p class="small-muted">Only project owners can delete a project. Deletion removes project data and stored artifacts.</p>
+                </div>
+                <div id="project-management-status" class="small-muted" role="status" aria-live="polite">No management actions yet.</div>
+              </div>
+            </details>
+          </aside>
         </section>
       </div>
 
-      <div class="tab-panel" id="tab-qualitative">
+      <div class="tab-panel" id="tab-qualitative" role="tabpanel" aria-labelledby="tab-btn-qualitative" aria-hidden="true" tabindex="-1" hidden>
         <section class="tab-intro">
           <div>
             <p class="eyebrow">Qualitative workspace</p>
@@ -389,7 +450,8 @@
           <button type="button" class="workspace-submenu-btn" data-qual-parent="evidence" data-qual-subtab="queries">Queries and reports</button>
         </section>
 
-        <section class="grid grid-2 qualitative-setup workspace-section" data-qual-section="capture">
+        <section class="workspace-shell-3col qualitative-shell">
+        <section class="grid grid-2 qualitative-setup workspace-section workspace-rail" data-qual-section="capture">
           <div class="workspace-banner">
             <p class="eyebrow">Capture</p>
             <h3>Bring material into the project and define the coding language before analysis starts.</h3>
@@ -465,7 +527,7 @@
           </article>
         </section>
 
-        <section class="qualitative-main workspace-section" data-qual-section="coding">
+        <section class="qualitative-main workspace-section workspace-canvas" data-qual-section="coding">
           <div class="workspace-banner">
             <p class="eyebrow">Coding</p>
             <h3>Work inside one active source, keep the code in view, and apply decisions in context.</h3>
@@ -496,7 +558,7 @@
             </div>
             <div id="workspace-media-panel" data-qual-parent="coding" data-qual-subsection="media" style="margin-top:16px; display:none">
               <div id="workspace-media-player"></div>
-              <div class="grid grid-2 compact-grid" style="margin-top:12px">
+              <div class="grid grid-3 compact-grid" style="margin-top:12px">
                 <label class="field">
                   <span>Transcript source ID</span>
                   <input id="workspace-transcript-source-id" type="text" placeholder="source-... transcript target" />
@@ -505,8 +567,66 @@
                   <span>Transcription note</span>
                   <input id="workspace-transcription-note" type="text" placeholder="Segment assembly transcript" />
                 </label>
+                <label class="field">
+                  <span>Transcription mode</span>
+                  <select id="workspace-transcription-mode">
+                    <option value="segment_assembly">Segment assembly</option>
+                    <option value="timeline_chunked">Timeline chunked</option>
+                    <option value="hybrid">Hybrid</option>
+                  </select>
+                </label>
               </div>
-              <div class="grid grid-4 compact-grid" style="margin-top:12px">
+              <div class="grid grid-4 compact-grid" style="margin-top:10px">
+                <label class="field">
+                  <span>Provider</span>
+                  <select id="workspace-transcription-provider">
+                    <option value="openai" selected>OpenAI (provider-grade)</option>
+                    <option value="internal">Internal fallback</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Provider model</span>
+                  <input id="workspace-transcription-provider-model" type="text" value="gpt-4o-mini-transcribe" />
+                </label>
+                <label class="field">
+                  <span>Provider prompt (optional)</span>
+                  <input id="workspace-transcription-provider-prompt" type="text" placeholder="Names, acronyms, or domain terms" />
+                </label>
+              </div>
+              <div class="grid grid-4 compact-grid" style="margin-top:10px">
+                <label class="field">
+                  <span>Language</span>
+                  <input id="workspace-transcription-language" type="text" value="en" />
+                </label>
+                <label class="field">
+                  <span>Chunk seconds</span>
+                  <input id="workspace-transcription-chunk-seconds" type="number" min="3" max="120" step="1" value="12" />
+                </label>
+                <label class="field">
+                  <span>Speaker strategy</span>
+                  <select id="workspace-transcription-speaker-strategy">
+                    <option value="alternating">Alternating</option>
+                    <option value="single">Single speaker</option>
+                    <option value="content_based">Content based</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Confidence threshold</span>
+                  <input id="workspace-transcription-confidence-threshold" type="number" min="0" max="1" step="0.01" value="0.55" />
+                </label>
+              </div>
+              <div class="inline-actions" style="margin-top:8px">
+                <label class="field-checkbox">
+                  <input id="workspace-transcription-diarization" type="checkbox" checked />
+                  <span>Diarization</span>
+                </label>
+                <label class="field-checkbox">
+                  <input id="workspace-transcription-punctuation" type="checkbox" checked />
+                  <span>Punctuation restore</span>
+                </label>
+              </div>
+              <div class="small-muted" style="margin-top:8px">Provider-grade mode sends the selected audio/video source to the configured speech provider (OpenAI API key required on the server).</div>
+              <div class="grid grid-5 compact-grid" style="margin-top:12px">
                 <label class="field">
                   <span>Start seconds</span>
                   <input id="workspace-media-start" type="number" min="0" step="0.1" value="0" />
@@ -518,6 +638,20 @@
                 <button id="workspace-capture-start-btn" type="button" class="small">Use current as start</button>
                 <button id="workspace-capture-end-btn" type="button" class="small">Use current as end</button>
               </div>
+              <div class="grid grid-3 compact-grid" style="margin-top:10px">
+                <label class="field">
+                  <span>Speaker label</span>
+                  <input id="workspace-media-speaker-label" type="text" placeholder="Speaker 1" />
+                </label>
+                <label class="field">
+                  <span>Confidence (0-1)</span>
+                  <input id="workspace-media-confidence" type="number" min="0" max="1" step="0.01" value="0.9" />
+                </label>
+                <label class="field">
+                  <span>Sync score (0-1)</span>
+                  <input id="workspace-media-sync-score" type="number" min="0" max="1" step="0.01" value="0.9" />
+                </label>
+              </div>
               <label class="field" style="margin-top:12px">
                 <span>Segment transcript</span>
                 <textarea id="workspace-media-text" rows="3" placeholder="Transcript excerpt or observed media note"></textarea>
@@ -527,7 +661,74 @@
                 <button id="workspace-cancel-sync-edit-btn" type="button" class="small" style="display:none">Cancel sync edit</button>
                 <button id="workspace-refresh-media-timeline-btn" type="button" class="small">Refresh timeline</button>
                 <button id="workspace-queue-transcription-btn" type="button" class="small">Queue transcription job</button>
+                <button id="workspace-auto-align-sync-btn" type="button" class="small">Auto-align sync links</button>
               </div>
+              <div class="grid grid-2 compact-grid" style="margin-top:8px">
+                <label class="field">
+                  <span>Auto-align mode</span>
+                  <select id="workspace-sync-align-mode">
+                    <option value="snap_to_segment">Snap toward segment</option>
+                    <option value="fit_to_segment">Fit to segment</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Max drift before align (ms)</span>
+                  <input id="workspace-sync-max-drift-ms" type="number" min="100" max="120000" step="50" value="1200" />
+                </label>
+              </div>
+              <div id="workspace-sync-align-status" class="small-muted" style="margin-top:8px">Auto-align shifts transcript sync links back to their segment anchors when drift is high.</div>
+              <div class="grid grid-4 compact-grid" style="margin-top:10px">
+                <label class="field">
+                  <span>Focused sync row</span>
+                  <input id="workspace-focused-sync-link-id" type="text" value="" placeholder="Select a transcript row" disabled />
+                </label>
+                <label class="field">
+                  <span>Context seconds</span>
+                  <input id="workspace-media-context-seconds" type="number" min="0" max="120" step="0.5" value="5" />
+                </label>
+                <button id="workspace-media-code-focused-row-btn" type="button" class="small">Code focused row</button>
+                <button id="workspace-media-code-context-row-btn" type="button" class="small">Code row ± context</button>
+              </div>
+              <div class="inline-actions" style="margin-top:8px">
+                <button id="workspace-media-save-focused-range-btn" type="button" class="small">Save focused range edits</button>
+                <button id="workspace-media-split-focused-row-btn" type="button" class="small">Split focused row at playhead</button>
+                <button id="workspace-media-merge-next-row-btn" type="button" class="small">Merge focused row with next</button>
+                <button id="workspace-media-nudge-left-btn" type="button" class="small">Nudge row -250ms</button>
+                <button id="workspace-media-nudge-right-btn" type="button" class="small">Nudge row +250ms</button>
+              </div>
+              <div class="grid grid-4 compact-grid" style="margin-top:10px">
+                <label class="field">
+                  <span>Diarization from</span>
+                  <input id="workspace-diarization-from-label" type="text" list="workspace-speaker-label-options" placeholder="Speaker 1 or blank for unlabeled" />
+                </label>
+                <label class="field">
+                  <span>Diarization to</span>
+                  <input id="workspace-diarization-to-label" type="text" list="workspace-speaker-label-options" placeholder="Professor / Student A / Moderator" />
+                </label>
+                <label class="field">
+                  <span>Max confidence (optional)</span>
+                  <input id="workspace-diarization-max-confidence" type="number" min="0" max="1" step="0.01" value="" placeholder="Only relabel rows <= this confidence" />
+                </label>
+                <button id="workspace-apply-diarization-btn" type="button" class="small">Apply diarization correction</button>
+              </div>
+              <div class="grid grid-4 compact-grid" style="margin-top:8px">
+                <label class="field">
+                  <span>QA max confidence</span>
+                  <input id="workspace-diarization-qa-max-confidence" type="number" min="0" max="1" step="0.01" value="0.62" />
+                </label>
+                <label class="field">
+                  <span>QA switch window (ms)</span>
+                  <input id="workspace-diarization-qa-switch-window-ms" type="number" min="100" max="120000" step="50" value="1500" />
+                </label>
+                <label class="field">
+                  <span>QA max rows</span>
+                  <input id="workspace-diarization-qa-max-rows" type="number" min="25" max="2000" step="25" value="300" />
+                </label>
+                <button id="workspace-run-diarization-qa-btn" type="button" class="small">Run diarization QA</button>
+              </div>
+              <datalist id="workspace-speaker-label-options"></datalist>
+              <div id="workspace-diarization-status" class="small-muted" style="margin-top:8px">Diarization corrections can relabel speakers across transcript rows while keeping token timelines aligned.</div>
+              <div id="workspace-diarization-qa-result" style="margin-top:10px"></div>
               <div id="workspace-sync-edit-note" class="small-muted" style="margin-top:8px">Create coded media segments and optional transcript sync links.</div>
               <div id="workspace-media-timeline" style="margin-top:14px">No media timeline yet.</div>
               <div id="workspace-transcription-jobs" style="margin-top:14px"></div>
@@ -561,7 +762,7 @@
           </article>
         </section>
 
-        <section class="grid grid-3 qualitative-inspector workspace-section" data-qual-section="capture">
+        <section class="grid grid-3 qualitative-inspector workspace-section workspace-inspector" data-qual-section="capture">
           <article class="panel" data-qual-parent="capture" data-qual-subsection="annotate">
             <h2>Create segment</h2>
             <form id="segment-form" class="stack gap-12">
@@ -760,7 +961,7 @@
           </article>
         </section>
 
-        <section class="grid grid-2 qualitative-rail workspace-section" data-qual-section="library">
+        <section class="grid grid-2 qualitative-rail workspace-section workspace-rail" data-qual-section="library">
           <div class="workspace-banner">
             <p class="eyebrow">Library</p>
             <h3>Use the project library to move between raw material and the code system without leaving the workspace.</h3>
@@ -791,7 +992,7 @@
           </article>
         </section>
 
-        <section class="grid grid-3 qualitative-evidence workspace-section" data-qual-section="evidence">
+        <section class="grid grid-3 qualitative-evidence workspace-section workspace-canvas" data-qual-section="evidence">
           <div class="workspace-banner">
             <p class="eyebrow">Evidence</p>
             <h3>Inspect the coded record directly: segments, applied codes, and the analytic memos that explain them.</h3>
@@ -836,12 +1037,116 @@
                 <span class="small-muted" id="reference-count">0</span>
               </div>
               <div id="reference-summary" class="small-muted">0 project references.</div>
-              <div class="grid grid-3 compact-grid" style="margin-top:12px">
+              <div class="grid grid-5 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Search references</span>
+                  <input id="reference-search-text" type="text" placeholder="trust concern, DOI, author" />
+                </label>
+                <label class="field">
+                  <span>Format filter</span>
+                  <select id="reference-filter-format">
+                    <option value="all" selected>All</option>
+                    <option value="manual">manual</option>
+                    <option value="ris">ris</option>
+                    <option value="bibtex">bibtex</option>
+                    <option value="csljson">csljson</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Collection filter</span>
+                  <select id="reference-filter-collection-id">
+                    <option value="">All collections</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Export format</span>
+                  <select id="reference-export-format">
+                    <option value="json" selected>JSON</option>
+                    <option value="ris">RIS</option>
+                    <option value="bibtex">BibTeX</option>
+                    <option value="csljson">CSL-JSON</option>
+                  </select>
+                </label>
+                <div class="field" style="justify-content:end">
+                  <span>&nbsp;</span>
+                  <button id="export-references-btn" type="button" class="small">Export references</button>
+                </div>
+              </div>
+
+              <form id="reference-editor-form" class="stack gap-12" style="margin-top:12px">
+                <div class="grid grid-4 compact-grid">
+                  <label class="field">
+                    <span>Title</span>
+                    <input id="reference-editor-title" type="text" placeholder="Reference title" />
+                  </label>
+                  <label class="field">
+                    <span>Type</span>
+                    <input id="reference-editor-type" type="text" placeholder="article" value="article" />
+                  </label>
+                  <label class="field">
+                    <span>Year</span>
+                    <input id="reference-editor-year" type="number" min="1000" max="3000" placeholder="2026" />
+                  </label>
+                  <label class="field">
+                    <span>Related source</span>
+                    <select id="reference-editor-source">
+                      <option value="">No source link</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="grid grid-4 compact-grid">
+                  <label class="field">
+                    <span>Authors (; separated)</span>
+                    <input id="reference-editor-authors" type="text" placeholder="Smith J; Doe A" />
+                  </label>
+                  <label class="field">
+                    <span>Container title</span>
+                    <input id="reference-editor-container" type="text" placeholder="Journal or book" />
+                  </label>
+                  <label class="field">
+                    <span>Publisher</span>
+                    <input id="reference-editor-publisher" type="text" placeholder="Publisher" />
+                  </label>
+                  <label class="field">
+                    <span>Keywords (; separated)</span>
+                    <input id="reference-editor-keywords" type="text" placeholder="trust; fairness" />
+                  </label>
+                </div>
+                <div class="grid grid-3 compact-grid">
+                  <label class="field">
+                    <span>DOI</span>
+                    <input id="reference-editor-doi" type="text" placeholder="10.1234/example.2026" />
+                  </label>
+                  <label class="field">
+                    <span>URL</span>
+                    <input id="reference-editor-url" type="url" placeholder="https://..." />
+                  </label>
+                  <div class="field" style="justify-content:end">
+                    <span>&nbsp;</span>
+                    <div class="inline-actions">
+                      <button id="save-reference-btn" type="submit" class="small">Save reference</button>
+                      <button id="clear-reference-btn" type="button" class="small">Clear</button>
+                    </div>
+                  </div>
+                </div>
+                <label class="field">
+                  <span>Abstract</span>
+                  <textarea id="reference-editor-abstract" rows="3" placeholder="Abstract text"></textarea>
+                </label>
+                <label class="field">
+                  <span>Raw record text</span>
+                  <textarea id="reference-editor-raw" rows="3" placeholder="Optional raw import text"></textarea>
+                </label>
+                <div id="reference-editor-status" class="small-muted">Create or edit reference metadata here.</div>
+              </form>
+
+              <div class="grid grid-4 compact-grid" style="margin-top:12px">
                 <label class="field">
                   <span>Import format</span>
                   <select id="reference-import-format">
                     <option value="ris" selected>RIS</option>
                     <option value="bibtex">BibTeX</option>
+                    <option value="csljson">CSL-JSON</option>
                   </select>
                 </label>
                 <label class="field">
@@ -850,17 +1155,119 @@
                     <option value="">No source link</option>
                   </select>
                 </label>
+                <label class="field">
+                  <span>Duplicate handling</span>
+                  <label class="inline-check" style="margin-top:8px">
+                    <input id="reference-import-skip-duplicates" type="checkbox" checked />
+                    <span>Skip duplicates</span>
+                  </label>
+                </label>
                 <div class="field" style="justify-content:end">
                   <span>&nbsp;</span>
                   <button id="import-references-btn" type="button" class="small">Import references</button>
                 </div>
               </div>
               <label class="field" style="margin-top:12px">
-                <span>RIS or BibTeX text</span>
-                <textarea id="reference-import-text" rows="5" placeholder="@article{...} or TY  - JOUR ..."></textarea>
+                <span>Reference payload (RIS, BibTeX, or CSL-JSON)</span>
+                <textarea id="reference-import-text" rows="5" placeholder="@article{...} or TY  - JOUR ... or [{&quot;title&quot;:&quot;...&quot;}]"></textarea>
               </label>
-              <div id="reference-import-result" class="small-muted" style="margin-top:12px">Import RIS or BibTeX records and keep them attached to the project.</div>
-              <ul id="reference-list" class="interactive-list" style="margin-top:12px"></ul>
+              <div id="reference-import-result" class="small-muted" style="margin-top:12px">Import RIS, BibTeX, or CSL-JSON records and keep them attached to the project.</div>
+
+              <div class="grid grid-3 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Collection name</span>
+                  <input id="reference-collection-name" type="text" placeholder="Admissions review pack" />
+                </label>
+                <label class="field">
+                  <span>Collection description</span>
+                  <input id="reference-collection-description" type="text" placeholder="Committee packet references" />
+                </label>
+                <label class="field">
+                  <span>Color token</span>
+                  <select id="reference-collection-color">
+                    <option value="blue" selected>blue</option>
+                    <option value="teal">teal</option>
+                    <option value="green">green</option>
+                    <option value="amber">amber</option>
+                    <option value="red">red</option>
+                    <option value="violet">violet</option>
+                    <option value="slate">slate</option>
+                  </select>
+                </label>
+              </div>
+              <div class="grid grid-3 compact-grid" style="margin-top:8px">
+                <label class="field">
+                  <span>Add to collection</span>
+                  <select id="reference-collection-target">
+                    <option value="">Select collection</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Reference</span>
+                  <select id="reference-collection-reference-id">
+                    <option value="">Select reference</option>
+                  </select>
+                </label>
+                <div class="field" style="justify-content:end">
+                  <span>&nbsp;</span>
+                  <div class="inline-actions">
+                    <button id="reference-collection-create-btn" type="button" class="small">Create collection</button>
+                    <button id="reference-collection-add-btn" type="button" class="small">Add reference</button>
+                  </div>
+                </div>
+              </div>
+              <div id="reference-collection-status" class="small-muted" style="margin-top:8px">Manage reference collections and committee packs.</div>
+              <ul id="reference-collection-list" class="interactive-list" style="margin-top:10px"></ul>
+
+              <div class="grid grid-4 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Link reference</span>
+                  <select id="reference-link-reference-id">
+                    <option value="">Select reference</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Target type</span>
+                  <select id="reference-link-target-type">
+                    <option value="source" selected>source</option>
+                    <option value="segment">segment</option>
+                    <option value="memo">memo</option>
+                    <option value="code">code</option>
+                    <option value="case">case</option>
+                    <option value="annotation">annotation</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Target</span>
+                  <select id="reference-link-target-id">
+                    <option value="">Select target</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Link note</span>
+                  <input id="reference-link-note" type="text" placeholder="Context for this link" />
+                </label>
+              </div>
+              <div class="inline-actions" style="margin-top:8px">
+                <button id="reference-link-add-btn" type="button" class="small">Save link</button>
+              </div>
+              <div id="reference-link-status" class="small-muted" style="margin-top:8px">Link references to qualitative evidence targets.</div>
+
+              <div class="section-header" style="margin-top:12px">
+                <h3 style="margin:0">Duplicate candidates</h3>
+                <button id="reference-refresh-duplicates-btn" type="button" class="small">Refresh duplicates</button>
+              </div>
+              <ul id="reference-duplicate-list" class="interactive-list" style="margin-top:8px"></ul>
+
+              <div class="section-header" style="margin-top:12px">
+                <h3 style="margin:0">Merge history</h3>
+              </div>
+              <ul id="reference-merge-history-list" class="interactive-list" style="margin-top:8px"></ul>
+
+              <div class="section-header" style="margin-top:12px">
+                <h3 style="margin:0">Reference library</h3>
+              </div>
+              <ul id="reference-list" class="interactive-list" style="margin-top:8px"></ul>
             </article>
             <article class="panel evidence-query-panel" data-qual-parent="evidence" data-qual-subsection="queries">
             <div class="section-header">
@@ -929,14 +1336,29 @@
                 </select>
               </label>
             </div>
-            <div class="grid grid-3 compact-grid" style="margin-top:12px">
+            <div class="grid grid-5 compact-grid" style="margin-top:12px">
               <label class="field">
                 <span>Text search mode</span>
                 <select id="text-search-mode">
                   <option value="contains" selected>contains</option>
                   <option value="phrase">phrase</option>
                   <option value="whole_word">whole_word</option>
+                  <option value="wildcard">wildcard</option>
+                  <option value="regex">regex</option>
+                  <option value="fuzzy">fuzzy</option>
                 </select>
+              </label>
+              <label class="field">
+                <span>Linguistic mode</span>
+                <select id="text-search-linguistic-mode">
+                  <option value="none" selected>none</option>
+                  <option value="stem">stem</option>
+                  <option value="lemma">lemma</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Fuzzy distance</span>
+                <input id="text-search-fuzzy-distance" type="number" min="1" max="3" value="1" />
               </label>
               <label class="field">
                 <span>Case sensitive</span>
@@ -948,6 +1370,38 @@
               <label class="field">
                 <span>Context window</span>
                 <input id="text-search-context-window" type="number" min="10" max="200" value="40" />
+              </label>
+            </div>
+            <div class="grid grid-4 compact-grid" style="margin-top:12px">
+              <label class="field">
+                <span>Coding scope</span>
+                <select id="text-search-coding-scope">
+                  <option value="all" selected>all segments</option>
+                  <option value="coded_only">coded only</option>
+                  <option value="uncoded_only">uncoded only</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Min hits per segment</span>
+                <input id="text-search-min-hit-count" type="number" min="1" max="25" value="1" />
+              </label>
+              <label class="field">
+                <span>Snippet limit per segment</span>
+                <input id="text-search-snippet-limit" type="number" min="1" max="10" value="5" />
+              </label>
+              <label class="field">
+                <span>Sort by</span>
+                <select id="text-search-sort-by">
+                  <option value="hits_desc" selected>hits descending</option>
+                  <option value="source">source</option>
+                  <option value="segment">segment id</option>
+                </select>
+              </label>
+            </div>
+            <div class="grid grid-4 compact-grid" style="margin-top:12px">
+              <label class="field">
+                <span>Text-search max rows</span>
+                <input id="text-search-max-rows" type="number" min="1" max="500" value="200" />
               </label>
             </div>
             <div class="grid grid-3 compact-grid" style="margin-top:12px">
@@ -1002,6 +1456,20 @@
               <label class="field">
                 <span>Kappa threshold (&lt;=)</span>
                 <input id="inter-rater-min-kappa" type="number" min="-1" max="1" step="0.01" placeholder="all" />
+              </label>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:12px">
+              <label class="field">
+                <span>Merge min coder count</span>
+                <input id="merge-min-coder-count" type="number" min="1" max="20" value="2" />
+              </label>
+              <label class="field">
+                <span>Merge min confidence spread</span>
+                <input id="merge-min-confidence-spread" type="number" min="0" max="1" step="0.01" value="0.2" />
+              </label>
+              <label class="field">
+                <span>Merge max rows</span>
+                <input id="merge-max-rows" type="number" min="1" max="500" value="100" />
               </label>
             </div>
             <div class="grid grid-2 compact-grid" style="margin-top:12px">
@@ -1060,8 +1528,185 @@
                     <option value="none">none of the clauses</option>
                   </select>
                 </label>
+                <label class="field">
+                  <span>Case sensitive</span>
+                  <select id="compound-query-case-sensitive">
+                    <option value="false" selected>no</option>
+                    <option value="true">yes</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Max rows</span>
+                  <input id="compound-query-max-rows" type="number" min="1" max="500" value="200" />
+                </label>
+                <label class="field">
+                  <span>Group logic</span>
+                  <select id="compound-workbench-group-operator">
+                    <option value="all">all groups</option>
+                    <option value="any" selected>any group</option>
+                    <option value="none">none of the groups</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Min groups matched (optional)</span>
+                  <input id="compound-workbench-min-groups-matched" type="number" min="1" max="3" value="" placeholder="none" />
+                </label>
+              </div>
+              <div class="grid grid-4 compact-grid" style="margin-top:10px">
+                <label class="field">
+                  <span>Default linguistic mode</span>
+                  <select id="compound-default-linguistic-mode">
+                    <option value="none" selected>none</option>
+                    <option value="stem">stem</option>
+                    <option value="lemma">lemma</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Default fuzzy distance</span>
+                  <input id="compound-default-fuzzy-distance" type="number" min="1" max="3" value="1" />
+                </label>
+                <label class="field">
+                  <span>Default near window (tokens)</span>
+                  <input id="compound-default-proximity-within" type="number" min="0" max="60" value="6" />
+                </label>
+                <label class="field">
+                  <span>Default near ordered</span>
+                  <select id="compound-default-proximity-ordered">
+                    <option value="false" selected>no</option>
+                    <option value="true">yes</option>
+                  </select>
+                </label>
+              </div>
+              <div class="small-muted" style="margin-top:8px">For <code>near</code> clauses, use <code>left|right</code> in the value field (example: <code>trust|fairness</code>).</div>
+              <div class="grid grid-6 compact-grid" style="margin-top:10px">
+                <label class="field">
+                  <span>Group 1 logic</span>
+                  <select id="compound-workbench-group-1-operator">
+                    <option value="all">all clauses</option>
+                    <option value="any" selected>any clause</option>
+                    <option value="none">none of the clauses</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Group 1 min clauses</span>
+                  <input id="compound-workbench-group-1-min-clauses" type="number" min="1" max="5" value="" placeholder="none" />
+                </label>
+                <label class="field">
+                  <span>Group 2 logic</span>
+                  <select id="compound-workbench-group-2-operator">
+                    <option value="all" selected>all clauses</option>
+                    <option value="any">any clause</option>
+                    <option value="none">none of the clauses</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Group 2 min clauses</span>
+                  <input id="compound-workbench-group-2-min-clauses" type="number" min="1" max="5" value="" placeholder="none" />
+                </label>
+                <label class="field">
+                  <span>Group 3 logic</span>
+                  <select id="compound-workbench-group-3-operator">
+                    <option value="all" selected>all clauses</option>
+                    <option value="any">any clause</option>
+                    <option value="none">none of the clauses</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Group 3 min clauses</span>
+                  <input id="compound-workbench-group-3-min-clauses" type="number" min="1" max="5" value="" placeholder="none" />
+                </label>
               </div>
               <div class="grid grid-3 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Template</span>
+                  <select id="compound-template-select">
+                    <option value="" selected>choose template</option>
+                    <option value="trust_fairness_signals">Trust + fairness signals</option>
+                    <option value="memo_backed_uncoded">Memo-backed uncoded segments</option>
+                    <option value="risk_bias_flags">Risk or bias flags</option>
+                    <option value="audio_video_mentions">Audio/video with concern terms</option>
+                    <option value="coder_focus_student1">Student1 coding focus</option>
+                  </select>
+                </label>
+                <div class="inline-actions" style="align-items:end">
+                  <button id="apply-compound-template-btn" type="button" class="small">Apply template</button>
+                  <button id="run-compound-template-btn" type="button" class="small">Apply + run</button>
+                </div>
+              </div>
+              <div id="compound-template-summary" class="small-muted" style="margin-top:8px">Pick a template to load common compound-clause setups in one click.</div>
+              <div class="grid grid-4 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Preset label</span>
+                  <input id="compound-preset-label" type="text" placeholder="Trust concern review preset" />
+                </label>
+                <label class="field">
+                  <span>Saved preset</span>
+                  <select id="compound-preset-select">
+                    <option value="" selected>none</option>
+                  </select>
+                </label>
+                <div class="inline-actions" style="align-items:end">
+                  <button id="save-compound-preset-btn" type="button" class="small">Save preset</button>
+                  <button id="apply-compound-preset-btn" type="button" class="small">Apply preset</button>
+                  <button id="run-compound-preset-btn" type="button" class="small">Run preset</button>
+                  <button id="delete-compound-preset-btn" type="button" class="small danger">Delete preset</button>
+                </div>
+              </div>
+              <div id="compound-preset-summary" class="small-muted" style="margin-top:8px">Saved clause presets are project-scoped and can be applied or run instantly.</div>
+              <div class="panel compound-workbench-toolkit" style="margin-top:12px">
+                <div class="section-header">
+                  <div>
+                    <h4 style="margin-bottom:6px">Workbench flow</h4>
+                    <p class="small-muted" style="margin:0">Use operator families and report profiles to configure high-complexity qualitative runs quickly.</p>
+                  </div>
+                </div>
+                <div class="grid grid-4 compact-grid" style="margin-top:10px">
+                  <label class="field">
+                    <span>Operator family</span>
+                    <select id="compound-operator-family">
+                      <option value="lexical" selected>Lexical scanning</option>
+                      <option value="exact_match">Exact / strict match</option>
+                      <option value="pattern">Pattern / wildcard / regex</option>
+                      <option value="proximity">Proximity + fuzzy</option>
+                      <option value="evidence_presence">Evidence presence</option>
+                    </select>
+                  </label>
+                  <div class="inline-actions" style="align-items:end">
+                    <button id="apply-compound-operator-family-btn" type="button" class="small">Apply family</button>
+                  </div>
+                  <label class="field">
+                    <span>Report profile</span>
+                    <select id="compound-report-profile-select">
+                      <option value="balanced" selected>Balanced review</option>
+                      <option value="source_heavy">Source-heavy coverage</option>
+                      <option value="case_heavy">Case-heavy coverage</option>
+                      <option value="appendix_heavy">Appendix-heavy evidence</option>
+                    </select>
+                  </label>
+                  <div class="inline-actions" style="align-items:end">
+                    <button id="apply-compound-report-profile-btn" type="button" class="small">Apply profile</button>
+                    <button id="run-compound-query-report-btn" type="button" class="small">Run + report</button>
+                  </div>
+                </div>
+                <div id="compound-workbench-status" class="small-muted" style="margin-top:8px">Workbench status will show clause/operator coverage and report profile readiness.</div>
+                <div id="compound-operator-guide" style="margin-top:10px"></div>
+              </div>
+              <div class="grid grid-6 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Clause 1 enabled</span>
+                  <select id="compound-clause-1-enabled">
+                    <option value="true" selected>yes</option>
+                    <option value="false">no</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 1 group</span>
+                  <select id="compound-clause-1-group">
+                    <option value="group_1" selected>Group 1</option>
+                    <option value="group_2">Group 2</option>
+                    <option value="group_3">Group 3</option>
+                  </select>
+                </label>
                 <label class="field">
                   <span>Clause 1 field</span>
                   <select id="compound-clause-1-field">
@@ -1086,11 +1731,33 @@
                   </select>
                 </label>
                 <label class="field">
+                  <span>Clause 1 polarity</span>
+                  <select id="compound-clause-1-negate">
+                    <option value="false" selected>normal</option>
+                    <option value="true">NOT</option>
+                  </select>
+                </label>
+                <label class="field">
                   <span>Clause 1 value</span>
                   <input id="compound-clause-1-value" type="text" placeholder="trust" />
                 </label>
               </div>
-              <div class="grid grid-3 compact-grid" style="margin-top:12px">
+              <div class="grid grid-6 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Clause 2 enabled</span>
+                  <select id="compound-clause-2-enabled">
+                    <option value="true" selected>yes</option>
+                    <option value="false">no</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 2 group</span>
+                  <select id="compound-clause-2-group">
+                    <option value="group_1" selected>Group 1</option>
+                    <option value="group_2">Group 2</option>
+                    <option value="group_3">Group 3</option>
+                  </select>
+                </label>
                 <label class="field">
                   <span>Clause 2 field</span>
                   <select id="compound-clause-2-field">
@@ -1115,11 +1782,33 @@
                   </select>
                 </label>
                 <label class="field">
+                  <span>Clause 2 polarity</span>
+                  <select id="compound-clause-2-negate">
+                    <option value="false" selected>normal</option>
+                    <option value="true">NOT</option>
+                  </select>
+                </label>
+                <label class="field">
                   <span>Clause 2 value</span>
                   <input id="compound-clause-2-value" type="text" placeholder="code-trust" />
                 </label>
               </div>
-              <div class="grid grid-3 compact-grid" style="margin-top:12px">
+              <div class="grid grid-6 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Clause 3 enabled</span>
+                  <select id="compound-clause-3-enabled">
+                    <option value="true" selected>yes</option>
+                    <option value="false">no</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 3 group</span>
+                  <select id="compound-clause-3-group">
+                    <option value="group_1">Group 1</option>
+                    <option value="group_2" selected>Group 2</option>
+                    <option value="group_3">Group 3</option>
+                  </select>
+                </label>
                 <label class="field">
                   <span>Clause 3 field</span>
                   <select id="compound-clause-3-field">
@@ -1144,8 +1833,117 @@
                   </select>
                 </label>
                 <label class="field">
+                  <span>Clause 3 polarity</span>
+                  <select id="compound-clause-3-negate">
+                    <option value="false" selected>normal</option>
+                    <option value="true">NOT</option>
+                  </select>
+                </label>
+                <label class="field">
                   <span>Clause 3 value</span>
                   <input id="compound-clause-3-value" type="text" placeholder="student1" />
+                </label>
+              </div>
+              <div class="grid grid-6 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Clause 4 enabled</span>
+                  <select id="compound-clause-4-enabled">
+                    <option value="true">yes</option>
+                    <option value="false" selected>no</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 4 group</span>
+                  <select id="compound-clause-4-group">
+                    <option value="group_1">Group 1</option>
+                    <option value="group_2" selected>Group 2</option>
+                    <option value="group_3">Group 3</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 4 field</span>
+                  <select id="compound-clause-4-field">
+                    <option value="text" selected>text</option>
+                    <option value="code">code</option>
+                    <option value="case">case</option>
+                    <option value="source">source</option>
+                    <option value="coder">coder</option>
+                    <option value="memo">memo</option>
+                    <option value="source_kind">source_kind</option>
+                    <option value="segment_kind">segment_kind</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 4 operator</span>
+                  <select id="compound-clause-4-operator">
+                    <option value="contains" selected>contains</option>
+                    <option value="equals">equals</option>
+                    <option value="whole_word">whole_word</option>
+                    <option value="phrase">phrase</option>
+                    <option value="present">present</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 4 polarity</span>
+                  <select id="compound-clause-4-negate">
+                    <option value="false" selected>normal</option>
+                    <option value="true">NOT</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 4 value</span>
+                  <input id="compound-clause-4-value" type="text" placeholder="optional" />
+                </label>
+              </div>
+              <div class="grid grid-6 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Clause 5 enabled</span>
+                  <select id="compound-clause-5-enabled">
+                    <option value="true">yes</option>
+                    <option value="false" selected>no</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 5 group</span>
+                  <select id="compound-clause-5-group">
+                    <option value="group_1">Group 1</option>
+                    <option value="group_2">Group 2</option>
+                    <option value="group_3" selected>Group 3</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 5 field</span>
+                  <select id="compound-clause-5-field">
+                    <option value="text" selected>text</option>
+                    <option value="code">code</option>
+                    <option value="case">case</option>
+                    <option value="source">source</option>
+                    <option value="coder">coder</option>
+                    <option value="memo">memo</option>
+                    <option value="source_kind">source_kind</option>
+                    <option value="segment_kind">segment_kind</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 5 operator</span>
+                  <select id="compound-clause-5-operator">
+                    <option value="contains" selected>contains</option>
+                    <option value="equals">equals</option>
+                    <option value="whole_word">whole_word</option>
+                    <option value="phrase">phrase</option>
+                    <option value="present">present</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 5 polarity</span>
+                  <select id="compound-clause-5-negate">
+                    <option value="false" selected>normal</option>
+                    <option value="true">NOT</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Clause 5 value</span>
+                  <input id="compound-clause-5-value" type="text" placeholder="optional" />
                 </label>
               </div>
             </div>
@@ -1170,18 +1968,181 @@
               <button id="run-coding-comparison-btn" type="button" class="small">Run coding comparison</button>
               <button id="run-inter-rater-summary-btn" type="button" class="small">Run inter-rater summary</button>
             </div>
+            <div class="grid grid-5 compact-grid" style="margin-top:12px">
+              <label class="field">
+                <span>Map location field</span>
+                <input id="map-location-field" type="text" placeholder="auto-detect (city, region, campus)" />
+              </label>
+              <label class="field">
+                <span>Map metric</span>
+                <select id="map-metric">
+                  <option value="evidence_count" selected>evidence_count</option>
+                  <option value="case_count">case_count</option>
+                  <option value="segment_count">segment_count</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Map normalization</span>
+                <select id="map-normalization">
+                  <option value="raw" selected>raw</option>
+                  <option value="within_scope_pct">within_scope_pct</option>
+                  <option value="log_scaled">log_scaled</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Map min metric</span>
+                <input id="map-min-count" type="number" min="1" max="100000" value="1" />
+              </label>
+              <label class="field">
+                <span>Map max points</span>
+                <input id="map-max-points" type="number" min="1" max="500" value="150" />
+              </label>
+            </div>
+            <div class="grid grid-6 compact-grid" style="margin-top:10px">
+              <label class="field">
+                <span>Concept min link weight</span>
+                <input id="concept-min-link-weight" type="number" min="0" max="10000" step="0.1" value="1" />
+              </label>
+              <label class="field">
+                <span>Concept max links</span>
+                <input id="concept-max-links" type="number" min="1" max="1000" value="250" />
+              </label>
+              <label class="field">
+                <span>Concept min node size</span>
+                <input id="concept-min-node-size" type="number" min="0" max="100000" step="0.1" value="0" />
+              </label>
+              <label class="field">
+                <span>Include co-occurrence links</span>
+                <select id="concept-include-cooccurrence">
+                  <option value="true" selected>yes</option>
+                  <option value="false">no</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Include relationship links</span>
+                <select id="concept-include-relationships">
+                  <option value="true" selected>yes</option>
+                  <option value="false">no</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Concept node size mode</span>
+                <select id="concept-node-size-mode">
+                  <option value="applications" selected>applications</option>
+                  <option value="weighted_degree">weighted_degree</option>
+                  <option value="degree">degree</option>
+                </select>
+              </label>
+            </div>
             <div class="inline-actions" style="margin-top:12px">
               <button id="export-framework-word-btn" type="button" class="small">Framework Word</button>
               <button id="export-framework-excel-btn" type="button" class="small">Framework Excel</button>
+              <button id="export-framework-pdf-btn" type="button" class="small">Framework PDF</button>
               <button id="export-matrix-word-btn" type="button" class="small">Matrix Word</button>
               <button id="export-matrix-excel-btn" type="button" class="small">Matrix Excel</button>
               <button id="export-code-code-word-btn" type="button" class="small">Code x code Word</button>
               <button id="export-code-code-excel-btn" type="button" class="small">Code x code Excel</button>
               <button id="export-cooccurrence-word-btn" type="button" class="small">Co-occurrence Word</button>
               <button id="export-query-report-word-btn" type="button" class="small">Query report Word</button>
+              <button id="export-compound-workbench-word-btn" type="button" class="small">Compound workbench Word</button>
               <button id="export-coding-comparison-word-btn" type="button" class="small">Coding comparison Word</button>
               <button id="export-inter-rater-word-btn" type="button" class="small">Inter-rater Word</button>
+              <button id="export-merge-review-word-btn" type="button" class="small">Merge review Word</button>
+              <button id="export-merge-review-excel-btn" type="button" class="small">Merge review Excel</button>
             </div>
+            <div class="grid grid-4 compact-grid" style="margin-top:12px">
+              <label class="field">
+                <span>Report top sources</span>
+                <input id="query-report-top-sources" type="number" min="1" max="500" value="20" />
+              </label>
+              <label class="field">
+                <span>Report top cases</span>
+                <input id="query-report-top-cases" type="number" min="1" max="500" value="20" />
+              </label>
+              <label class="field">
+                <span>Report top codes</span>
+                <input id="query-report-top-codes" type="number" min="1" max="25" value="5" />
+              </label>
+              <label class="field">
+                <span>Excerpt row limit</span>
+                <input id="query-report-excerpt-limit" type="number" min="1" max="500" value="60" />
+              </label>
+            </div>
+            <div class="grid grid-4 compact-grid" style="margin-top:10px">
+              <label class="field">
+                <span>Include source coverage</span>
+                <select id="query-report-include-sources">
+                  <option value="true" selected>yes</option>
+                  <option value="false">no</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Include case coverage</span>
+                <select id="query-report-include-cases">
+                  <option value="true" selected>yes</option>
+                  <option value="false">no</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Include excerpt rows</span>
+                <select id="query-report-include-excerpts">
+                  <option value="true" selected>yes</option>
+                  <option value="false">no</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Report sort</span>
+                <select id="query-report-sort-by">
+                  <option value="match_count" selected>match_count</option>
+                  <option value="memo_count">memo_count</option>
+                </select>
+              </label>
+            </div>
+            <article class="panel" style="margin-top:12px">
+              <div class="section-header">
+                <div>
+                  <h3 style="margin-bottom:6px">Committee / review pack</h3>
+                  <p class="small-muted" style="margin:0">Package multiple saved qualitative queries into one committee-ready Word/PDF report bundle.</p>
+                </div>
+              </div>
+              <div class="grid grid-3 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Bundle label</span>
+                  <input id="committee-pack-label" type="text" placeholder="Admissions committee cycle A" />
+                </label>
+                <label class="field">
+                  <span>Style template</span>
+                  <select id="committee-pack-style-template">
+                    <option value="committee" selected>committee</option>
+                    <option value="review_board">review_board</option>
+                    <option value="standard">standard</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Appendix mode</span>
+                  <select id="committee-pack-appendix-mode">
+                    <option value="standard" selected>standard</option>
+                    <option value="expanded">expanded</option>
+                  </select>
+                </label>
+              </div>
+              <div class="grid grid-2 compact-grid" style="margin-top:10px">
+                <label class="field">
+                  <span>Saved query IDs (optional, comma-separated)</span>
+                  <input id="committee-pack-query-ids" type="text" placeholder="qual-query-1, qual-query-2" />
+                </label>
+                <label class="field">
+                  <span>Appendix row limit</span>
+                  <input id="committee-pack-appendix-row-limit" type="number" min="25" max="2000" value="300" />
+                </label>
+              </div>
+              <div class="inline-actions" style="margin-top:12px">
+                <button id="export-committee-pack-word-btn" type="button" class="small">Committee pack Word</button>
+                <button id="export-committee-pack-pdf-btn" type="button" class="small">Committee pack PDF</button>
+                <button id="export-committee-pack-json-btn" type="button" class="small">Committee pack JSON</button>
+              </div>
+              <div id="committee-pack-summary" class="small-muted" style="margin-top:10px">Select saved queries (or leave blank for pinned/default) and export a style-governed committee package.</div>
+            </article>
             <div id="autocode-summary" class="small-muted" style="margin-top:14px">Keyword autocoding scopes the current qualitative filters and applies the selected code to matching segments.</div>
             <div id="autocode-result" style="margin-top:12px">No autocoding run yet.</div>
             <div id="text-search-summary" class="small-muted" style="margin-top:14px">Run a text search to inspect matching snippets inside the current qualitative scope.</div>
@@ -1196,10 +2157,12 @@
               <div id="compound-query-result" style="margin-top:12px">No compound query yet.</div>
               <div id="map-visualization-summary" class="small-muted" style="margin-top:14px">Build a map view to aggregate qualitative evidence by location-like case attributes.</div>
               <div id="map-visualization-result" style="margin-top:12px">No map view yet.</div>
+              <div id="map-visualization-inspector" class="small-muted" style="margin-top:8px">Select a map point to inspect linked evidence context.</div>
               <div id="code-hierarchy-summary" class="small-muted" style="margin-top:14px">Build a code hierarchy view to inspect parent-child structure against coded volume.</div>
               <div id="code-hierarchy-result" style="margin-top:12px">No code hierarchy yet.</div>
               <div id="concept-map-summary" class="small-muted" style="margin-top:14px">Build a concept map to inspect code relationships and co-occurrence links.</div>
               <div id="concept-map-result" style="margin-top:12px">No concept map yet.</div>
+              <div id="concept-map-inspector" class="small-muted" style="margin-top:8px">Select a concept node to inspect link-level evidence context.</div>
               <div id="code-cluster-summary" class="small-muted" style="margin-top:14px">Build clusters to inspect which codes travel together in the current scope.</div>
               <div id="code-cluster-result" style="margin-top:12px">No code clusters yet.</div>
               <div id="framework-matrix-summary" class="small-muted" style="margin-top:14px">Build a framework matrix to summarize cases by code with excerpt summaries.</div>
@@ -1218,12 +2181,209 @@
             <div id="coding-comparison-result" style="margin-top:12px">No coding comparison yet.</div>
             <div id="inter-rater-summary-summary" class="small-muted" style="margin-top:16px">Run an inter-rater summary to compare agreement across codes in the current scope.</div>
             <div id="inter-rater-summary-result" style="margin-top:12px">No inter-rater summary yet.</div>
-            <div class="inline-actions" style="margin-top:16px">
+            <div class="grid grid-3 compact-grid" style="margin-top:16px">
+              <label class="field">
+                <span>Merge status filter</span>
+                <select id="merge-review-status-filter">
+                  <option value="open" selected>open</option>
+                  <option value="resolved">resolved</option>
+                  <option value="deferred">deferred</option>
+                  <option value="reopened">reopened</option>
+                  <option value="restored">restored</option>
+                  <option value="all">all</option>
+                </select>
+              </label>
+            </div>
+            <div class="inline-actions" style="margin-top:10px">
               <button id="run-merge-review-btn" type="button" class="small">Run merge review</button>
             </div>
             <div id="merge-review-summary" class="small-muted" style="margin-top:12px">Run merge review to inspect coder overlap and merge candidates.</div>
             <div id="merge-review-result" style="margin-top:12px">No merge review yet.</div>
-            <div class="grid grid-3 compact-grid" style="margin-top:16px">
+            <div id="merge-review-history" style="margin-top:12px"><div class="small-muted">Conflict history appears here after selecting a merge-review row.</div></div>
+            <article class="panel" style="margin-top:16px">
+              <div class="section-header">
+                <div>
+                  <h3 style="margin-bottom:6px">Merge governance policy</h3>
+                  <p class="small-muted" style="margin:0">Set project-level rules for conflict resolution, second-reviewer gating, and triage SLA defaults.</p>
+                </div>
+                <button id="save-merge-governance-btn" type="button" class="small">Save merge governance</button>
+              </div>
+              <div class="grid grid-3 compact-grid" style="margin-top:12px">
+                <label class="field">
+                  <span>Require resolution note</span>
+                  <select id="merge-governance-require-note">
+                    <option value="true" selected>true</option>
+                    <option value="false">false</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Restrict resolve to owner/professor</span>
+                  <select id="merge-governance-restrict-resolve">
+                    <option value="true" selected>true</option>
+                    <option value="false">false</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Require second reviewer for high-risk</span>
+                  <select id="merge-governance-require-second-reviewer">
+                    <option value="true" selected>true</option>
+                    <option value="false">false</option>
+                  </select>
+                </label>
+              </div>
+              <div class="grid grid-5 compact-grid" style="margin-top:10px">
+                <label class="field">
+                  <span>High-risk min coder count</span>
+                  <input id="merge-governance-high-risk-coder-count" type="number" min="1" max="20" value="3" />
+                </label>
+                <label class="field">
+                  <span>High-risk min confidence spread</span>
+                  <input id="merge-governance-high-risk-spread" type="number" min="0" max="1" step="0.01" value="0.35" />
+                </label>
+                <label class="field">
+                  <span>Required approvals (high-risk)</span>
+                  <input id="merge-governance-required-approval-count" type="number" min="1" max="5" value="1" />
+                </label>
+                <label class="field">
+                  <span>Approval expiry (hours)</span>
+                  <input id="merge-governance-approval-expiry-hours" type="number" min="1" max="720" value="168" />
+                </label>
+                <label class="field">
+                  <span>Default triage SLA (hours)</span>
+                  <input id="merge-governance-default-sla-hours" type="number" min="1" max="720" value="72" />
+                </label>
+              </div>
+              <div id="merge-governance-summary" class="small-muted" style="margin-top:10px">Merge governance policy is not loaded yet.</div>
+            </article>
+            <article class="panel" style="margin-top:16px">
+              <div class="section-header">
+                <div>
+                  <h3 style="margin-bottom:6px">Team coding assignments</h3>
+                  <p class="small-muted" style="margin:0">Create and track coding tasks by source, code, case, assignee, and due date.</p>
+                </div>
+              </div>
+              <form id="coding-assignment-form" class="stack gap-12" style="margin-top:12px">
+                <div class="grid grid-3 compact-grid">
+                  <label class="field">
+                    <span>Title</span>
+                    <input id="coding-assignment-title" type="text" placeholder="Code interview 3 for trust and fairness" />
+                  </label>
+                  <label class="field">
+                    <span>Assignee</span>
+                    <select id="coding-assignment-assignee">
+                      <option value="" selected>unassigned</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Due</span>
+                    <input id="coding-assignment-due-at" type="datetime-local" />
+                  </label>
+                </div>
+                <div class="grid grid-4 compact-grid">
+                  <label class="field">
+                    <span>Status</span>
+                    <select id="coding-assignment-status">
+                      <option value="todo" selected>todo</option>
+                      <option value="in_progress">in_progress</option>
+                      <option value="blocked">blocked</option>
+                      <option value="done">done</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Priority</span>
+                    <select id="coding-assignment-priority">
+                      <option value="normal" selected>normal</option>
+                      <option value="high">high</option>
+                      <option value="low">low</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Source ID</span>
+                    <input id="coding-assignment-source-id" type="text" placeholder="source-..." />
+                  </label>
+                  <label class="field">
+                    <span>Code ID</span>
+                    <input id="coding-assignment-code-id" type="text" placeholder="code-..." />
+                  </label>
+                </div>
+                <div class="grid grid-2 compact-grid">
+                  <label class="field">
+                    <span>Case ID</span>
+                    <input id="coding-assignment-case-id" type="text" placeholder="case-..." />
+                  </label>
+                  <label class="field">
+                    <span>Description</span>
+                    <input id="coding-assignment-description" type="text" placeholder="Focus on disagreement regions and memo links" />
+                  </label>
+                </div>
+                <div class="inline-actions">
+                  <button id="create-coding-assignment-btn" type="button" class="small">Create assignment</button>
+                </div>
+              </form>
+              <div id="coding-assignment-summary" class="small-muted" style="margin-top:12px">No coding assignments yet.</div>
+              <ul id="coding-assignment-list" class="interactive-list" style="margin-top:12px">
+                <li class="interactive-list-item empty">No coding assignments yet.</li>
+              </ul>
+            </article>
+            <article class="panel" style="margin-top:16px">
+              <div class="section-header">
+                <div>
+                  <h3 style="margin-bottom:6px">Coder calibration sessions</h3>
+                  <p class="small-muted" style="margin:0">Define calibration scope, run agreement checks, and track readiness before full-team coding.</p>
+                </div>
+              </div>
+              <form id="coding-calibration-form" class="stack gap-12" style="margin-top:12px">
+                <div class="grid grid-4 compact-grid">
+                  <label class="field">
+                    <span>Label</span>
+                    <input id="coding-calibration-label" type="text" placeholder="Admissions calibration wave 1" />
+                  </label>
+                  <label class="field">
+                    <span>Target code ID</span>
+                    <input id="coding-calibration-code-id" type="text" placeholder="code-..." />
+                  </label>
+                  <label class="field">
+                    <span>Coder A</span>
+                    <select id="coding-calibration-coder-a">
+                      <option value="" selected>auto</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Coder B</span>
+                    <select id="coding-calibration-coder-b">
+                      <option value="" selected>auto</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="grid grid-4 compact-grid">
+                  <label class="field">
+                    <span>Sample size</span>
+                    <input id="coding-calibration-sample-size" type="number" min="5" max="500" value="40" />
+                  </label>
+                  <label class="field">
+                    <span>Target agreement</span>
+                    <input id="coding-calibration-target-agreement" type="number" min="0" max="1" step="0.01" value="0.8" />
+                  </label>
+                  <label class="field">
+                    <span>Target kappa</span>
+                    <input id="coding-calibration-target-kappa" type="number" min="-1" max="1" step="0.01" value="0.7" />
+                  </label>
+                  <label class="field">
+                    <span>Minimum samples</span>
+                    <input id="coding-calibration-min-samples" type="number" min="5" max="500" value="25" />
+                  </label>
+                </div>
+                <div class="inline-actions">
+                  <button id="create-coding-calibration-btn" type="button" class="small">Create calibration session</button>
+                </div>
+              </form>
+              <div id="coding-calibration-summary" class="small-muted" style="margin-top:12px">No calibration sessions yet.</div>
+              <ul id="coding-calibration-list" class="interactive-list" style="margin-top:12px">
+                <li class="interactive-list-item empty">No calibration sessions yet.</li>
+              </ul>
+              <div id="coding-calibration-result" style="margin-top:12px">No calibration results yet.</div>
+            </article>
+            <div class="grid grid-5 compact-grid" style="margin-top:16px">
               <label class="field">
                 <span>Qualitative query label</span>
                 <input id="qual-query-label" type="text" placeholder="Trust concern case view" />
@@ -1239,16 +2399,33 @@
                   <option value="code_by_case">code_by_case</option>
                   <option value="coding_comparison">coding_comparison</option>
                   <option value="inter_rater_summary">inter_rater_summary</option>
+                  <option value="merge_review">merge_review</option>
                     <option value="query_report">query_report</option>
                     <option value="text_search">text_search</option>
                     <option value="sentiment">sentiment</option>
                     <option value="word_frequency">word_frequency</option>
                     <option value="word_cloud">word_cloud</option>
                     <option value="compound_query">compound_query</option>
+                    <option value="compound_workbench">compound_workbench</option>
+                    <option value="compound_query_preset">compound_query_preset</option>
                     <option value="map_visualization">map_visualization</option>
                     <option value="code_hierarchy">code_hierarchy</option>
                     <option value="concept_map">concept_map</option>
                     <option value="pattern_autocode">pattern_autocode</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Pinned</span>
+                  <select id="qual-query-pinned">
+                    <option value="false" selected>no</option>
+                    <option value="true">yes</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Default run profile</span>
+                  <select id="qual-query-run-profile">
+                    <option value="run_only" selected>run_only</option>
+                    <option value="run_and_report">run_and_report</option>
                   </select>
                 </label>
               <button id="save-qual-query-btn" type="button" class="small">Save qualitative query</button>
@@ -1256,11 +2433,12 @@
             <ul id="saved-qualitative-queries-list" class="interactive-list" style="margin-top:12px"></ul>
           </article>
         </section>
+        </section>
 
       </div>
 
       <!-- ── Quantitative tab ── -->
-      <div class="tab-panel" id="tab-quantitative">
+      <div class="tab-panel" id="tab-quantitative" role="tabpanel" aria-labelledby="tab-btn-quantitative" aria-hidden="true" tabindex="-1" hidden>
         <section class="tab-intro">
           <div>
             <p class="eyebrow">Quantitative workspace</p>
@@ -1269,78 +2447,107 @@
           <p class="small-muted">Use the menu to move between data management, transforms, descriptive output, tests, and models in a full-width workspace.</p>
         </section>
 
-        <section class="workspace-menu">
-          <button type="button" class="workspace-menu-btn" data-quant-menu="data">
-            <span class="menu-kicker">Quantitative</span>
-            <span class="menu-label">Data</span>
-            <span class="menu-copy">Import files and define cases, variables, attributes</span>
-          </button>
-          <button type="button" class="workspace-menu-btn" data-quant-menu="transform">
-            <span class="menu-kicker">Quantitative</span>
-            <span class="menu-label">Transform</span>
-            <span class="menu-copy">Derive trace links, filters, recodes, and saved setups</span>
-          </button>
-          <button type="button" class="workspace-menu-btn" data-quant-menu="describe">
-            <span class="menu-kicker">Quantitative</span>
-            <span class="menu-label">Describe</span>
-            <span class="menu-copy">Inspect distributions, summaries, and variable detail</span>
-          </button>
-          <button type="button" class="workspace-menu-btn" data-quant-menu="test">
-            <span class="menu-kicker">Quantitative</span>
-            <span class="menu-label">Tests</span>
-            <span class="menu-copy">Run comparisons, crosstabs, and inferential procedures</span>
-          </button>
-          <button type="button" class="workspace-menu-btn" data-quant-menu="model">
-            <span class="menu-kicker">Quantitative</span>
-            <span class="menu-label">Models</span>
-            <span class="menu-copy">Correlation and regression on the active dataset</span>
-          </button>
+        <section class="workspace-menu quant-menu-merged">
+          <article class="quant-menu-combo" data-quant-dropdown-parent="data">
+            <button type="button" class="workspace-menu-btn" data-quant-menu="data">
+              <span class="menu-kicker">Quantitative</span>
+              <span class="menu-label">Data</span>
+              <span class="menu-copy">Import files and define cases, variables, attributes</span>
+            </button>
+            <label class="field quant-menu-inline-field">
+              <span>Data</span>
+              <select data-quant-dropdown-select data-quant-dropdown-parent="data">
+                <option value="import">Import and export</option>
+                <option value="design">Variables, cases, attributes</option>
+                <option value="browser">Data browser</option>
+                <option value="syntax">Syntax</option>
+              </select>
+            </label>
+          </article>
+          <article class="quant-menu-combo" data-quant-dropdown-parent="transform">
+            <button type="button" class="workspace-menu-btn" data-quant-menu="transform">
+              <span class="menu-kicker">Quantitative</span>
+              <span class="menu-label">Transform</span>
+              <span class="menu-copy">Derive trace links, filters, recodes, and saved setups</span>
+            </button>
+            <label class="field quant-menu-inline-field">
+              <span>Transform</span>
+              <select data-quant-dropdown-select data-quant-dropdown-parent="transform">
+                <option value="derive">Derive variables</option>
+                <option value="reshape">Filters, recodes, weights</option>
+                <option value="trace">Trace links</option>
+              </select>
+            </label>
+          </article>
+          <article class="quant-menu-combo" data-quant-dropdown-parent="describe">
+            <button type="button" class="workspace-menu-btn" data-quant-menu="describe">
+              <span class="menu-kicker">Quantitative</span>
+              <span class="menu-label">Describe</span>
+              <span class="menu-copy">Inspect distributions, summaries, and variable detail</span>
+            </button>
+            <label class="field quant-menu-inline-field">
+              <span>Describe</span>
+              <select data-quant-dropdown-select data-quant-dropdown-parent="describe">
+                <option value="summary">Descriptive summary</option>
+                <option value="frequency">Frequency tables</option>
+                <option value="missing">Missing values</option>
+                <option value="inspect">Variable inspector</option>
+              </select>
+            </label>
+          </article>
+          <article class="quant-menu-combo" data-quant-dropdown-parent="test">
+            <button type="button" class="workspace-menu-btn" data-quant-menu="test">
+              <span class="menu-kicker">Quantitative</span>
+              <span class="menu-label">Tests</span>
+              <span class="menu-copy">Run comparisons, crosstabs, and inferential procedures</span>
+            </button>
+            <label class="field quant-menu-inline-field">
+              <span>Tests</span>
+              <select data-quant-dropdown-select data-quant-dropdown-parent="test">
+                <option value="compare">Compare means</option>
+                <option value="ttests">T-tests</option>
+                <option value="rank">Rank tests</option>
+                <option value="crosstab">Crosstabs</option>
+                <option value="tables">Custom tables</option>
+                <option value="exact">Exact tests</option>
+                <option value="bootstrap">Bootstrap</option>
+              </select>
+            </label>
+          </article>
+          <article class="quant-menu-combo" data-quant-dropdown-parent="model">
+            <button type="button" class="workspace-menu-btn" data-quant-menu="model">
+              <span class="menu-kicker">Quantitative</span>
+              <span class="menu-label">Models</span>
+              <span class="menu-copy">Correlation and regression on the active dataset</span>
+            </button>
+            <label class="field quant-menu-inline-field">
+              <span>Models</span>
+              <select data-quant-dropdown-select data-quant-dropdown-parent="model">
+                <option value="correlation">Correlation</option>
+                <option value="regression">Regression</option>
+                <option value="reliability">Reliability</option>
+                <option value="factor">Factor analysis</option>
+                <option value="categories">Categories</option>
+                <option value="conjoint">Conjoint</option>
+                <option value="marketing">Direct marketing</option>
+                <option value="forecast">Forecasting</option>
+                <option value="cluster">Cluster</option>
+                <option value="tree">Decision tree</option>
+                <option value="glm">GLM/ANCOVA</option>
+                <option value="mixed">Mixed model</option>
+                <option value="gee">GEE</option>
+                <option value="repeated">Repeated measures</option>
+                <option value="survival">Survival</option>
+                <option value="complex">Complex samples</option>
+                <option value="neural">Neural network</option>
+              </select>
+            </label>
+          </article>
         </section>
 
-        <section class="workspace-submenu" data-quant-submenu="data">
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="data" data-quant-subtab="import">Import and export</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="data" data-quant-subtab="design">Variables, cases, attributes</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="data" data-quant-subtab="browser">Data browser</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="data" data-quant-subtab="syntax">Syntax</button>
-        </section>
-        <section class="workspace-submenu" data-quant-submenu="transform" hidden>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="transform" data-quant-subtab="derive">Derive variables</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="transform" data-quant-subtab="reshape">Filters, recodes, weights</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="transform" data-quant-subtab="trace">Trace links</button>
-        </section>
-        <section class="workspace-submenu" data-quant-submenu="describe" hidden>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="describe" data-quant-subtab="summary">Descriptive summary</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="describe" data-quant-subtab="frequency">Frequency tables</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="describe" data-quant-subtab="missing">Missing values</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="describe" data-quant-subtab="inspect">Variable inspector</button>
-        </section>
-        <section class="workspace-submenu" data-quant-submenu="test" hidden>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="test" data-quant-subtab="compare">Compare means</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="test" data-quant-subtab="ttests">T-tests</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="test" data-quant-subtab="rank">Rank tests</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="test" data-quant-subtab="crosstab">Crosstabs</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="test" data-quant-subtab="tables">Custom tables</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="test" data-quant-subtab="exact">Exact tests</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="test" data-quant-subtab="bootstrap">Bootstrap</button>
-        </section>
-        <section class="workspace-submenu" data-quant-submenu="model" hidden>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="correlation">Correlation</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="regression">Regression</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="reliability">Reliability</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="factor">Factor analysis</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="forecast">Forecasting</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="cluster">Cluster</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="tree">Decision tree</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="glm">GLM/ANCOVA</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="mixed">Mixed model</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="gee">GEE</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="repeated">Repeated measures</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="survival">Survival</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="complex">Complex samples</button>
-          <button type="button" class="workspace-submenu-btn" data-quant-parent="model" data-quant-subtab="neural">Neural network</button>
-        </section>
+        <section class="workspace-shell-3col quantitative-shell">
 
-        <section class="quantitative-output-desk workspace-section">
+        <section class="quantitative-output-desk workspace-section workspace-rail output-popup-mode">
           <div class="workspace-banner">
             <p class="eyebrow">Output viewer</p>
             <h3>Keep procedures on the left and read results from one output navigator, instead of scanning separate inline boxes.</h3>
@@ -1350,6 +2557,10 @@
               <div>
                 <h2 style="margin-bottom:6px">Output navigator</h2>
                 <p class="small-muted" style="margin:0">Choose the active output page or reopen a saved analysis run.</p>
+              </div>
+              <div class="inline-actions">
+                <button id="open-quant-output-popup-btn" type="button" class="small">Open output window</button>
+                <span class="small-muted" id="quant-output-popup-status">Output window closed</span>
               </div>
             </div>
             <div class="quant-output-nav-list" style="margin-top:14px">
@@ -1368,6 +2579,9 @@
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="regression">Regression</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="reliability">Reliability</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="factor-analysis">Factor analysis</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="optimal-scaling">Categories</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="conjoint-analysis">Conjoint</button>
+              <button type="button" class="quant-output-nav-btn" data-quant-output-nav="direct-marketing">Direct marketing</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="forecasting">Forecasting</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="cluster-analysis">Cluster analysis</button>
               <button type="button" class="quant-output-nav-btn" data-quant-output-nav="decision-tree">Decision tree</button>
@@ -1390,10 +2604,23 @@
               </div>
               <ul id="quant-output-tree-list" class="interactive-list" style="margin-top:14px"></ul>
             </div>
+            <div class="quant-output-history" style="margin-top:18px">
+              <div class="section-header">
+                <div>
+                  <h2 style="margin-bottom:6px">Pivot + chart builder</h2>
+                  <p class="small-muted" style="margin:0">Edit active output tables and build chart previews without leaving the output navigator.</p>
+                </div>
+              </div>
+              <div id="quant-output-workbench" style="margin-top:14px"></div>
+            </div>
             <div class="quant-output-save" style="margin-top:18px">
               <label class="field">
                 <span>Analysis label</span>
                 <input id="analysis-job-label" type="text" placeholder="Trust by campus regression" />
+              </label>
+              <label class="field">
+                <span>Output style template</span>
+                <select id="output-style-template-select"></select>
               </label>
               <div class="inline-actions">
                 <button id="save-analysis-job-btn" type="button" class="small">Save current analysis</button>
@@ -1428,6 +2655,27 @@
             <div class="quant-output-history" style="margin-top:18px">
               <div class="section-header">
                 <div>
+                  <h2 style="margin-bottom:6px">Reproducible output packs</h2>
+                  <p class="small-muted" style="margin:0">Save full output-document state (tree, style, pivot, chart presets) and reapply later.</p>
+                </div>
+              </div>
+              <div class="stack gap-12" style="margin-top:14px">
+                <label class="field">
+                  <span>Pack label</span>
+                  <input id="output-pack-label" type="text" placeholder="Campus committee output pack" />
+                </label>
+                <div class="inline-actions">
+                  <button id="save-output-pack-btn" type="button" class="small">Save pack</button>
+                  <button id="export-output-pack-btn" type="button" class="small">Export pack JSON</button>
+                  <button id="import-output-pack-btn" type="button" class="small">Import pack JSON</button>
+                </div>
+                <input id="output-pack-import-input" type="file" accept=".json,application/json" hidden />
+              </div>
+              <ul id="output-pack-list" class="interactive-list" style="margin-top:14px"></ul>
+            </div>
+            <div class="quant-output-history" style="margin-top:18px">
+              <div class="section-header">
+                <div>
                   <h2 style="margin-bottom:6px">Recent output</h2>
                   <p class="small-muted" style="margin:0">This stack keeps the last result pages you opened in the viewer.</p>
                 </div>
@@ -1435,7 +2683,7 @@
               <ul id="quant-output-history-list" class="interactive-list" style="margin-top:14px"></ul>
             </div>
           </article>
-          <article class="panel quant-output-stage">
+          <article class="panel quant-output-stage quant-output-stage-inline-hidden">
             <section class="quant-output-panel" data-quant-output="descriptives">
               <div class="section-header">
                 <div>
@@ -1443,6 +2691,8 @@
                   <p class="small-muted" style="margin:0">Dataset overview and field-level summaries.</p>
                 </div>
                 <div class="inline-actions">
+                  <button id="open-descriptive-popup-btn" type="button" class="small">Open descriptive popup</button>
+                  <span class="small-muted" id="descriptive-popup-status">Popup ready</span>
                   <span class="small-muted" id="descriptive-case-count">0 cases</span>
                   <span class="small-muted" id="descriptive-field-count">0 fields</span>
                 </div>
@@ -1498,6 +2748,15 @@
             </section>
             <section class="quant-output-panel" data-quant-output="factor-analysis" hidden>
               <div id="factor-analysis-result">Choose numeric fields and run factor analysis.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="optimal-scaling" hidden>
+              <div id="optimal-scaling-result">Choose at least two categorical fields and run categories/optimal scaling.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="conjoint-analysis" hidden>
+              <div id="conjoint-analysis-result">Choose a rating field and attribute fields, then run conjoint analysis.</div>
+            </section>
+            <section class="quant-output-panel" data-quant-output="direct-marketing" hidden>
+              <div id="direct-marketing-result">Choose response and/or RFM fields, then run direct marketing scoring.</div>
             </section>
             <section class="quant-output-panel" data-quant-output="forecasting" hidden>
               <div id="forecasting-result">Choose a time/order field and numeric value field, then run forecasting.</div>
@@ -1559,16 +2818,18 @@
               </div>
               <button id="import-browse-btn" type="button" class="small">Browse files</button>
             </div>
-            <input id="import-file-input" type="file" accept=".txt,.md,.docx,.pdf,.csv,.xls,.xlsx" multiple hidden />
+            <input id="import-file-input" type="file" accept=".txt,.md,.docx,.pdf,.csv,.xls,.xlsx,.sav,.zsav,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.mp4,.mov,.avi,.mkv,.webm" multiple hidden />
             <div id="import-dropzone" class="dropzone" tabindex="0">
               <strong>Drop accepted files here</strong>
-              <span class="small-muted">Accepted: .txt, .md, .docx, .pdf, .csv, .xls, .xlsx</span>
+              <span class="small-muted">Accepted: .txt, .md, .docx, .pdf, .csv, .xls, .xlsx, .sav, .zsav</span>
             </div>
             <div id="import-result" class="small-muted" style="margin-top:14px">No files imported yet.</div>
                 <div class="button-row export-shelf" style="margin-top:14px">
                   <button id="export-csv-btn" type="button" class="small">Export CSV</button>
                   <button id="export-xlsx-btn" type="button" class="small">Export Excel</button>
                   <button id="export-json-btn" type="button" class="small">Export JSON</button>
+                  <button id="export-sav-btn" type="button" class="small">Export SPSS SAV</button>
+                  <button id="export-zsav-btn" type="button" class="small">Export SPSS ZSAV</button>
                   <button id="open-recent-word-btn" type="button" class="small">Open recent Word</button>
                   <button id="open-recent-excel-btn" type="button" class="small">Open recent Excel</button>
                   <button id="export-evidence-btn" type="button" class="small">Export evidence JSON</button>
@@ -1747,6 +3008,150 @@
               <ul id="sql-import-jobs" class="interactive-list"></ul>
             </div>
             <div id="sql-import-status" class="small-muted" style="margin-top:10px">SQL import status will appear here.</div>
+          </article>
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Office folder connector</h2>
+                <p class="small-muted" style="margin:0">
+                  Monitor a Word/Excel/PDF/text folder and sync changed files into sources and case rows.
+                </p>
+              </div>
+              <button id="scan-office-connector-btn" type="button" class="small">Discover files</button>
+            </div>
+            <div class="grid grid-2 compact-grid">
+              <label class="field">
+                <span>Profile label</span>
+                <input id="office-connector-profile-label" type="text" placeholder="Assessment shared drive" />
+              </label>
+              <label class="field">
+                <span>Root path</span>
+                <input id="office-connector-root-path" type="text" placeholder="C:\Research\Imports" />
+              </label>
+            </div>
+            <div class="grid grid-3 compact-grid">
+              <label class="field">
+                <span>Allowed extensions (comma-separated)</span>
+                <input id="office-connector-allowed-extensions" type="text" value=".docx,.xlsx,.xls,.csv,.pdf,.txt,.md,.sav,.zsav" />
+              </label>
+              <label class="field">
+                <span>Max files per run</span>
+                <input id="office-connector-job-max-files" type="number" min="1" max="5000" value="500" />
+              </label>
+              <label class="field">
+                <span>Schedule interval (minutes)</span>
+                <input id="office-connector-job-schedule-interval" type="number" min="15" max="10080" value="60" />
+              </label>
+            </div>
+            <div class="button-row" style="margin-top:10px">
+              <label class="checkbox" style="display:flex; align-items:center; gap:8px;">
+                <input id="office-connector-include-subdirs" type="checkbox" checked />
+                <span>Include subdirectories</span>
+              </label>
+              <label class="checkbox" style="display:flex; align-items:center; gap:8px;">
+                <input id="office-connector-job-force-resync" type="checkbox" />
+                <span>Force resync</span>
+              </label>
+              <label class="checkbox" style="display:flex; align-items:center; gap:8px;">
+                <input id="office-connector-job-schedule-enabled" type="checkbox" />
+                <span>Enable automatic schedule</span>
+              </label>
+              <button id="save-office-connector-profile-btn" type="button" class="small">Save profile</button>
+              <button id="delete-office-connector-profile-btn" type="button" class="small">Delete profile</button>
+              <button id="save-office-connector-job-btn" type="button" class="small">Save sync job</button>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Saved Office connector profiles</span>
+                <select id="office-connector-profile-select"></select>
+              </label>
+              <div class="field">
+                <span>Discovered files (latest scan)</span>
+                <ul id="office-connector-discovery-list" class="interactive-list"></ul>
+              </div>
+            </div>
+            <div class="panel" style="margin-top:14px">
+              <h3 style="margin-bottom:8px">Saved Office connector jobs</h3>
+              <ul id="office-connector-jobs" class="interactive-list"></ul>
+            </div>
+            <div id="office-connector-status" class="small-muted" style="margin-top:10px">Office connector status will appear here.</div>
+          </article>
+          <article class="panel">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Reference API connector</h2>
+                <p class="small-muted" style="margin:0">
+                  Connect to Crossref/OpenAlex for live reference retrieval, import, and scheduled refresh.
+                </p>
+              </div>
+              <button id="search-reference-connector-btn" type="button" class="small">Search references</button>
+            </div>
+            <div class="grid grid-3 compact-grid">
+              <label class="field">
+                <span>Profile label</span>
+                <input id="reference-connector-profile-label" type="text" placeholder="Crossref connector" />
+              </label>
+              <label class="field">
+                <span>Provider</span>
+                <select id="reference-connector-provider">
+                  <option value="crossref" selected>Crossref</option>
+                  <option value="openalex">OpenAlex</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Contact mailto</span>
+                <input id="reference-connector-mailto" type="email" placeholder="research-admin@mu.edu" />
+              </label>
+            </div>
+            <div class="grid grid-2 compact-grid">
+              <label class="field">
+                <span>Optional API key</span>
+                <input id="reference-connector-api-key" type="password" placeholder="Provider API key (optional)" />
+              </label>
+              <label class="field">
+                <span>Saved reference connector profiles</span>
+                <select id="reference-connector-profile-select"></select>
+              </label>
+            </div>
+            <div class="button-row" style="margin-top:10px">
+              <button id="save-reference-connector-profile-btn" type="button" class="small">Save profile</button>
+              <button id="delete-reference-connector-profile-btn" type="button" class="small">Delete profile</button>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Query text</span>
+                <input id="reference-connector-query-text" type="text" placeholder="student retention intervention" />
+              </label>
+              <label class="field">
+                <span>Max rows</span>
+                <input id="reference-connector-max-rows" type="number" min="1" max="500" value="50" />
+              </label>
+              <label class="field">
+                <span>Schedule interval (minutes)</span>
+                <input id="reference-connector-job-schedule-interval" type="number" min="15" max="10080" value="60" />
+              </label>
+            </div>
+            <div class="button-row" style="margin-top:10px">
+              <label class="checkbox" style="display:flex; align-items:center; gap:8px;">
+                <input id="reference-connector-skip-duplicates" type="checkbox" checked />
+                <span>Skip duplicates on import</span>
+              </label>
+              <label class="checkbox" style="display:flex; align-items:center; gap:8px;">
+                <input id="reference-connector-job-schedule-enabled" type="checkbox" />
+                <span>Enable automatic schedule</span>
+              </label>
+              <button id="import-reference-connector-btn" type="button" class="small">Import references now</button>
+              <button id="save-reference-connector-job-btn" type="button" class="small">Save query job</button>
+            </div>
+            <div class="panel" style="margin-top:14px">
+              <h3 style="margin-bottom:8px">Reference search preview</h3>
+              <div id="reference-connector-search-results" class="small-muted">Run a search to preview live references.</div>
+            </div>
+            <div class="panel" style="margin-top:14px">
+              <h3 style="margin-bottom:8px">Saved reference connector jobs</h3>
+              <ul id="reference-connector-jobs" class="interactive-list"></ul>
+            </div>
+            <div id="reference-connector-status" class="small-muted" style="margin-top:10px">Reference connector status will appear here.</div>
           </article>
           </section>
 
@@ -2216,12 +3621,23 @@
               <div>
                 <h2 style="margin-bottom:6px">Exact tests</h2>
                 <p class="small-muted" style="margin:0">
-                  Run Fisher exact for 2x2 integer crosstabs, with chi-square output retained for larger or weighted tables.
+                  Run Fisher exact, binomial exact, McNemar exact, or paired sign tests from one setup panel.
                 </p>
               </div>
               <button id="run-exact-test-btn" type="button" class="small">Run exact test</button>
             </div>
-            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+            <div class="grid grid-3 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Exact test type</span>
+                <select id="exact-test-type">
+                  <option value="fisher_2x2" selected>Fisher exact (2x2)</option>
+                  <option value="binomial">Binomial exact</option>
+                  <option value="mcnemar">McNemar exact</option>
+                  <option value="sign">Sign test</option>
+                </select>
+              </label>
+            </div>
+            <div id="exact-fisher-fields" class="grid grid-2 compact-grid" style="margin-top:12px">
               <label class="field">
                 <span>Row field</span>
                 <select id="exact-row-field"></select>
@@ -2229,6 +3645,44 @@
               <label class="field">
                 <span>Column field</span>
                 <select id="exact-column-field"></select>
+              </label>
+            </div>
+            <div id="exact-binomial-fields" class="grid grid-3 compact-grid" style="margin-top:12px" hidden>
+              <label class="field">
+                <span>Binary field</span>
+                <select id="exact-binary-field"></select>
+              </label>
+              <label class="field">
+                <span>Success value</span>
+                <input id="exact-success-value" type="text" value="1" />
+              </label>
+              <label class="field">
+                <span>Null proportion</span>
+                <input id="exact-null-proportion" type="number" min="0.01" max="0.99" step="0.01" value="0.5" />
+              </label>
+            </div>
+            <div id="exact-mcnemar-fields" class="grid grid-3 compact-grid" style="margin-top:12px" hidden>
+              <label class="field">
+                <span>Before field</span>
+                <select id="exact-before-field"></select>
+              </label>
+              <label class="field">
+                <span>After field</span>
+                <select id="exact-after-field"></select>
+              </label>
+              <label class="field">
+                <span>Positive value</span>
+                <input id="exact-positive-value" type="text" value="1" />
+              </label>
+            </div>
+            <div id="exact-sign-fields" class="grid grid-2 compact-grid" style="margin-top:12px" hidden>
+              <label class="field">
+                <span>Before numeric field</span>
+                <select id="exact-sign-before-field"></select>
+              </label>
+              <label class="field">
+                <span>After numeric field</span>
+                <select id="exact-sign-after-field"></select>
               </label>
             </div>
             <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
@@ -2351,6 +3805,14 @@
                 <textarea id="reliability-subscales" rows="6" placeholder="Trust: item_1, item_2&#10;Process: item_3, item_4"></textarea>
               </label>
             </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:12px">
+              <label class="field">
+                <span>Stratify reliability by (optional)</span>
+                <select id="reliability-stratify-field">
+                  <option value="">none</option>
+                </select>
+              </label>
+            </div>
             <div class="small-muted" style="margin-top:14px">Use one `Label: field_1, field_2` line per subscale. Reliability output opens in the Output Viewer and can be saved like the other procedures.</div>
           </article>
           <article class="panel" data-quant-parent="model" data-quant-subsection="factor">
@@ -2381,11 +3843,126 @@
                     <option value="promax">promax</option>
                   </select>
                 </label>
+                <label class="field">
+                  <span>Extraction</span>
+                  <select id="factor-extraction">
+                    <option value="principal_components" selected>principal components</option>
+                    <option value="principal_axis">principal axis</option>
+                  </select>
+                </label>
                 <div class="small-muted">
-                  Current implementation uses principal-components extraction and supports first-pass varimax or promax rotation.
+                  Exploratory extraction supports principal components or principal axis with optional varimax/promax rotation.
                 </div>
               </div>
             </div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="categories">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Categories / optimal scaling</h2>
+                <p class="small-muted" style="margin:0">
+                  Quantify categorical levels over a one-dimension latent scale with optional anchor guidance.
+                </p>
+              </div>
+              <button id="run-optimal-scaling-btn" type="button" class="small">Run categories</button>
+            </div>
+            <div class="grid grid-3 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Categorical fields</span>
+                <select id="optimal-scaling-fields" multiple size="8"></select>
+              </label>
+              <label class="field">
+                <span>Anchor numeric field (optional)</span>
+                <select id="optimal-scaling-anchor-field"></select>
+              </label>
+              <label class="field">
+                <span>Max iterations</span>
+                <input id="optimal-scaling-max-iterations" type="number" min="3" max="60" value="20" />
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:14px">Results open in the Output Viewer.</div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="conjoint">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Conjoint analysis</h2>
+                <p class="small-muted" style="margin:0">
+                  Estimate attribute part-worth utilities and profile predictions from preference ratings.
+                </p>
+              </div>
+              <button id="run-conjoint-analysis-btn" type="button" class="small">Run conjoint</button>
+            </div>
+            <div class="grid grid-4 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Profile ID field (optional)</span>
+                <select id="conjoint-profile-field"></select>
+              </label>
+              <label class="field">
+                <span>Rating field</span>
+                <select id="conjoint-rating-field"></select>
+              </label>
+              <label class="field">
+                <span>Attribute fields</span>
+                <select id="conjoint-attribute-fields" multiple size="8"></select>
+              </label>
+              <label class="field">
+                <span>Holdout fraction</span>
+                <input id="conjoint-holdout-fraction" type="number" min="0" max="0.45" step="0.05" value="0.2" />
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:14px">Results open in the Output Viewer.</div>
+          </article>
+          <article class="panel" data-quant-parent="model" data-quant-subsection="marketing">
+            <div class="section-header">
+              <div>
+                <h2 style="margin-bottom:6px">Direct marketing</h2>
+                <p class="small-muted" style="margin:0">
+                  Build RFM/response propensity, segment profiles, and lift-style deciles for targeting.
+                </p>
+              </div>
+              <button id="run-direct-marketing-btn" type="button" class="small">Run direct marketing</button>
+            </div>
+            <div class="grid grid-5 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Customer ID field (optional)</span>
+                <select id="direct-marketing-customer-field"></select>
+              </label>
+              <label class="field">
+                <span>Response field (optional binary)</span>
+                <select id="direct-marketing-response-field"></select>
+              </label>
+              <label class="field">
+                <span>Recency field</span>
+                <select id="direct-marketing-recency-field"></select>
+              </label>
+              <label class="field">
+                <span>Frequency field</span>
+                <select id="direct-marketing-frequency-field"></select>
+              </label>
+              <label class="field">
+                <span>Monetary field</span>
+                <select id="direct-marketing-monetary-field"></select>
+              </label>
+            </div>
+            <div class="grid grid-4 compact-grid" style="margin-top:12px">
+              <label class="field">
+                <span>Weight: recency</span>
+                <input id="direct-marketing-weight-recency" type="number" min="0" step="0.05" value="0.15" />
+              </label>
+              <label class="field">
+                <span>Weight: frequency</span>
+                <input id="direct-marketing-weight-frequency" type="number" min="0" step="0.05" value="0.25" />
+              </label>
+              <label class="field">
+                <span>Weight: monetary</span>
+                <input id="direct-marketing-weight-monetary" type="number" min="0" step="0.05" value="0.20" />
+              </label>
+              <label class="field">
+                <span>Weight: response</span>
+                <input id="direct-marketing-weight-response" type="number" min="0" step="0.05" value="0.40" />
+              </label>
+            </div>
+            <div class="small-muted" style="margin-top:14px">At least one of response, recency, frequency, or monetary is required.</div>
           </article>
           <article class="panel" data-quant-parent="model" data-quant-subsection="forecast">
             <div class="section-header">
@@ -2413,7 +3990,10 @@
               <label class="field">
                 <span>Method</span>
                 <select id="forecast-method">
-                  <option value="linear_trend" selected>linear trend</option>
+                  <option value="auto" selected>auto (best AIC)</option>
+                  <option value="arima_auto">ARIMA auto</option>
+                  <option value="ets_auto">ETS auto</option>
+                  <option value="linear_trend">linear trend</option>
                   <option value="moving_average">moving average</option>
                   <option value="exponential_smoothing">exponential smoothing</option>
                 </select>
@@ -2425,6 +4005,14 @@
               <label class="field">
                 <span>Smoothing alpha</span>
                 <input id="forecast-alpha" type="number" min="0.05" max="0.95" step="0.05" value="0.35" />
+              </label>
+              <label class="field">
+                <span>Smoothing beta</span>
+                <input id="forecast-beta" type="number" min="0.01" max="0.95" step="0.01" value="0.20" />
+              </label>
+              <label class="field">
+                <span>Damping phi</span>
+                <input id="forecast-damping" type="number" min="0.75" max="1" step="0.01" value="0.95" />
               </label>
             </div>
             <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
@@ -2453,11 +4041,11 @@
             <div class="section-header">
               <div>
                 <h2 style="margin-bottom:6px">Decision tree</h2>
-                <p class="small-muted" style="margin:0">Run a first-pass classification tree using Gini impurity.</p>
+                <p class="small-muted" style="margin:0">Run CART or random forest classification with configurable splitting controls.</p>
               </div>
               <button id="run-decision-tree-btn" type="button" class="small">Run decision tree</button>
             </div>
-            <div class="grid grid-3 compact-grid" style="margin-top:14px">
+            <div class="grid grid-4 compact-grid" style="margin-top:14px">
               <label class="field">
                 <span>Target field</span>
                 <select id="decision-tree-target-field"></select>
@@ -2469,6 +4057,34 @@
               <label class="field">
                 <span>Max depth</span>
                 <input id="decision-tree-depth" type="number" min="1" max="6" value="3" />
+              </label>
+              <label class="field">
+                <span>Method</span>
+                <select id="decision-tree-method">
+                  <option value="cart" selected>CART</option>
+                  <option value="random_forest">random forest</option>
+                </select>
+              </label>
+            </div>
+            <div class="grid grid-4 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Split criterion</span>
+                <select id="decision-tree-criterion">
+                  <option value="gini" selected>gini</option>
+                  <option value="entropy">entropy</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Tree count</span>
+                <input id="decision-tree-count" type="number" min="10" max="200" value="60" />
+              </label>
+              <label class="field">
+                <span>Min samples per leaf</span>
+                <input id="decision-tree-min-leaf" type="number" min="1" max="20" value="2" />
+              </label>
+              <label class="field">
+                <span>Feature subset per split</span>
+                <input id="decision-tree-feature-subset" type="number" min="0" value="0" />
               </label>
             </div>
             <div class="small-muted" style="margin-top:16px">Results open in the Output Viewer.</div>
@@ -2493,6 +4109,24 @@
               <label class="field">
                 <span>Covariate fields</span>
                 <select id="glm-covariate-fields" multiple size="8"></select>
+              </label>
+            </div>
+            <div class="grid grid-2 compact-grid" style="margin-top:14px">
+              <label class="field">
+                <span>Family</span>
+                <select id="glm-family">
+                  <option value="gaussian" selected>gaussian</option>
+                  <option value="binomial">binomial</option>
+                  <option value="poisson">poisson</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Link</span>
+                <select id="glm-link">
+                  <option value="identity" selected>identity</option>
+                  <option value="logit">logit</option>
+                  <option value="log">log</option>
+                </select>
               </label>
             </div>
             <div class="small-muted" style="margin-top:16px">Factors are dummy-coded with a baseline level. Results open in the Output Viewer.</div>
@@ -2547,6 +4181,7 @@
                 <select id="gee-family">
                   <option value="gaussian" selected>gaussian</option>
                   <option value="binomial">binomial</option>
+                  <option value="poisson">poisson</option>
                 </select>
               </label>
             </div>
@@ -2556,6 +4191,7 @@
                 <select id="gee-correlation">
                   <option value="independence" selected>independence</option>
                   <option value="exchangeable">exchangeable</option>
+                  <option value="ar1">AR(1)</option>
                 </select>
               </label>
             </div>
@@ -2583,7 +4219,7 @@
               </div>
               <button id="run-survival-analysis-btn" type="button" class="small">Run survival analysis</button>
             </div>
-            <div class="grid grid-3 compact-grid" style="margin-top:14px">
+            <div class="grid grid-4 compact-grid" style="margin-top:14px">
               <label class="field">
                 <span>Time field</span>
                 <select id="survival-time-field"></select>
@@ -2595,6 +4231,10 @@
               <label class="field">
                 <span>Group field optional</span>
                 <select id="survival-group-field"></select>
+              </label>
+              <label class="field">
+                <span>Cox predictors optional</span>
+                <select id="survival-predictor-fields" multiple size="8"></select>
               </label>
             </div>
             <div class="small-muted" style="margin-top:16px">Event fields accept values like 1/0, true/false, yes/no, event/censored. Results open in the Output Viewer.</div>
@@ -2712,7 +4352,7 @@
             <div class="section-header">
               <div>
                 <h2 style="margin-bottom:6px">Syntax runner</h2>
-                <p class="small-muted" style="margin:0">Supported commands: DESCRIPTIVES, FREQUENCIES, CROSSTABS, CORRELATIONS, REGRESSION.</p>
+                <p class="small-muted" style="margin:0">Supported commands include data-management and procedural syntax: RECODE, AUTORECODE, COUNT, SELECT IF, FILTER, WEIGHT, MISSING VALUES, VARIABLE/VALUE LABELS, RENAME VARIABLES, N OF CASES, NUMERIC, STRING, VECTOR, DO IF, DO REPEAT, LOOP, plus DESCRIPTIVES/FREQUENCIES/CROSSTABS/CORRELATIONS/REGRESSION.</p>
               </div>
               <button id="run-syntax-btn" type="button" class="small">Run syntax</button>
             </div>
@@ -2751,11 +4391,12 @@ FREQUENCIES VARIABLES=ALL.</textarea>
             <ul id="trace-links-list" class="interactive-list"></ul>
           </article>
         </section>
+        </section>
 
       </div>
 
       <!-- ── Status tab ── -->
-      <div class="tab-panel" id="tab-status">
+      <div class="tab-panel" id="tab-status" role="tabpanel" aria-labelledby="tab-btn-status" aria-hidden="true" tabindex="-1" hidden>
         <section class="tab-intro">
           <div>
             <p class="eyebrow">Status and governance</p>
@@ -2763,144 +4404,231 @@ FREQUENCIES VARIABLES=ALL.</textarea>
           </div>
           <p class="small-muted">This tab is the operational control surface for administration, diagnostics, and recovery.</p>
         </section>
-        <section class="tab-overview">
-          <article class="panel overview-card">
-            <span class="workspace-label">Governance</span>
-            <strong id="governance-ready">loading</strong>
-            <p class="small-muted">Overall governance and deployment state.</p>
-          </article>
-          <article class="panel overview-card">
-            <span class="workspace-label">Audit events</span>
-            <strong id="audit-count">0</strong>
-            <p class="small-muted">Events visible in the active audit view.</p>
-          </article>
-          <article class="panel overview-card">
-            <span class="workspace-label">Backups</span>
-            <strong id="backup-count">0</strong>
-            <p class="small-muted">Available project-level recovery points.</p>
-          </article>
-          <article class="panel overview-card">
-            <span class="workspace-label">Deployment issues</span>
-            <strong id="deployment-issue-count">0</strong>
-            <p class="small-muted">Validation issues still needing attention.</p>
-          </article>
-        </section>
-        <section class="tab-layout">
-          <article class="panel">
-            <h2>Selected project payload</h2>
-            <pre id="dataset-output">Select a project to see payload.</pre>
-          </article>
-          <article class="panel">
-            <h2>Status</h2>
-            <ul id="trace-list" class="trace-list"></ul>
-          </article>
-        </section>
-        <section class="tab-layout">
-          <article class="panel">
-            <div class="section-header">
-              <div>
-                <h2>Governance readiness</h2>
-                <p class="small-muted" style="margin:0">Current security, retention, export, and readiness controls.</p>
+        <section class="workspace-shell-3col status-shell">
+          <aside class="workspace-rail status-rail">
+            <article class="panel">
+              <div class="section-header">
+                <div>
+                  <h2 style="margin-bottom:6px">Status categories</h2>
+                  <p class="small-muted" style="margin:0">Health, governance, audit, backups, and deployment cutover checks.</p>
+                </div>
               </div>
-            </div>
-            <ul id="governance-status-list" class="interactive-list" style="margin-top:16px"></ul>
-          </article>
-          <article class="panel">
-            <div class="section-header">
-              <h2>Deployment validation</h2>
-              <button id="refresh-deployment-btn" type="button" class="small">Refresh validation</button>
-            </div>
-            <ul id="deployment-issues-list" class="interactive-list" style="margin-top:16px"></ul>
-          </article>
-        </section>
-        <section class="tab-layout">
-          <article class="panel">
-            <h2>Professor governance controls</h2>
-            <form id="governance-policy-form" class="stack gap-12">
-              <div class="grid grid-2 compact-grid">
+              <ul class="interactive-list status-category-list" style="margin-top:14px">
+                <li class="interactive-list-item">Health diagnostics</li>
+                <li class="interactive-list-item">Governance readiness</li>
+                <li class="interactive-list-item">Audit trail</li>
+                <li class="interactive-list-item">Backup and restore</li>
+                <li class="interactive-list-item">Deployment validation</li>
+              </ul>
+            </article>
+            <section class="tab-overview">
+              <article class="panel overview-card">
+                <span class="workspace-label">Governance</span>
+                <strong id="governance-ready">loading</strong>
+                <p class="small-muted">Overall governance and deployment state.</p>
+              </article>
+              <article class="panel overview-card">
+                <span class="workspace-label">Audit events</span>
+                <strong id="audit-count">0</strong>
+                <p class="small-muted">Events visible in the active audit view.</p>
+              </article>
+              <article class="panel overview-card">
+                <span class="workspace-label">Backups</span>
+                <strong id="backup-count">0</strong>
+                <p class="small-muted">Available project-level recovery points.</p>
+              </article>
+              <article class="panel overview-card">
+                <span class="workspace-label">Deployment issues</span>
+                <strong id="deployment-issue-count">0</strong>
+                <p class="small-muted">Validation issues still needing attention.</p>
+              </article>
+            </section>
+          </aside>
+
+          <section class="workspace-canvas status-canvas">
+            <article class="panel">
+              <h2>Selected project payload</h2>
+              <pre id="dataset-output">Select a project to see payload.</pre>
+            </article>
+            <article class="panel">
+              <h2>Status diagnostics</h2>
+              <ul id="trace-list" class="trace-list"></ul>
+            </article>
+            <article class="panel">
+              <div class="section-header">
+                <div>
+                  <h2>Governance readiness</h2>
+                  <p class="small-muted" style="margin:0">Current security, retention, export, and readiness controls.</p>
+                </div>
+              </div>
+              <ul id="governance-status-list" class="interactive-list" style="margin-top:16px"></ul>
+            </article>
+            <article class="panel">
+              <div class="section-header">
+                <h2>Deployment validation</h2>
+                <button id="refresh-deployment-btn" type="button" class="small">Refresh validation</button>
+              </div>
+              <ul id="deployment-issues-list" class="interactive-list" style="margin-top:16px"></ul>
+              <div class="section-header" style="margin-top:16px">
+                <h3 style="margin:0">Cutover check</h3>
+                <button id="run-cutover-check-btn" type="button" class="small">Run cutover check</button>
+              </div>
+              <div id="cutover-summary" class="small-muted" style="margin-top:8px">Run cutover check after MU OIDC values are supplied.</div>
+              <ul id="cutover-check-list" class="interactive-list" style="margin-top:12px"></ul>
+            </article>
+            <article class="panel">
+              <div class="section-header">
+                <div>
+                  <h2>Audit diagnostics</h2>
+                  <p class="small-muted" style="margin:0">Filtered audit events stream for current project and policy scope.</p>
+                </div>
+              </div>
+              <ul id="audit-events-list" class="interactive-list" style="margin-top:16px"></ul>
+            </article>
+          </section>
+
+          <aside class="workspace-inspector status-inspector">
+            <article class="panel">
+              <h2>Professor governance controls</h2>
+              <form id="governance-policy-form" class="stack gap-12">
+                <div class="grid grid-2 compact-grid">
+                  <label class="field">
+                    <span>Idle timeout (minutes)</span>
+                    <input id="policy-idle-timeout" type="number" min="15" max="720" value="90" />
+                  </label>
+                  <label class="field">
+                    <span>Absolute session timeout (minutes)</span>
+                    <input id="policy-session-absolute-timeout" type="number" min="30" max="10080" value="720" />
+                  </label>
+                </div>
+                <div class="grid grid-2 compact-grid">
+                  <label class="field">
+                    <span>Login throttle window</span>
+                    <input id="policy-login-window" type="number" min="1" max="240" value="15" />
+                  </label>
+                  <label class="field">
+                    <span>Max failed logins</span>
+                    <input id="policy-login-failures" type="number" min="1" max="20" value="5" />
+                  </label>
+                </div>
+                <div class="grid grid-2 compact-grid">
+                  <label class="field">
+                    <span>Local auth mode</span>
+                    <select id="policy-local-auth-enabled">
+                      <option value="true" selected>Enabled</option>
+                      <option value="false">Disabled (SSO only)</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Password minimum length</span>
+                    <input id="policy-password-min-length" type="number" min="8" max="128" value="10" />
+                  </label>
+                </div>
+                <div class="grid grid-3 compact-grid">
+                  <label class="field">
+                    <span>Password uppercase</span>
+                    <select id="policy-password-require-uppercase">
+                      <option value="false" selected>Optional</option>
+                      <option value="true">Required</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Password number</span>
+                    <select id="policy-password-require-number">
+                      <option value="false" selected>Optional</option>
+                      <option value="true">Required</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Password symbol</span>
+                    <select id="policy-password-require-symbol">
+                      <option value="false" selected>Optional</option>
+                      <option value="true">Required</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="grid grid-2 compact-grid">
+                  <label class="field">
+                    <span>Audit export max rows</span>
+                    <input id="policy-audit-max-rows" type="number" min="100" max="100000" value="2000" />
+                  </label>
+                  <label class="field">
+                    <span>Backup retention (days)</span>
+                    <input id="policy-backup-retention" type="number" min="1" max="3650" value="30" />
+                  </label>
+                </div>
+                <button type="submit">Save governance policy</button>
+                <div id="policy-save-result" class="small-muted">Professor accounts can update deployment policy here.</div>
+              </form>
+            </article>
+            <article class="panel">
+              <div class="section-header">
+                <h2>Backup and restore</h2>
+              </div>
+              <div class="inline-actions" style="margin-top:14px">
+                <button id="create-backup-btn" type="button" class="small">Create backup snapshot</button>
+                <button id="refresh-backups-btn" type="button" class="small">Refresh backups</button>
+              </div>
+              <div id="backup-result" class="small-muted" style="margin-top:14px">Project owners can create and restore backup snapshots here.</div>
+              <ul id="backup-list" class="interactive-list" style="margin-top:12px"></ul>
+            </article>
+            <article class="panel">
+              <div class="section-header">
+                <div>
+                  <h2>Audit trail controls</h2>
+                  <p class="small-muted" style="margin:0">Filter and export project event history for review and compliance reporting.</p>
+                </div>
+              </div>
+              <div class="grid grid-4 compact-grid" style="margin-top:14px">
                 <label class="field">
-                  <span>Idle timeout (minutes)</span>
-                  <input id="policy-idle-timeout" type="number" min="15" max="720" value="90" />
+                  <span>Actor</span>
+                  <input id="audit-filter-actor" type="text" placeholder="student1" />
                 </label>
                 <label class="field">
-                  <span>Login throttle window</span>
-                  <input id="policy-login-window" type="number" min="1" max="240" value="15" />
-                </label>
-              </div>
-              <div class="grid grid-2 compact-grid">
-                <label class="field">
-                  <span>Max failed logins</span>
-                  <input id="policy-login-failures" type="number" min="1" max="20" value="5" />
+                  <span>Action prefix</span>
+                  <input id="audit-filter-action" type="text" placeholder="export." />
                 </label>
                 <label class="field">
-                  <span>Audit export max rows</span>
-                  <input id="policy-audit-max-rows" type="number" min="100" max="100000" value="2000" />
+                  <span>Entity type</span>
+                  <input id="audit-filter-entity" type="text" placeholder="export" />
+                </label>
+                <label class="field">
+                  <span>Role</span>
+                  <select id="audit-filter-role">
+                    <option value="">any</option>
+                    <option value="student">student</option>
+                    <option value="professor">professor</option>
+                    <option value="system">system</option>
+                  </select>
                 </label>
               </div>
-              <label class="field">
-                <span>Backup retention (days)</span>
-                <input id="policy-backup-retention" type="number" min="1" max="3650" value="30" />
-              </label>
-              <button type="submit">Save governance policy</button>
-              <div id="policy-save-result" class="small-muted">Professor accounts can update deployment policy here.</div>
-            </form>
-          </article>
-          <article class="panel">
-            <div class="section-header">
-              <h2>Backup and restore</h2>
-            </div>
-            <div class="inline-actions" style="margin-top:14px">
-              <button id="create-backup-btn" type="button" class="small">Create backup snapshot</button>
-              <button id="refresh-backups-btn" type="button" class="small">Refresh backups</button>
-            </div>
-            <div id="backup-result" class="small-muted" style="margin-top:14px">Project owners can create and restore backup snapshots here.</div>
-            <ul id="backup-list" class="interactive-list" style="margin-top:12px"></ul>
-          </article>
-        </section>
-        <section>
-          <article class="panel">
-            <div class="section-header">
-              <div>
-                <h2>Audit trail</h2>
-                <p class="small-muted" style="margin:0">Filter and export the project event history for review or compliance reporting.</p>
+              <div class="inline-actions" style="margin-top:14px">
+                <button id="apply-audit-filters-btn" type="button" class="small">Apply audit filters</button>
+                <button id="export-audit-json-btn" type="button" class="small">Export audit JSON</button>
+                <button id="export-audit-csv-btn" type="button" class="small">Export audit CSV</button>
+                <button id="export-audit-xlsx-btn" type="button" class="small">Export audit Excel</button>
+                <button id="export-audit-txt-btn" type="button" class="small">Export audit TXT</button>
               </div>
-            </div>
-            <div class="grid grid-4 compact-grid" style="margin-top:14px">
-              <label class="field">
-                <span>Actor</span>
-                <input id="audit-filter-actor" type="text" placeholder="student1" />
-              </label>
-              <label class="field">
-                <span>Action prefix</span>
-                <input id="audit-filter-action" type="text" placeholder="export." />
-              </label>
-              <label class="field">
-                <span>Entity type</span>
-                <input id="audit-filter-entity" type="text" placeholder="export" />
-              </label>
-              <label class="field">
-                <span>Role</span>
-                <select id="audit-filter-role">
-                  <option value="">any</option>
-                  <option value="student">student</option>
-                  <option value="professor">professor</option>
-                  <option value="system">system</option>
-                </select>
-              </label>
-            </div>
-            <div class="inline-actions" style="margin-top:14px">
-              <button id="apply-audit-filters-btn" type="button" class="small">Apply audit filters</button>
-              <button id="export-audit-json-btn" type="button" class="small">Export audit JSON</button>
-              <button id="export-audit-csv-btn" type="button" class="small">Export audit CSV</button>
-              <button id="export-audit-xlsx-btn" type="button" class="small">Export audit Excel</button>
-              <button id="export-audit-txt-btn" type="button" class="small">Export audit TXT</button>
-            </div>
-            <ul id="audit-events-list" class="interactive-list" style="margin-top:16px"></ul>
-          </article>
+            </article>
+          </aside>
         </section>
       </div>
 
     </main>
+
+    <div id="tab-guide-modal" class="tab-guide-modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="tab-guide-title" hidden>
+      <button id="tab-guide-backdrop" class="tab-guide-backdrop" type="button" aria-label="Close instructions"></button>
+      <article class="panel tab-guide-panel">
+        <div class="section-header">
+          <div>
+            <h2 id="tab-guide-title" style="margin-bottom:6px">User Instructions</h2>
+            <p id="tab-guide-subtitle" class="small-muted" style="margin:0">Step-by-step instructions for this workspace tab.</p>
+          </div>
+          <button id="tab-guide-close-btn" type="button" class="small">Close</button>
+        </div>
+        <div id="tab-guide-content" class="tab-guide-content"></div>
+      </article>
+    </div>
 
     <script type="module" src="/src/app.js"></script>
   </body>

@@ -1,0 +1,65 @@
+PROPRIETARY NON-COMMERCIAL LICENSE
+
+Copyright (c) 2026 TechGod
+All rights reserved.
+
+Licensor hereby grants Licensee a non-exclusive, non-transferable, revocable license to use the Software solely under the terms of this Agreement.
+
+This software and all associated source code, documentation, and materials (the "Software") are the exclusive property of the copyright holder.
+
+NO LICENSE IS GRANTED FOR COMMERCIAL USE.
+
+Permission is granted to view, download, and run the Software solely for personal, educational, or research purposes, provided that such use is NON-COMMERCIAL and does not generate revenue, directly or indirectly.
+
+The following activities are STRICTLY PROHIBITED without prior written permission and an executed licensing agreement from the copyright holder:
+
+Commercial use of the Software, including but not limited to:
+
+Use in any product or service offered for a fee
+
+Use in internal business operations
+
+Use in research, development, or systems for profit-generating entities
+
+Use in SaaS, cloud, enterprise, or consulting contexts
+
+Redistribution of the Software, in whole or in part, in source or binary form, modified or unmodified.
+
+Creation of derivative works, modifications, adaptations, or forks.
+
+Inclusion of the Software in proprietary, closed-source, or open-source projects without explicit permission.
+
+Attribution is REQUIRED for any permitted use. The original copyright notice and this license text must be retained in all copies.
+
+Any use of the Software outside the scope of this license constitutes copyright infringement and may result in civil liability, including damages, injunctive relief, and recovery of legal fees.
+
+This license is automatically TERMINATED upon any violation of its terms.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
+
+NO IMPLIED LICENSE
+
+Except as expressly stated herein, no license or rights are granted by implication, estoppel, or otherwise. All rights not expressly granted are reserved by the copyright holder.
+
+OWNERSHIP
+
+The Software is licensed, not sold. Title, ownership rights, and intellectual property rights in and to the Software remain exclusively with the copyright holder.
+
+REVERSE ENGINEERING PROHIBITED
+
+You may not reverse engineer, decompile, disassemble, or otherwise attempt to derive the source code, algorithms, or underlying structure of the Software, except to the extent expressly permitted by applicable law.
+
+TERMINATION
+
+This license is automatically terminated if you violate any of its terms. Upon termination, you must immediately cease all use of the Software and destroy all copies in your possession or control.
+
+GOVERNING LAW
+
+This Agreement shall be governed by and construed in accordance with the laws of the State of Indiana, United States of America, without regard to conflict of law principles.
+
+COMMERCIAL LICENSING
+
+Commercial use of the Software requires a separate, executed commercial license agreement and payment of applicable licensing fees.
+
+For commercial licensing inquiries, contact:
+licensing@axionindustries.com

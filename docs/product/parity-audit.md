@@ -8,6 +8,11 @@ This document maps the current `muStatistics` codebase to the major functional a
 
 It is not a claim of full parity. It is a gap audit.
 
+For ongoing release-by-release tracking, use:
+
+- `docs/product/parity/registry.json`
+- `docs/product/parity/registry.md`
+
 ## Reference points reviewed
 
 - IBM SPSS Statistics product and documentation areas:

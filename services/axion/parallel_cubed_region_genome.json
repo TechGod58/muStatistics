@@ -1,0 +1,56 @@
+{
+  "meta": {
+    "id": "mu-statistics-parallel-cubed",
+    "version": "1.0",
+    "notes": "Parallel Cubed region wiring for qualitative retrieval prefiltering"
+  },
+  "params": {
+    "max_active_regions": 3,
+    "spread": 0.55,
+    "max_workers": 6
+  },
+  "regions": [
+    {
+      "id": "logic",
+      "label": "Logic"
+    },
+    {
+      "id": "memory",
+      "label": "Memory"
+    },
+    {
+      "id": "emotion",
+      "label": "Emotion"
+    }
+  ],
+  "synapses": [
+    {
+      "src": "logic",
+      "dst": "memory",
+      "w": 0.8
+    },
+    {
+      "src": "memory",
+      "dst": "emotion",
+      "w": 0.6
+    },
+    {
+      "src": "emotion",
+      "dst": "logic",
+      "w": 0.35
+    }
+  ],
+  "bindings": {
+    "logic": [
+      "query_parser",
+      "structure_matcher"
+    ],
+    "memory": [
+      "evidence_retriever",
+      "segment_ranker"
+    ],
+    "emotion": [
+      "salience_marker"
+    ]
+  }
+}

@@ -41,7 +41,7 @@ export async function writeProjectArtifactBytes(params: {
   projectId: string;
   area: 'exports' | 'worker' | 'audit' | 'backups';
   label: string;
-  extension: 'json' | 'csv' | 'txt' | 'docx' | 'pdf' | 'xlsx';
+  extension: string;
   contents: Uint8Array;
   env?: NodeJS.ProcessEnv;
 }): Promise<{ absolutePath: string; relativePath: string }> {

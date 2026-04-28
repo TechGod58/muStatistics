@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-04-21T00:00:00.000Z",
+  "snapshots": [
+    {
+      "id": "0.2.0-2026-04-21",
+      "muStatisticsVersion": "0.2.0",
+      "capturedAt": "2026-04-21T00:00:00.000Z",
+      "references": {
+        "spss": "IBM SPSS Statistics (current major release)",
+        "nvivo": "NVivo (current major release)"
+      },
+      "summary": "High-priority mixed-methods parity tracks are implemented with expanded edge-concordance harness coverage, explicit AMOS/SEM integration-boundary strategy, and deeper query-workbench controls.",
+      "tracks": {
+        "spss": {
+          "openGaps": [
+            "Native AMOS/SEM execution remains deferred; parity is currently governed through an explicit integration boundary",
+            "Residual chart-builder ergonomics and output object editing fidelity at full SPSS depth"
+          ],
+          "closedSincePrior": []
+        },
+        "nvivo": {
+          "openGaps": [
+            "Top-end qualitative report authoring ergonomics for very large committee packs",
+            "Rich-media workflow ergonomics for large transcription/coding teams"
+          ],
+          "closedSincePrior": []
+        },
+        "platform": {
+          "openGaps": [
+            "MU OIDC/SSO final configuration and cutover validation pending admin-provided values",
+            "Continuous perf regression monitoring against locked SLO baselines in deployment pipeline"
+          ],
+          "closedSincePrior": []
+        }
+      }
+    }
+  ]
+}

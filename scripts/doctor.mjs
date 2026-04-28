@@ -13,10 +13,24 @@ const requiredFiles = [
   'apps/web/index.html',
   'apps/web/src/app.js',
   'apps/web/src/styles.css',
+  'scripts/e2e-smoke.mjs',
+  'scripts/e2e-hardening.mjs',
+  'scripts/e2e-online-heavy.mjs',
+  'scripts/perf-large-project-baseline.mjs',
+  'scripts/perf-university-load.mjs',
+  'scripts/perf-regression-gate.mjs',
+  'scripts/parity-versioned-tracker.mjs',
+  'tests/performance/baseline-thresholds.json',
+  'tests/performance/university-load-profiles.json',
+  'tests/performance/university-slo-baselines.json',
   'packages/core-domain/src/index.ts',
   'packages/mixed-methods/src/index.ts',
   'docs/product/mvp.md',
-  'docs/product/university-focused-roadmap.md'
+  'docs/product/parity/registry.json',
+  'docs/product/parity/registry.md',
+  'docs/product/parity/README.md',
+  'docs/product/university-focused-roadmap.md',
+  'docs/deployment/production-hardening.md'
 ];
 
 function checkFile(relative) {
@@ -130,6 +144,14 @@ function checkEnvConfig() {
     console.log(`WARN  OIDC partial configuration present (${presentOidc.join(', ')})`);
   } else if (presentOidc.length === oidcKeys.length) {
     console.log('OK    OIDC core settings present');
+    const expectedAudience = (env.OIDC_EXPECTED_AUDIENCE ?? env.OIDC_CLIENT_ID ?? '').trim();
+    if (expectedAudience) {
+      console.log('OK    OIDC expected audience present');
+    } else {
+      console.log('WARN  OIDC expected audience is missing (OIDC_EXPECTED_AUDIENCE/OIDC_CLIENT_ID)');
+    }
+    const fallbackEnabled = ['1', 'true'].includes(String(env.OIDC_ALLOW_USERINFO_FALLBACK ?? '').toLowerCase());
+    console.log(`${fallbackEnabled ? 'WARN ' : 'OK   '} OIDC userinfo-only fallback ${fallbackEnabled ? 'enabled' : 'disabled'}`);
   } else {
     console.log('WARN  OIDC not configured');
   }

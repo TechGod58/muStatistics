@@ -2,6 +2,7 @@ import { basename, extname } from 'node:path';
 import mammoth from 'mammoth';
 import { PDFParse } from 'pdf-parse';
 import XLSX from 'xlsx';
+import { readSpssBuffer, type SpssScalar } from './spss-bridge.js';
 
 export type ImportedSourceDraft = {
   kind: 'source';
@@ -30,6 +31,25 @@ export type ImportedCaseRowDraft = {
   attributes: Array<{ name: string; value: string | number | boolean | null }>;
 };
 
+export type ImportedSpssFieldMetadataDraft = {
+  sourceFieldKey: string;
+  mappedFieldKey: string;
+  fieldLabel: string;
+  measure: 'nominal' | 'ordinal' | 'scale' | 'unknown' | null;
+  valueLabels: Array<{ value: SpssScalar; label: string }>;
+  missingValues: SpssScalar[];
+  missingRanges: Array<{ lo: SpssScalar; hi: SpssScalar }>;
+};
+
+export type ImportedSpssMetadataDraft = {
+  format: 'sav' | 'zsav';
+  fileLabel: string | null;
+  notes: string[];
+  weightField: string | null;
+  splitFields: string[];
+  fields: ImportedSpssFieldMetadataDraft[];
+};
+
 export type ImportedTabularDraft = {
   kind: 'tabular';
   title: string;
@@ -38,6 +58,7 @@ export type ImportedTabularDraft = {
   caseLabelField: string;
   sheetName: string | null;
   rows: ImportedCaseRowDraft[];
+  spssMetadata?: ImportedSpssMetadataDraft;
 };
 
 export type ImportedFileDraft = ImportedSourceDraft | ImportedTabularDraft;
@@ -50,6 +71,8 @@ function inferContentType(filename: string, fallback: string): string {
   if (extension === '.docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   if (extension === '.xls') return 'application/vnd.ms-excel';
   if (extension === '.xlsx') return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (extension === '.sav') return 'application/x-spss-sav';
+  if (extension === '.zsav') return 'application/x-spss-zsav';
   if (extension === '.pdf') return 'application/pdf';
   return fallback || 'application/octet-stream';
 }
@@ -100,7 +123,8 @@ function buildTabularDraft(
   filename: string,
   contentType: string,
   rows: Record<string, unknown>[],
-  sheetName: string | null
+  sheetName: string | null,
+  spssMetadata?: ImportedSpssMetadataDraft
 ): ImportedTabularDraft {
   if (rows.length === 0) {
     throw new Error('The uploaded table does not contain any rows.');
@@ -130,7 +154,8 @@ function buildTabularDraft(
     contentType,
     caseLabelField,
     sheetName,
-    rows: dataRows
+    rows: dataRows,
+    spssMetadata
   };
 }
 
@@ -205,5 +230,44 @@ export async function parseImportedFile(
     return buildTabularDraft(filename, contentType, workbookRows.rows, workbookRows.sheetName);
   }
 
-  throw new Error(`Unsupported file type "${extension || 'unknown'}". Accepted files: .txt, .md, .docx, .pdf, .csv, .xls, .xlsx.`);
+  if (extension === '.sav' || extension === '.zsav') {
+    const parsed = await readSpssBuffer(filename, buffer);
+    const rows = parsed.rows.map((row) => Object.fromEntries(
+      Object.entries(row).map(([key, value]) => [key, coerceCellValue(value)])
+    ));
+    const headers = parsed.metadata.fields.map((field) => field.sourceFieldKey);
+    const fallbackHeaders = headers.length > 0
+      ? headers
+      : Object.keys(rows[0] ?? {}).map((header) => header.trim()).filter(Boolean);
+    const caseLabelField = inferCaseLabelField(fallbackHeaders);
+    const normalizedFields = parsed.metadata.fields.length > 0
+      ? parsed.metadata.fields
+      : fallbackHeaders.map((field) => ({
+        sourceFieldKey: field,
+        fieldLabel: field,
+        measure: null,
+        valueLabels: [],
+        missingValues: [],
+        missingRanges: []
+      }));
+    const spssMetadata: ImportedSpssMetadataDraft = {
+      format: extension === '.zsav' ? 'zsav' : 'sav',
+      fileLabel: parsed.metadata.fileLabel,
+      notes: parsed.metadata.notes,
+      weightField: parsed.metadata.weightField,
+      splitFields: parsed.metadata.splitFields,
+      fields: normalizedFields.map((field) => ({
+        sourceFieldKey: field.sourceFieldKey,
+        mappedFieldKey: field.sourceFieldKey === caseLabelField ? 'case_label' : field.sourceFieldKey,
+        fieldLabel: field.fieldLabel || field.sourceFieldKey,
+        measure: field.measure,
+        valueLabels: field.valueLabels,
+        missingValues: field.missingValues,
+        missingRanges: field.missingRanges
+      }))
+    };
+    return buildTabularDraft(filename, contentType, rows, null, spssMetadata);
+  }
+
+  throw new Error(`Unsupported file type "${extension || 'unknown'}". Accepted files: .txt, .md, .docx, .pdf, .csv, .xls, .xlsx, .sav, .zsav.`);
 }

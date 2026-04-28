@@ -22,6 +22,7 @@ coverage/
 /data-portable-test/
 /runtime/
 /.logs/
+/.tmp/
 apps/api/-
 *.db
 *.sqlite

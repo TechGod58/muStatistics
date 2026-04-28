@@ -6,8 +6,9 @@ import {
   createSegment,
   createSource
 } from '@mu/core-domain';
-import { buildCodeByCaseView, buildCodingComparison, buildCompoundQuery, buildFrameworkMatrix, buildInterRaterSummary, buildMatrixCoding, buildTextSearch, buildWordFrequency, retrieveEvidence } from '../src/index';
+import { buildCodeByCaseView, buildCodingComparison, buildCompoundQuery, buildConceptMap, buildFrameworkMatrix, buildInterRaterSummary, buildMapVisualization, buildMatrixCoding, buildTextSearch, buildWordFrequency, retrieveEvidence } from '../src/index';
 import { buildPatternAutocode, buildSentimentAnalysis } from '../src/index';
+import { buildQualitativeQueryReport } from '../src/index';
 
 describe('retrieveEvidence', () => {
   it('filters coded evidence by code, case, and search text', () => {
@@ -375,6 +376,11 @@ describe('retrieveEvidence', () => {
       query: {},
       searchText: 'trust',
       matchMode: 'whole_word',
+      codingScope: 'coded_only',
+      minHitCount: 2,
+      snippetLimit: 1,
+      maxRows: 1,
+      sortBy: 'hits_desc',
       sources: [source],
       segments: [segmentA, segmentB],
       applications: [trustApp],
@@ -382,8 +388,26 @@ describe('retrieveEvidence', () => {
       memos: []
     });
     expect(textSearch.totalSegments).toBe(1);
+    expect(textSearch.returnedSegments).toBe(1);
     expect(textSearch.totalHits).toBe(2);
+    expect(textSearch.codingScope).toBe('coded_only');
+    expect(textSearch.minHitCount).toBe(2);
+    expect(textSearch.hits[0]?.snippets).toHaveLength(1);
     expect(textSearch.hits[0]?.snippets[0]).toContain('Trust');
+
+    const uncodedOnlySearch = buildTextSearch({
+      query: {},
+      searchText: 'trust',
+      matchMode: 'whole_word',
+      codingScope: 'uncoded_only',
+      sources: [source],
+      segments: [segmentA, segmentB],
+      applications: [trustApp],
+      cases: [caseEntity],
+      memos: []
+    });
+    expect(uncodedOnlySearch.totalSegments).toBe(0);
+    expect(uncodedOnlySearch.totalHits).toBe(0);
 
     const wordFrequency = buildWordFrequency({
       query: {},
@@ -486,6 +510,30 @@ describe('retrieveEvidence', () => {
       memos: [memo]
     });
     expect(anyQuery.matchCount).toBe(2);
+    expect(anyQuery.returnedCount).toBe(2);
+
+    const polishedQuery = buildCompoundQuery({
+      scopeQuery: {},
+      operator: 'all',
+      caseSensitive: true,
+      maxRows: 1,
+      clauses: [
+        { field: 'text', operator: 'contains', value: 'Trust', enabled: true },
+        { field: 'code', operator: 'equals', value: 'code-fairness', negate: true, enabled: true },
+        { field: 'memo', operator: 'present', enabled: false }
+      ],
+      sources: [source],
+      segments: [segmentA, segmentB],
+      applications: [trustApp, fairnessApp],
+      cases: [caseEntity],
+      memos: [memo]
+    });
+    expect(polishedQuery.matchCount).toBe(1);
+    expect(polishedQuery.returnedCount).toBe(1);
+    expect(polishedQuery.scopedCount).toBe(2);
+    expect(polishedQuery.clauseCount).toBe(2);
+    expect(polishedQuery.caseSensitive).toBe(true);
+    expect(polishedQuery.items[0]?.segment.id).toBe(segmentA.id);
   });
 
   it('builds sentiment summaries and pattern autocode matches', () => {
@@ -539,5 +587,349 @@ describe('retrieveEvidence', () => {
     expect(autocode.matchedCount).toBe(2);
     expect(autocode.expandedPatterns).toContain('fair');
     expect(autocode.expandedPatterns).toContain('slow');
+  });
+
+  it('supports wildcard, regex, fuzzy, and linguistic text-search modes', () => {
+    const source = createSource({
+      id: 'source-8',
+      projectId: 'project-1',
+      kind: 'transcript',
+      title: 'Interview 8',
+      contentType: 'text/plain',
+      contentText: 'Trusted reviewers discussed fairness. Trust and equity improved. Trst concerns remain.'
+    });
+    const segmentA = createSegment({
+      id: 'segment-8a',
+      projectId: 'project-1',
+      sourceId: source.id,
+      kind: 'text_range',
+      anchor: { kind: 'text_range', start: 0, end: 36 },
+      text: 'Trusted reviewers discussed fairness.'
+    });
+    const segmentB = createSegment({
+      id: 'segment-8b',
+      projectId: 'project-1',
+      sourceId: source.id,
+      kind: 'text_range',
+      anchor: { kind: 'text_range', start: 37, end: 67 },
+      text: 'Trust and equity improved.'
+    });
+    const segmentC = createSegment({
+      id: 'segment-8c',
+      projectId: 'project-1',
+      sourceId: source.id,
+      kind: 'text_range',
+      anchor: { kind: 'text_range', start: 68, end: 89 },
+      text: 'Trst concerns remain.'
+    });
+
+    const wildcard = buildTextSearch({
+      query: {},
+      searchText: 'trust*',
+      matchMode: 'wildcard',
+      sources: [source],
+      segments: [segmentA, segmentB, segmentC],
+      applications: [],
+      cases: [],
+      memos: []
+    });
+    expect(wildcard.totalSegments).toBe(2);
+
+    const regex = buildTextSearch({
+      query: {},
+      searchText: 'fair(ness)?',
+      matchMode: 'regex',
+      sources: [source],
+      segments: [segmentA, segmentB, segmentC],
+      applications: [],
+      cases: [],
+      memos: []
+    });
+    expect(regex.totalSegments).toBe(1);
+    expect(regex.hits[0]?.segmentId).toBe(segmentA.id);
+
+    const fuzzy = buildTextSearch({
+      query: {},
+      searchText: 'trst',
+      matchMode: 'fuzzy',
+      fuzzyDistance: 1,
+      sources: [source],
+      segments: [segmentA, segmentB, segmentC],
+      applications: [],
+      cases: [],
+      memos: []
+    });
+    expect(fuzzy.totalSegments).toBeGreaterThanOrEqual(2);
+
+    const wholeWordNoLinguistic = buildTextSearch({
+      query: {},
+      searchText: 'trust',
+      matchMode: 'whole_word',
+      linguisticMode: 'none',
+      sources: [source],
+      segments: [segmentA, segmentB, segmentC],
+      applications: [],
+      cases: [],
+      memos: []
+    });
+    const wholeWordStem = buildTextSearch({
+      query: {},
+      searchText: 'trust',
+      matchMode: 'whole_word',
+      linguisticMode: 'stem',
+      sources: [source],
+      segments: [segmentA, segmentB, segmentC],
+      applications: [],
+      cases: [],
+      memos: []
+    });
+    expect(wholeWordStem.totalSegments).toBeGreaterThan(wholeWordNoLinguistic.totalSegments);
+  });
+
+  it('supports proximity/fuzzy compound clauses and query-report profile options', () => {
+    const sourceA = createSource({
+      id: 'source-9a',
+      projectId: 'project-1',
+      kind: 'transcript',
+      title: 'Interview 9A',
+      contentType: 'text/plain',
+      contentText: 'Trust in fair process today.'
+    });
+    const sourceB = createSource({
+      id: 'source-9b',
+      projectId: 'project-1',
+      kind: 'transcript',
+      title: 'Interview 9B',
+      contentType: 'text/plain',
+      contentText: 'Trust appears with many unrelated tokens before fair outcome eventually.'
+    });
+    const segmentA = createSegment({
+      id: 'segment-9a',
+      projectId: 'project-1',
+      sourceId: sourceA.id,
+      kind: 'text_range',
+      anchor: { kind: 'text_range', start: 0, end: 28 },
+      text: 'Trust in fair process today.'
+    });
+    const segmentB = createSegment({
+      id: 'segment-9b',
+      projectId: 'project-1',
+      sourceId: sourceB.id,
+      kind: 'text_range',
+      anchor: { kind: 'text_range', start: 0, end: 72 },
+      text: 'Trust appears with many unrelated tokens before fair outcome eventually.'
+    });
+    const caseA = createCase({
+      id: 'case-9a',
+      projectId: 'project-1',
+      label: 'Participant 9A',
+      sourceIds: [sourceA.id]
+    });
+    const caseB = createCase({
+      id: 'case-9b',
+      projectId: 'project-1',
+      label: 'Participant 9B',
+      sourceIds: [sourceB.id]
+    });
+    const appA = createCodeApplication({
+      id: 'ca-9a',
+      projectId: 'project-1',
+      segmentId: segmentA.id,
+      codeId: 'code-trust',
+      caseId: caseA.id,
+      coderId: 'student1'
+    });
+    const appB = createCodeApplication({
+      id: 'ca-9b',
+      projectId: 'project-1',
+      segmentId: segmentB.id,
+      codeId: 'code-fairness',
+      caseId: caseB.id,
+      coderId: 'student1'
+    });
+    const memoA = createMemo({
+      id: 'memo-9a',
+      projectId: 'project-1',
+      targetType: 'segment',
+      targetId: segmentA.id,
+      title: 'Near note'
+    });
+    const memoB = createMemo({
+      id: 'memo-9b',
+      projectId: 'project-1',
+      targetType: 'segment',
+      targetId: segmentB.id,
+      title: 'Far note'
+    });
+    const memoB2 = createMemo({
+      id: 'memo-9c',
+      projectId: 'project-1',
+      targetType: 'segment',
+      targetId: segmentB.id,
+      title: 'Additional far note'
+    });
+
+    const compound = buildCompoundQuery({
+      scopeQuery: {},
+      operator: 'all',
+      clauses: [
+        { field: 'text', operator: 'near', value: 'trust|fair', proximityWithin: 2, proximityOrdered: true },
+        { field: 'text', operator: 'fuzzy', value: 'trst', fuzzyDistance: 1 }
+      ],
+      sources: [sourceA, sourceB],
+      segments: [segmentA, segmentB],
+      applications: [appA, appB],
+      cases: [caseA, caseB],
+      memos: [memoA, memoB, memoB2]
+    });
+    expect(compound.matchCount).toBe(1);
+    expect(compound.items[0]?.segment.id).toBe(segmentA.id);
+
+    const report = buildQualitativeQueryReport({
+      query: {},
+      options: {
+        topSources: 1,
+        topCases: 1,
+        topCodes: 1,
+        excerptLimit: 1,
+        includeSourceCoverage: true,
+        includeCaseCoverage: false,
+        includeExcerptRows: true,
+        sortBy: 'memo_count'
+      },
+      sources: [sourceA, sourceB],
+      segments: [segmentA, segmentB],
+      applications: [appA, appB],
+      cases: [caseA, caseB],
+      memos: [memoA, memoB, memoB2],
+      codes: [
+        { id: 'code-trust', name: 'Trust' },
+        { id: 'code-fairness', name: 'Fairness' }
+      ]
+    });
+    expect(report.options.sortBy).toBe('memo_count');
+    expect(report.sources).toHaveLength(1);
+    expect(report.cases).toHaveLength(0);
+    expect(report.excerpts).toHaveLength(1);
+    expect(report.excerpts[0]?.segmentId).toBe(segmentB.id);
+  });
+
+  it('supports map/concept option filters for visualization outputs', () => {
+    const source = createSource({
+      id: 'source-viz-1',
+      projectId: 'project-1',
+      kind: 'transcript',
+      title: 'Visualization interview',
+      contentType: 'text/plain',
+      contentText: 'Trust concern in campus A and campus B.'
+    });
+    const segmentA = createSegment({
+      id: 'segment-viz-a',
+      projectId: 'project-1',
+      sourceId: source.id,
+      kind: 'text_range',
+      anchor: { kind: 'text_range', start: 0, end: 22 },
+      text: 'Trust concern campus A'
+    });
+    const segmentB = createSegment({
+      id: 'segment-viz-b',
+      projectId: 'project-1',
+      sourceId: source.id,
+      kind: 'text_range',
+      anchor: { kind: 'text_range', start: 23, end: 46 },
+      text: 'Trust concern campus B'
+    });
+    const caseA = createCase({
+      id: 'case-viz-a',
+      projectId: 'project-1',
+      label: 'Participant A',
+      sourceIds: [source.id]
+    });
+    const caseB = createCase({
+      id: 'case-viz-b',
+      projectId: 'project-1',
+      label: 'Participant B',
+      sourceIds: [source.id]
+    });
+    const appA = createCodeApplication({
+      id: 'ca-viz-a',
+      projectId: 'project-1',
+      segmentId: segmentA.id,
+      codeId: 'code-trust',
+      caseId: caseA.id,
+      coderId: 'student1'
+    });
+    const appB = createCodeApplication({
+      id: 'ca-viz-b',
+      projectId: 'project-1',
+      segmentId: segmentB.id,
+      codeId: 'code-trust',
+      caseId: caseB.id,
+      coderId: 'student1'
+    });
+
+    const map = buildMapVisualization({
+      query: {},
+      sources: [source],
+      segments: [segmentA, segmentB],
+      applications: [appA, appB],
+      cases: [caseA, caseB],
+      memos: [],
+      attributes: [
+        { id: 'attr-viz-a1', projectId: 'project-1', targetType: 'case', targetId: caseA.id, name: 'campus', value: 'North', createdAt: '', updatedAt: '' },
+        { id: 'attr-viz-a2', projectId: 'project-1', targetType: 'case', targetId: caseA.id, name: 'latitude', value: 39.1, createdAt: '', updatedAt: '' },
+        { id: 'attr-viz-a3', projectId: 'project-1', targetType: 'case', targetId: caseA.id, name: 'longitude', value: -84.5, createdAt: '', updatedAt: '' },
+        { id: 'attr-viz-b1', projectId: 'project-1', targetType: 'case', targetId: caseB.id, name: 'campus', value: 'South', createdAt: '', updatedAt: '' },
+        { id: 'attr-viz-b2', projectId: 'project-1', targetType: 'case', targetId: caseB.id, name: 'latitude', value: 38.6, createdAt: '', updatedAt: '' },
+        { id: 'attr-viz-b3', projectId: 'project-1', targetType: 'case', targetId: caseB.id, name: 'longitude', value: -84.7, createdAt: '', updatedAt: '' }
+      ],
+      options: {
+        metric: 'case_count',
+        normalization: 'within_scope_pct',
+        minCount: 1,
+        maxPoints: 5
+      }
+    });
+    expect(map.metric).toBe('case_count');
+    expect(map.normalization).toBe('within_scope_pct');
+    expect(map.pointsReturned).toBeLessThanOrEqual(5);
+    expect(map.points.some((point) => point.latitude !== null && point.longitude !== null)).toBe(true);
+
+    const concept = buildConceptMap({
+      query: {},
+      sources: [source],
+      segments: [segmentA, segmentB],
+      applications: [
+        appA,
+        appB,
+        createCodeApplication({
+          id: 'ca-viz-c',
+          projectId: 'project-1',
+          segmentId: segmentA.id,
+          codeId: 'code-fairness',
+          caseId: caseA.id,
+          coderId: 'student1'
+        })
+      ],
+      cases: [caseA, caseB],
+      memos: [],
+      codes: [
+        { id: 'code-trust', name: 'Trust', colorToken: 'blue' },
+        { id: 'code-fairness', name: 'Fairness', colorToken: 'green' }
+      ],
+      relationships: [
+        { leftTargetType: 'code', leftTargetId: 'code-trust', rightTargetType: 'code', rightTargetId: 'code-fairness', relationshipType: 'see_also' }
+      ],
+      options: {
+        includeCooccurrenceLinks: true,
+        includeRelationshipLinks: true,
+        minLinkWeight: 1,
+        maxLinks: 20,
+        nodeSizeMode: 'weighted_degree'
+      }
+    });
+    expect(concept.options.nodeSizeMode).toBe('weighted_degree');
+    expect(concept.links.length).toBeGreaterThan(0);
+    expect(concept.nodes.some((node) => node.weightedDegree > 0)).toBe(true);
   });
 });

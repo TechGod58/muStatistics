@@ -1,4 +1,4 @@
-﻿{
+{
     "name":  "@mu/auth",
     "version":  "0.1.0",
     "type":  "module",
@@ -9,6 +9,9 @@
                     "test":  "vitest run --passWithNoTests",
                     "typecheck":  "tsc -p tsconfig.json --noEmit"
                 },
+    "dependencies":  {
+                         "jose":  "^5.9.6"
+                     },
     "devDependencies":  {
                             "@types/node":  "^22.10.2",
                             "typescript":  "^5.7.3",

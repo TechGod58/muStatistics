@@ -12,6 +12,13 @@
     "build:portable": "powershell -ExecutionPolicy Bypass -File ./scripts/portable/build-portable.ps1",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "test:e2e:smoke": "node ./scripts/e2e-smoke.mjs"
+    "test:e2e:smoke": "node ./scripts/e2e-smoke.mjs",
+    "test:e2e:hardening": "node ./scripts/e2e-hardening.mjs",
+    "test:e2e:online-heavy": "node ./scripts/e2e-online-heavy.mjs",
+    "test:perf:baseline": "node ./scripts/perf-large-project-baseline.mjs",
+    "test:perf:university": "node ./scripts/perf-university-load.mjs",
+    "test:perf:gate": "node ./scripts/perf-regression-gate.mjs",
+    "parity:status": "node ./scripts/parity-versioned-tracker.mjs status",
+    "parity:snapshot": "node ./scripts/parity-versioned-tracker.mjs snapshot"
   }
 }

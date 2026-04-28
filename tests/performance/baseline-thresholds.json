@@ -1,0 +1,10 @@
+{
+  "notes": "Local single-machine baseline thresholds for large-project performance smoke. Tune per deployment hardware class.",
+  "thresholds": {
+    "import_csv_ms": 20000,
+    "descriptives_ms": 8000,
+    "compare_means_ms": 6000,
+    "regression_ms": 9000,
+    "t_test_ms": 6000
+  }
+}

@@ -4,6 +4,32 @@ const IDLE_TIMEOUT_MS = 90 * 60 * 1000;
 const ACTIVITY_PING_INTERVAL_MS = 5 * 60 * 1000;
 const LOGIN_MODE_STORAGE_KEY = 'muStatistics.loginMode';
 const COMPILED_REPORT_PRESETS_STORAGE_KEY = 'muStatistics.compiledReportPresets';
+const OUTPUT_PACKS_STORAGE_KEY = 'muStatistics.outputPacks';
+const OUTPUT_WORKSPACE_STATE_STORAGE_KEY = 'muStatistics.outputWorkspaceState';
+const DIARIZATION_QA_FLAG_KEYS = [
+  'low_confidence',
+  'unlabeled_speaker',
+  'rapid_speaker_switch',
+  'overlap_speaker_conflict',
+  'short_low_confidence'
+];
+const DIARIZATION_QA_FLAG_LABELS = {
+  low_confidence: 'Low confidence',
+  unlabeled_speaker: 'Unlabeled',
+  rapid_speaker_switch: 'Rapid switch',
+  overlap_speaker_conflict: 'Overlap conflict',
+  short_low_confidence: 'Short low-confidence'
+};
+
+function createDefaultDiarizationQaFilters() {
+  return {
+    low_confidence: true,
+    unlabeled_speaker: true,
+    rapid_speaker_switch: true,
+    overlap_speaker_conflict: true,
+    short_low_confidence: true
+  };
+}
 
 const state = {
   currentUser: null,
@@ -12,6 +38,7 @@ const state = {
   integrationStatus: null,
   recentOfficeArtifacts: [],
   activeTab: 'collaboration',
+  projectsView: 'list',
   qualitativeView: 'library',
   qualitativeSubViews: {
     library: 'sources',
@@ -32,6 +59,7 @@ const state = {
   governanceStatus: null,
   governancePolicy: null,
   deploymentValidation: null,
+  cutoverValidation: null,
   selectedSummary: null,
   selectedMembers: [],
   selectedSources: [],
@@ -45,10 +73,21 @@ const state = {
   selectedRelationships: [],
   editingRelationshipId: null,
   selectedReferences: [],
+  referenceLinks: [],
+  referenceCollections: [],
+  referenceCollectionItems: [],
+  referenceDuplicateCandidates: [],
+  referenceMergeEvents: [],
+  editingReferenceId: null,
   selectedTranscriptSyncLinks: [],
   selectedAttributes: [],
   selectedPresence: [],
   selectedMessages: [],
+  codingAssignments: [],
+  codingCalibrationSessions: [],
+  codingCalibrationResult: null,
+  mergeGovernancePolicy: null,
+  mergeConflictTriages: [],
   selectedSegments: [],
   selectedCodeApplications: [],
   selectedTraceLinks: [],
@@ -60,6 +99,14 @@ const state = {
   externalSqlQueryPreview: null,
   selectedSqlProfileId: null,
   selectedSqlTableKey: '',
+  officeConnectorProfiles: [],
+  officeConnectorJobs: [],
+  officeConnectorDiscovery: [],
+  selectedOfficeConnectorProfileId: null,
+  referenceConnectorProfiles: [],
+  referenceConnectorJobs: [],
+  referenceConnectorSearchResults: [],
+  selectedReferenceConnectorProfileId: null,
   selectedAuditEvents: [],
   backupItems: [],
   savedTransforms: [],
@@ -79,6 +126,9 @@ const state = {
   autocodeResult: null,
   sentimentResult: null,
   mergeReviewResult: null,
+  mergeReviewHistory: [],
+  mergeReviewApprovals: [],
+  mergeReviewStatusFilter: 'open',
   textSearchResult: null,
   wordFrequencyResult: null,
   wordCloudResult: null,
@@ -94,6 +144,7 @@ const state = {
   workspaceSelectedItemKey: null,
   workspaceFocusedSegmentId: null,
   workspaceEditingSyncLinkId: null,
+  workspaceFocusedSyncLinkId: null,
   selectedDescriptivesBase: null,
   selectedDescriptives: null,
   selectedCrosstab: null,
@@ -119,6 +170,9 @@ const state = {
   regressionResult: null,
   reliabilityResult: null,
   factorAnalysisResult: null,
+  optimalScalingResult: null,
+  conjointResult: null,
+  directMarketingResult: null,
   forecastingResult: null,
   clusterAnalysisResult: null,
   decisionTreeResult: null,
@@ -132,9 +186,47 @@ const state = {
   syntaxRunResult: null,
   quantOutputView: 'descriptives',
   quantOutputHistory: [],
+  quantOutputDocumentTree: null,
+  quantOutputTreeOpenGroups: {
+    live: true,
+    history: true,
+    saved: true
+  },
+  quantOutputTreeSelection: null,
   compiledReportIncludedViews: [],
   compiledReportPresets: [],
+  compiledReportStyleTemplate: 'classic',
+  outputPacks: [],
+  outputPivotState: {
+    editable: false,
+    tableIndex: 0,
+    sortColumn: 0,
+    sortDirection: 'none',
+    activeView: '',
+    hasMutations: false,
+    numberFormat: 'raw'
+  },
+  outputPivotProfiles: {},
+  outputPivotLayouts: {},
+  outputPivotSnapshots: {},
+  outputChartBuilderState: {
+    chartType: 'bar',
+    palette: 'sand',
+    showDataLabels: true,
+    showTrendLine: false,
+    useLogScale: false,
+    xColumn: -1,
+    yColumn: -1,
+    title: '',
+    subtitle: ''
+  },
+  outputChartPresets: {},
   mediaTimeline: null,
+  diarizationQaResult: null,
+  diarizationQaFilters: createDefaultDiarizationQaFilters(),
+  diarizationQaSpeakerFilter: '',
+  diarizationQaSelectedLinkIds: [],
+  diarizationQaQueueIndex: 0,
   lastQuantAnalysis: null,
   lastActivityTs: null,
   pollTimer: null,
@@ -142,6 +234,165 @@ const state = {
   lastUserActivityAt: Date.now(),
   lastActivityPingAt: 0,
   professorPresenceUserIds: []
+};
+
+const DESCRIPTIVE_POPUP_WINDOW_NAME = 'muStatisticsDescriptiveOutput';
+let descriptivePopupWindow = null;
+let descriptivePopupAutoOpenSignature = '';
+let descriptivePopupBlockedAutoNoticeShown = false;
+const QUANT_OUTPUT_POPUP_WINDOW_NAME = 'muStatisticsOutputWindow';
+let quantOutputPopupWindow = null;
+
+const COMPOUND_QUERY_CLAUSE_COUNT = 5;
+const COMPOUND_QUERY_ALLOWED_OPERATORS = new Set(['all', 'any', 'none']);
+const COMPOUND_QUERY_GROUP_IDS = ['group_1', 'group_2', 'group_3'];
+const COMPOUND_QUERY_ALLOWED_FIELDS = new Set([
+  'text',
+  'code',
+  'case',
+  'source',
+  'coder',
+  'memo',
+  'source_kind',
+  'segment_kind'
+]);
+const COMPOUND_QUERY_ALLOWED_CLAUSE_OPERATORS = new Set([
+  'contains',
+  'equals',
+  'whole_word',
+  'phrase',
+  'present',
+  'starts_with',
+  'ends_with',
+  'wildcard',
+  'regex',
+  'fuzzy',
+  'near'
+]);
+const COMPOUND_QUERY_GROUP_DEFAULTS = {
+  groupOperator: 'any',
+  group_1: 'any',
+  group_2: 'all',
+  group_3: 'all'
+};
+const COMPOUND_QUERY_CLAUSE_OPERATOR_OPTIONS = [
+  'contains',
+  'equals',
+  'whole_word',
+  'phrase',
+  'present',
+  'starts_with',
+  'ends_with',
+  'wildcard',
+  'regex',
+  'fuzzy',
+  'near'
+];
+const COMPOUND_QUERY_TEMPLATE_DEFINITIONS = {
+  trust_fairness_signals: {
+    label: 'Trust + fairness signals',
+    query: {
+      compoundQueryOperator: 'any',
+      compoundCaseSensitive: false,
+      compoundMaxRows: 200,
+      compoundClauses: [
+        { enabled: true, field: 'text', operator: 'contains', value: 'trust', negate: false },
+        { enabled: true, field: 'text', operator: 'contains', value: 'fair', negate: false },
+        { enabled: true, field: 'code', operator: 'contains', value: 'trust', negate: false },
+        { enabled: true, field: 'code', operator: 'contains', value: 'fair', negate: false },
+        { enabled: false, field: 'case', operator: 'contains', value: '', negate: false }
+      ]
+    }
+  },
+  memo_backed_uncoded: {
+    label: 'Memo-backed uncoded segments',
+    query: {
+      compoundQueryOperator: 'all',
+      compoundCaseSensitive: false,
+      compoundMaxRows: 200,
+      compoundClauses: [
+        { enabled: true, field: 'memo', operator: 'present', value: '', negate: false },
+        { enabled: true, field: 'code', operator: 'present', value: '', negate: true },
+        { enabled: false, field: 'text', operator: 'contains', value: '', negate: false },
+        { enabled: false, field: 'source_kind', operator: 'equals', value: '', negate: false },
+        { enabled: false, field: 'segment_kind', operator: 'equals', value: '', negate: false }
+      ]
+    }
+  },
+  risk_bias_flags: {
+    label: 'Risk or bias flags',
+    query: {
+      compoundQueryOperator: 'any',
+      compoundCaseSensitive: false,
+      compoundMaxRows: 250,
+      compoundClauses: [
+        { enabled: true, field: 'text', operator: 'contains', value: 'risk', negate: false },
+        { enabled: true, field: 'text', operator: 'contains', value: 'bias', negate: false },
+        { enabled: true, field: 'text', operator: 'contains', value: 'discriminat', negate: false },
+        { enabled: true, field: 'text', operator: 'contains', value: 'unfair', negate: false },
+        { enabled: true, field: 'code', operator: 'contains', value: 'bias', negate: false }
+      ]
+    }
+  },
+  audio_video_mentions: {
+    label: 'Audio/video concern mentions',
+    query: {
+      compoundQueryOperator: 'all',
+      compoundCaseSensitive: false,
+      compoundMaxRows: 200,
+      compoundClauses: [
+        { enabled: true, field: 'source_kind', operator: 'equals', value: 'audio', negate: false },
+        { enabled: true, field: 'text', operator: 'contains', value: 'concern', negate: false },
+        { enabled: false, field: 'source_kind', operator: 'equals', value: 'video', negate: false },
+        { enabled: false, field: 'code', operator: 'contains', value: '', negate: false },
+        { enabled: false, field: 'case', operator: 'contains', value: '', negate: false }
+      ]
+    }
+  },
+  coder_focus_student1: {
+    label: 'Student1 coding focus',
+    query: {
+      compoundQueryOperator: 'all',
+      compoundCaseSensitive: false,
+      compoundMaxRows: 200,
+      compoundClauses: [
+        { enabled: true, field: 'coder', operator: 'equals', value: 'student1', negate: false },
+        { enabled: true, field: 'code', operator: 'present', value: '', negate: false },
+        { enabled: false, field: 'text', operator: 'contains', value: '', negate: false },
+        { enabled: false, field: 'source', operator: 'contains', value: '', negate: false },
+        { enabled: false, field: 'case', operator: 'contains', value: '', negate: false }
+      ]
+    }
+  }
+};
+
+const COMPOUND_OPERATOR_GUIDE = [
+  { operator: 'contains', bestFor: 'Broad lexical scan', note: 'Fast first-pass phrase hunting.' },
+  { operator: 'equals', bestFor: 'Exact identifier match', note: 'Strict value equality for codes/cases/coders.' },
+  { operator: 'whole_word', bestFor: 'Token-safe match', note: 'Avoids partial-term false positives.' },
+  { operator: 'phrase', bestFor: 'Ordered phrase retrieval', note: 'Requires exact phrase order in segment text.' },
+  { operator: 'present', bestFor: 'Evidence presence checks', note: 'Checks whether a field contains any value.' },
+  { operator: 'starts_with', bestFor: 'Prefix taxonomy', note: 'Useful for hierarchical code prefixes.' },
+  { operator: 'ends_with', bestFor: 'Suffix taxonomy', note: 'Useful for coded naming suffixes.' },
+  { operator: 'wildcard', bestFor: 'Pattern families', note: 'Use * as wildcard for variable lexical forms.' },
+  { operator: 'regex', bestFor: 'Structured patterns', note: 'Power operator for advanced text patterns.' },
+  { operator: 'fuzzy', bestFor: 'Misspelling tolerance', note: 'Distance-aware matching for noisy transcripts.' },
+  { operator: 'near', bestFor: 'Proximity logic', note: 'Use left|right with token-window controls.' }
+];
+
+const COMPOUND_OPERATOR_FAMILY_PRESETS = {
+  lexical: { text: 'contains', defaultOperator: 'contains' },
+  exact_match: { text: 'whole_word', code: 'equals', case: 'equals', source: 'equals', coder: 'equals', source_kind: 'equals', segment_kind: 'equals', memo: 'present', defaultOperator: 'equals' },
+  pattern: { text: 'wildcard', code: 'wildcard', defaultOperator: 'wildcard' },
+  proximity: { text: 'near', code: 'fuzzy', defaultOperator: 'near' },
+  evidence_presence: { defaultOperator: 'present' }
+};
+
+const COMPOUND_REPORT_PROFILE_PRESETS = {
+  balanced: { queryReportTopSources: 20, queryReportTopCases: 20, queryReportTopCodes: 5, queryReportExcerptLimit: 60, queryReportIncludeSources: true, queryReportIncludeCases: true, queryReportIncludeExcerpts: true, queryReportSortBy: 'match_count' },
+  source_heavy: { queryReportTopSources: 40, queryReportTopCases: 15, queryReportTopCodes: 8, queryReportExcerptLimit: 80, queryReportIncludeSources: true, queryReportIncludeCases: true, queryReportIncludeExcerpts: true, queryReportSortBy: 'match_count' },
+  case_heavy: { queryReportTopSources: 15, queryReportTopCases: 40, queryReportTopCodes: 8, queryReportExcerptLimit: 80, queryReportIncludeSources: true, queryReportIncludeCases: true, queryReportIncludeExcerpts: true, queryReportSortBy: 'memo_count' },
+  appendix_heavy: { queryReportTopSources: 30, queryReportTopCases: 30, queryReportTopCodes: 10, queryReportExcerptLimit: 180, queryReportIncludeSources: true, queryReportIncludeCases: true, queryReportIncludeExcerpts: true, queryReportSortBy: 'match_count' }
 };
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
@@ -222,6 +473,20 @@ function setText(id, value) {
   if (node) node.textContent = value;
 }
 
+function setInlineStatus(id, message, tone = 'info') {
+  const node = document.getElementById(id);
+  if (!node) return;
+  node.textContent = message;
+  node.dataset.tone = tone;
+  if (tone === 'error') {
+    node.style.color = '#ff9d9d';
+  } else if (tone === 'success') {
+    node.style.color = '#9de7b5';
+  } else {
+    node.style.color = '';
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;').replaceAll('<', '&lt;')
@@ -236,7 +501,7 @@ function summarizeText(value, maxLength = 180) {
 
 function setProjectInputs(project) {
   const val = project ? project.name : 'No project selected';
-  ['source', 'code', 'variable', 'case', 'memo', 'attribute', 'collaboration'].forEach((key) => {
+  ['source', 'code', 'variable', 'case', 'memo', 'attribute', 'collaboration', 'management'].forEach((key) => {
     const el = document.getElementById(`selected-project-${key}`);
     if (el) el.value = val;
   });
@@ -382,15 +647,17 @@ function buildAssumptionsSection(assumptions = []) {
 function buildOutputViewer({ eyebrow = '', title = '', summary = '', metrics = [], sections = [] }) {
   const projectName = state.selectedSummary?.project?.name ?? 'Project';
   const generatedAt = new Date().toLocaleString();
+  const template = getOutputStyleTemplateDefinition();
   const indexedSections = sections.map((section, index) => ({
     id: `output-section-${index + 1}`,
     html: String(section ?? '')
   }));
   return `
-    <div class="output-viewer output-document">
+    <div class="output-viewer output-document output-style-${escapeHtml(template.key)}">
       <div class="output-document-bar">
         <span>muStatistics output</span>
         <span>${escapeHtml(projectName)}</span>
+        <span>${escapeHtml(template.label)}</span>
       </div>
       <div class="output-header">
         <div class="output-header-main">
@@ -425,7 +692,16 @@ function buildOutputViewer({ eyebrow = '', title = '', summary = '', metrics = [
   `;
 }
 
-function buildSvgBarChart(items, { width = 760, height = 240, color = '#d2b27a', formatter = (value) => String(value) } = {}) {
+function buildSvgBarChart(
+  items,
+  {
+    width = 760,
+    height = 240,
+    color = '#d2b27a',
+    formatter = (value) => String(value),
+    showDataLabels = true
+  } = {}
+) {
   const values = items.map((item) => Number(item.value) || 0);
   const maxValue = Math.max(1, ...values);
   const leftPad = 44;
@@ -441,10 +717,13 @@ function buildSvgBarChart(items, { width = 760, height = 240, color = '#d2b27a',
     const x = leftPad + (index * barWidth) + 8;
     const y = topPad + (innerHeight - scaledHeight);
     const labelX = leftPad + (index * barWidth) + (barWidth / 2);
+    const valueLabel = showDataLabels
+      ? `<text x="${labelX}" y="${Math.max(14, y - 6)}" text-anchor="middle" font-size="11" fill="#edf2ff">${escapeHtml(formatter(value))}</text>`
+      : '';
     return `
       <rect x="${x}" y="${y}" width="${Math.max(12, barWidth - 16)}" height="${scaledHeight}" rx="6" fill="${color}" opacity="0.82"></rect>
       <text x="${labelX}" y="${height - 34}" text-anchor="middle" font-size="11" fill="#aab6d3">${escapeHtml(String(item.label).slice(0, 14))}</text>
-      <text x="${labelX}" y="${Math.max(14, y - 6)}" text-anchor="middle" font-size="11" fill="#edf2ff">${escapeHtml(formatter(value))}</text>
+      ${valueLabel}
     `;
   }).join('');
   return `
@@ -456,7 +735,17 @@ function buildSvgBarChart(items, { width = 760, height = 240, color = '#d2b27a',
   `;
 }
 
-function buildSvgLineChart(items, { width = 760, height = 240, color = '#8fb3ff' } = {}) {
+function buildSvgLineChart(
+  items,
+  {
+    width = 760,
+    height = 240,
+    color = '#8fb3ff',
+    showDataLabels = false,
+    showTrendLine = false,
+    fillArea = false
+  } = {}
+) {
   if (!items.length) return '<p>No chart data.</p>';
   const values = items.map((item) => Number(item.value) || 0);
   const maxValue = Math.max(1, ...values);
@@ -473,25 +762,65 @@ function buildSvgLineChart(items, { width = 760, height = 240, color = '#8fb3ff'
     return topPad + ((maxValue - value) / (maxValue - minValue)) * innerHeight;
   };
   const points = items.map((item, index) => `${leftPad + (index * xStep)},${scaleY(Number(item.value) || 0)}`).join(' ');
+  const fillPoints = fillArea && items.length > 1
+    ? `${leftPad},${topPad + innerHeight} ${points} ${leftPad + ((items.length - 1) * xStep)},${topPad + innerHeight}`
+    : '';
   const dots = items.map((item, index) => {
     const x = leftPad + (index * xStep);
     const y = scaleY(Number(item.value) || 0);
+    const valueLabel = showDataLabels
+      ? `<text x="${x}" y="${Math.max(14, y - 8)}" text-anchor="middle" font-size="11" fill="#edf2ff">${escapeHtml(formatStatValue(item.value, 3))}</text>`
+      : '';
     return `
       <circle cx="${x}" cy="${y}" r="4.5" fill="${color}"></circle>
       <text x="${x}" y="${height - 22}" text-anchor="middle" font-size="11" fill="#aab6d3">${escapeHtml(String(item.label))}</text>
+      ${valueLabel}
     `;
   }).join('');
+  const trendLine = showTrendLine && items.length > 1
+    ? (() => {
+      const xs = items.map((_item, index) => index);
+      const ys = items.map((item) => Number(item.value) || 0);
+      const n = xs.length;
+      const sumX = xs.reduce((total, value) => total + value, 0);
+      const sumY = ys.reduce((total, value) => total + value, 0);
+      const sumXY = xs.reduce((total, value, index) => total + (value * ys[index]), 0);
+      const sumXX = xs.reduce((total, value) => total + (value * value), 0);
+      const denominator = (n * sumXX) - (sumX * sumX);
+      if (denominator === 0) return '';
+      const slope = ((n * sumXY) - (sumX * sumY)) / denominator;
+      const intercept = (sumY - (slope * sumX)) / n;
+      const yStart = slope * 0 + intercept;
+      const yEnd = slope * (n - 1) + intercept;
+      const x1 = leftPad;
+      const x2 = leftPad + ((n - 1) * xStep);
+      return `<line x1="${x1}" y1="${scaleY(yStart)}" x2="${x2}" y2="${scaleY(yEnd)}" stroke="rgba(210,178,122,0.9)" stroke-width="2" stroke-dasharray="6 5"></line>`;
+    })()
+    : '';
   return `
     <svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Line chart">
       <line x1="${leftPad}" y1="${topPad + innerHeight}" x2="${width - rightPad}" y2="${topPad + innerHeight}" stroke="rgba(170,182,211,0.35)"></line>
       <line x1="${leftPad}" y1="${topPad}" x2="${leftPad}" y2="${topPad + innerHeight}" stroke="rgba(170,182,211,0.35)"></line>
+      ${fillPoints ? `<polygon points="${fillPoints}" fill="${color}" opacity="0.22"></polygon>` : ''}
+      ${trendLine}
       <polyline fill="none" stroke="${color}" stroke-width="3" points="${points}"></polyline>
       ${dots}
     </svg>
   `;
 }
 
-function buildSvgScatterPlot(points, { width = 760, height = 260, color = '#8fb3ff', xLabel = 'X', yLabel = 'Y' } = {}) {
+function buildSvgScatterPlot(
+  points,
+  {
+    width = 760,
+    height = 260,
+    color = '#8fb3ff',
+    xLabel = 'X',
+    yLabel = 'Y',
+    showTrendLine = false,
+    showDataLabels = false
+  } = {}
+) {
   if (!points.length) return '<p>No plot data.</p>';
   const xValues = points.map((point) => Number(point.x)).filter(Number.isFinite);
   const yValues = points.map((point) => Number(point.y)).filter(Number.isFinite);
@@ -508,18 +837,157 @@ function buildSvgScatterPlot(points, { width = 760, height = 260, color = '#8fb3
   const innerHeight = height - topPad - bottomPad;
   const scaleX = (value) => leftPad + ((value - minX) / Math.max(1e-9, maxX - minX || 1)) * innerWidth;
   const scaleY = (value) => topPad + ((maxY - value) / Math.max(1e-9, maxY - minY || 1)) * innerHeight;
-  const circles = points.map((point) => {
+  const circles = points.map((point, index) => {
     const x = scaleX(Number(point.x));
     const y = scaleY(Number(point.y));
-    return `<circle cx="${x}" cy="${y}" r="4" fill="${color}" opacity="0.74"></circle>`;
+    const label = showDataLabels
+      ? `<text x="${x + 6}" y="${Math.max(12, y - 6)}" font-size="10" fill="#edf2ff">${escapeHtml(String(index + 1))}</text>`
+      : '';
+    return `<circle cx="${x}" cy="${y}" r="4" fill="${color}" opacity="0.74"></circle>${label}`;
   }).join('');
+  const trendLine = showTrendLine && points.length > 1
+    ? (() => {
+      const normalized = points.map((point) => ({ x: Number(point.x), y: Number(point.y) })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+      const n = normalized.length;
+      if (n < 2) return '';
+      const sumX = normalized.reduce((total, point) => total + point.x, 0);
+      const sumY = normalized.reduce((total, point) => total + point.y, 0);
+      const sumXY = normalized.reduce((total, point) => total + (point.x * point.y), 0);
+      const sumXX = normalized.reduce((total, point) => total + (point.x * point.x), 0);
+      const denominator = (n * sumXX) - (sumX * sumX);
+      if (denominator === 0) return '';
+      const slope = ((n * sumXY) - (sumX * sumY)) / denominator;
+      const intercept = (sumY - (slope * sumX)) / n;
+      const xStart = minX;
+      const xEnd = maxX;
+      const yStart = slope * xStart + intercept;
+      const yEnd = slope * xEnd + intercept;
+      return `<line x1="${scaleX(xStart)}" y1="${scaleY(yStart)}" x2="${scaleX(xEnd)}" y2="${scaleY(yEnd)}" stroke="rgba(210,178,122,0.88)" stroke-width="2" stroke-dasharray="6 4"></line>`;
+    })()
+    : '';
   return `
     <svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Scatter plot">
       <line x1="${leftPad}" y1="${topPad + innerHeight}" x2="${width - rightPad}" y2="${topPad + innerHeight}" stroke="rgba(170,182,211,0.35)"></line>
       <line x1="${leftPad}" y1="${topPad}" x2="${leftPad}" y2="${topPad + innerHeight}" stroke="rgba(170,182,211,0.35)"></line>
+      ${trendLine}
       ${circles}
       <text x="${leftPad + (innerWidth / 2)}" y="${height - 16}" text-anchor="middle" font-size="11" fill="#aab6d3">${escapeHtml(xLabel)}</text>
       <text x="16" y="${topPad + (innerHeight / 2)}" text-anchor="middle" font-size="11" fill="#aab6d3" transform="rotate(-90 16 ${topPad + (innerHeight / 2)})">${escapeHtml(yLabel)}</text>
+    </svg>
+  `;
+}
+
+function buildSvgHistogram(
+  values,
+  {
+    width = 760,
+    height = 240,
+    color = '#8fb3ff',
+    bins = 10
+  } = {}
+) {
+  const numeric = values.filter((value) => Number.isFinite(Number(value))).map((value) => Number(value));
+  if (numeric.length === 0) return '<p>No histogram data.</p>';
+  const min = Math.min(...numeric);
+  const max = Math.max(...numeric);
+  const binCount = Math.max(4, Math.min(30, Math.floor(bins)));
+  const span = Math.max(1e-9, max - min);
+  const binWidth = span / binCount;
+  const counts = Array.from({ length: binCount }, () => 0);
+  numeric.forEach((value) => {
+    const normalized = Math.min(binCount - 1, Math.max(0, Math.floor((value - min) / binWidth)));
+    counts[normalized] += 1;
+  });
+
+  const leftPad = 44;
+  const rightPad = 16;
+  const topPad = 16;
+  const bottomPad = 44;
+  const innerWidth = width - leftPad - rightPad;
+  const innerHeight = height - topPad - bottomPad;
+  const maxCount = Math.max(1, ...counts);
+  const barWidth = innerWidth / counts.length;
+  const bars = counts.map((count, index) => {
+    const scaledHeight = (count / maxCount) * innerHeight;
+    const x = leftPad + (index * barWidth) + 2;
+    const y = topPad + (innerHeight - scaledHeight);
+    return `<rect x="${x}" y="${y}" width="${Math.max(4, barWidth - 4)}" height="${scaledHeight}" rx="3" fill="${color}" opacity="0.8"></rect>`;
+  }).join('');
+
+  return `
+    <svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Histogram">
+      <line x1="${leftPad}" y1="${topPad + innerHeight}" x2="${width - rightPad}" y2="${topPad + innerHeight}" stroke="rgba(170,182,211,0.35)"></line>
+      <line x1="${leftPad}" y1="${topPad}" x2="${leftPad}" y2="${topPad + innerHeight}" stroke="rgba(170,182,211,0.35)"></line>
+      ${bars}
+      <text x="${leftPad + (innerWidth / 2)}" y="${height - 16}" text-anchor="middle" font-size="11" fill="#aab6d3">Bins (${binCount})</text>
+      <text x="${width - rightPad}" y="${height - 16}" text-anchor="end" font-size="11" fill="#aab6d3">Range ${formatDecimal(min, 2)} to ${formatDecimal(max, 2)}</text>
+    </svg>
+  `;
+}
+
+function buildSvgBoxPlot(
+  groupedValues,
+  {
+    width = 760,
+    height = 260,
+    color = '#d2b27a'
+  } = {}
+) {
+  const groups = Object.entries(groupedValues)
+    .map(([label, values]) => ({
+      label,
+      values: values.filter((value) => Number.isFinite(Number(value))).map((value) => Number(value)).sort((left, right) => left - right)
+    }))
+    .filter((entry) => entry.values.length > 0);
+  if (groups.length === 0) return '<p>No box-plot data.</p>';
+
+  const allValues = groups.flatMap((entry) => entry.values);
+  const min = Math.min(...allValues);
+  const max = Math.max(...allValues);
+  const leftPad = 56;
+  const rightPad = 16;
+  const topPad = 20;
+  const bottomPad = 52;
+  const innerWidth = width - leftPad - rightPad;
+  const innerHeight = height - topPad - bottomPad;
+  const step = innerWidth / groups.length;
+  const scaleY = (value) => topPad + ((max - value) / Math.max(1e-9, max - min || 1)) * innerHeight;
+  const quantile = (sortedValues, p) => {
+    if (!sortedValues.length) return null;
+    const index = (sortedValues.length - 1) * p;
+    const lower = Math.floor(index);
+    const upper = Math.ceil(index);
+    if (lower === upper) return sortedValues[lower];
+    return sortedValues[lower] + ((sortedValues[upper] - sortedValues[lower]) * (index - lower));
+  };
+
+  const boxes = groups.map((group, index) => {
+    const q1 = quantile(group.values, 0.25);
+    const q2 = quantile(group.values, 0.5);
+    const q3 = quantile(group.values, 0.75);
+    const low = group.values[0];
+    const high = group.values[group.values.length - 1];
+    if ([q1, q2, q3, low, high].some((value) => value === null || value === undefined)) return '';
+    const centerX = leftPad + (index * step) + (step / 2);
+    const boxWidth = Math.max(14, Math.min(48, step * 0.46));
+    const boxTop = scaleY(q3);
+    const boxBottom = scaleY(q1);
+    return `
+      <line x1="${centerX}" y1="${scaleY(low)}" x2="${centerX}" y2="${scaleY(high)}" stroke="rgba(170,182,211,0.75)" stroke-width="1.5"></line>
+      <rect x="${centerX - (boxWidth / 2)}" y="${boxTop}" width="${boxWidth}" height="${Math.max(2, boxBottom - boxTop)}" rx="4" fill="${color}" opacity="0.72"></rect>
+      <line x1="${centerX - (boxWidth / 2)}" y1="${scaleY(q2)}" x2="${centerX + (boxWidth / 2)}" y2="${scaleY(q2)}" stroke="#f2f4ff" stroke-width="1.8"></line>
+      <line x1="${centerX - (boxWidth / 3)}" y1="${scaleY(low)}" x2="${centerX + (boxWidth / 3)}" y2="${scaleY(low)}" stroke="rgba(170,182,211,0.82)" stroke-width="1.4"></line>
+      <line x1="${centerX - (boxWidth / 3)}" y1="${scaleY(high)}" x2="${centerX + (boxWidth / 3)}" y2="${scaleY(high)}" stroke="rgba(170,182,211,0.82)" stroke-width="1.4"></line>
+      <text x="${centerX}" y="${height - 20}" text-anchor="middle" font-size="11" fill="#aab6d3">${escapeHtml(group.label.slice(0, 14))}</text>
+    `;
+  }).join('');
+
+  return `
+    <svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Box plot">
+      <line x1="${leftPad}" y1="${topPad + innerHeight}" x2="${width - rightPad}" y2="${topPad + innerHeight}" stroke="rgba(170,182,211,0.35)"></line>
+      <line x1="${leftPad}" y1="${topPad}" x2="${leftPad}" y2="${topPad + innerHeight}" stroke="rgba(170,182,211,0.35)"></line>
+      ${boxes}
+      <text x="${leftPad}" y="${topPad + 10}" font-size="11" fill="#aab6d3">${escapeHtml(`Min ${formatDecimal(min, 2)}  Max ${formatDecimal(max, 2)}`)}</text>
     </svg>
   `;
 }
@@ -601,6 +1069,9 @@ function getAvailableQuantOutputPages() {
     { view: 'regression', title: 'Regression', ready: Boolean(state.regressionResult) },
     { view: 'reliability', title: 'Reliability', ready: Boolean(state.reliabilityResult) },
     { view: 'factor-analysis', title: 'Factor analysis', ready: Boolean(state.factorAnalysisResult) },
+    { view: 'optimal-scaling', title: 'Categories', ready: Boolean(state.optimalScalingResult) },
+    { view: 'conjoint-analysis', title: 'Conjoint', ready: Boolean(state.conjointResult) },
+    { view: 'direct-marketing', title: 'Direct marketing', ready: Boolean(state.directMarketingResult) },
     { view: 'forecasting', title: 'Forecasting', ready: Boolean(state.forecastingResult) },
     { view: 'cluster-analysis', title: 'Cluster analysis', ready: Boolean(state.clusterAnalysisResult) },
     { view: 'decision-tree', title: 'Decision tree', ready: Boolean(state.decisionTreeResult) },
@@ -616,7 +1087,34 @@ function getAvailableQuantOutputPages() {
   ];
 }
 
-function renderQuantOutputTree() {
+function quantOutputFamilyForView(view) {
+  if (['descriptives', 'frequency', 'missing-values'].includes(view)) return 'Describe';
+  if (['compare-means', 'ttest', 'paired-ttest', 'nonparametric', 'crosstab', 'custom-table', 'exact-test', 'bootstrap'].includes(view)) return 'Tests';
+  if (['correlation', 'regression', 'reliability', 'factor-analysis', 'optimal-scaling', 'conjoint-analysis', 'direct-marketing', 'forecasting', 'cluster-analysis', 'decision-tree', 'general-linear-model', 'mixed-model', 'gee-model', 'repeated-measures', 'survival-analysis', 'complex-samples', 'neural-network'].includes(view)) return 'Models';
+  if (['syntax-run', 'saved-analyses'].includes(view)) return 'Program';
+  return 'Other';
+}
+
+function buildQuantTreeSections(items = []) {
+  const byFamily = new Map();
+  for (const item of items) {
+    const family = item.family || quantOutputFamilyForView(item.view || '');
+    if (!byFamily.has(family)) byFamily.set(family, []);
+    byFamily.get(family).push(item);
+  }
+  const order = ['Describe', 'Tests', 'Models', 'Program', 'Other'];
+  return [...byFamily.entries()]
+    .sort((left, right) => {
+      const leftIndex = order.indexOf(left[0]);
+      const rightIndex = order.indexOf(right[0]);
+      const leftRank = leftIndex >= 0 ? leftIndex : order.length;
+      const rightRank = rightIndex >= 0 ? rightIndex : order.length;
+      return leftRank - rightRank || left[0].localeCompare(right[0]);
+    })
+    .map(([label, sectionItems]) => ({ label, items: sectionItems }));
+}
+
+function renderQuantOutputTreeLegacy() {
   const node = document.getElementById('quant-output-tree-list');
   if (!node) return;
   const openPages = getAvailableQuantOutputPages().filter((item) => item.ready);
@@ -693,6 +1191,964 @@ function renderQuantOutputTree() {
     });
     node.appendChild(li);
   }
+}
+
+function buildQuantOutputDocumentTree() {
+  const documentTree = {
+    id: 'quant-output-document',
+    nodeType: 'document',
+    label: 'Quantitative output document',
+    generatedAt: new Date().toISOString(),
+    groups: []
+  };
+  const openPages = getAvailableQuantOutputPages().filter((item) => item.ready);
+  if (openPages.length > 0) {
+    documentTree.groups.push({
+      key: 'live',
+      label: 'Live output pages',
+      nodeType: 'folder',
+      sections: buildQuantTreeSections(openPages.map((item) => ({
+        id: `live:${item.view}`,
+        nodeType: 'procedure',
+        runType: 'live',
+        view: item.view,
+        title: item.title,
+        detail: 'Current page output',
+        active: item.view === state.quantOutputView,
+        onClick: () => {
+          state.quantOutputView = item.view;
+          state.quantOutputTreeSelection = `live:${item.view}`;
+          syncWorkspaceMenus();
+        }
+      })))
+    });
+  }
+  if (state.quantOutputHistory.length > 0) {
+    documentTree.groups.push({
+      key: 'history',
+      label: 'Output history stack',
+      nodeType: 'folder',
+      sections: buildQuantTreeSections(state.quantOutputHistory.slice(0, 12).map((entry) => ({
+        id: `history:${entry.id}`,
+        nodeType: 'run',
+        runType: 'history',
+        view: entry.view,
+        title: entry.title,
+        detail: `${entry.detail || 'Recent result'} - ${entry.stamp}`,
+        active: entry.view === state.quantOutputView,
+        onClick: () => {
+          state.quantOutputView = entry.view;
+          state.quantOutputTreeSelection = `history:${entry.id}`;
+          syncWorkspaceMenus();
+        }
+      })))
+    });
+  }
+  if (state.savedAnalysisJobs.length > 0) {
+    documentTree.groups.push({
+      key: 'saved',
+      label: 'Saved procedure stack',
+      nodeType: 'folder',
+      sections: buildQuantTreeSections(state.savedAnalysisJobs.slice(0, 20).map((job) => ({
+        id: `saved:${job.id}`,
+        nodeType: 'procedure',
+        runType: 'saved',
+        view: mapAnalysisKindToOutputView(job.analysisKind),
+        family: quantOutputFamilyForView(mapAnalysisKindToOutputView(job.analysisKind)),
+        title: job.label,
+        detail: formatAnalysisKindLabel(job.analysisKind),
+        active: false,
+        onClick: async () => {
+          try {
+            await runSavedAnalysisJob(job);
+            state.quantOutputTreeSelection = `saved:${job.id}`;
+            syncWorkspaceMenus();
+          } catch (err) {
+            window.alert(`Saved analysis failed: ${err.message}`);
+          }
+        }
+      })))
+    });
+  }
+  return documentTree;
+}
+
+function renderQuantOutputTree() {
+  const node = document.getElementById('quant-output-tree-list');
+  if (!node) return;
+  const documentTree = buildQuantOutputDocumentTree();
+  state.quantOutputDocumentTree = documentTree;
+  const groups = documentTree.groups ?? [];
+  if (groups.length === 0) {
+    node.innerHTML = '<li class="interactive-list-item empty">Run a procedure and the output tree will populate here.</li>';
+    return;
+  }
+  node.innerHTML = '';
+  for (const group of groups) {
+    const isOpen = state.quantOutputTreeOpenGroups[group.key] !== false;
+    const li = document.createElement('li');
+    li.className = 'interactive-list-item quant-output-tree-group';
+    li.innerHTML = `
+      <button type="button" class="quant-output-tree-group-head" data-tree-group-toggle="${escapeHtml(group.key)}" aria-expanded="${isOpen ? 'true' : 'false'}">
+        <span class="quant-output-tree-title">${escapeHtml(group.label)}</span>
+        <span class="small-muted">${isOpen ? 'Collapse' : 'Expand'}</span>
+      </button>
+      <div class="quant-output-tree-sections" ${isOpen ? '' : 'hidden'}>
+        ${group.sections.map((section) => `
+          <div class="quant-output-tree-family">
+            <div class="quant-output-tree-family-label">${escapeHtml(section.label)}</div>
+            ${section.items.map((item) => `
+              <div class="interactive-list-item quant-output-tree-item${item.active ? ' active' : ''}${state.quantOutputTreeSelection === item.id ? ' selected-card' : ''}" data-tree-item-id="${escapeHtml(item.id)}">
+                <button type="button" class="quant-output-tree-button">
+                  <span class="project-title">${escapeHtml(item.title)}</span>
+                  <span class="source-meta">${escapeHtml(item.detail)}</span>
+                  <span class="quant-output-tree-node-meta">${escapeHtml(item.nodeType)} | ${escapeHtml(item.runType)}</span>
+                </button>
+              </div>
+            `).join('')}
+          </div>
+        `).join('')}
+      </div>
+    `;
+    li.querySelector('[data-tree-group-toggle]')?.addEventListener('click', () => {
+      const key = String(group.key);
+      state.quantOutputTreeOpenGroups[key] = !(state.quantOutputTreeOpenGroups[key] !== false);
+      renderQuantOutputTree();
+    });
+    li.querySelectorAll('[data-tree-item-id]').forEach((itemNode) => {
+      itemNode.addEventListener('click', () => {
+        const itemId = itemNode.getAttribute('data-tree-item-id');
+        const selected = group.sections.flatMap((section) => section.items).find((entry) => entry.id === itemId);
+        if (!selected) return;
+        state.quantOutputTreeSelection = selected.id;
+        void selected.onClick();
+      });
+    });
+    node.appendChild(li);
+  }
+}
+
+const QUANT_CHART_PALETTES = {
+  sand: '#d2b27a',
+  ocean: '#8fb3ff',
+  ember: '#e2865a',
+  mint: '#56b5b3',
+  slate: '#8c96a8'
+};
+
+const OUTPUT_STYLE_TEMPLATES = {
+  classic: {
+    key: 'classic',
+    label: 'Classic research',
+    paper: '#fcfaf5',
+    ink: '#1e1e1e',
+    muted: '#666',
+    line: '#d8d0c0',
+    accent: '#8b6d3b',
+    bodyFont: '"Segoe UI", Arial, sans-serif',
+    headingFont: 'Georgia, "Times New Roman", serif',
+    sectionRadius: '18px',
+    sectionPadding: '28px'
+  },
+  compact: {
+    key: 'compact',
+    label: 'Compact technical',
+    paper: '#f6f8fb',
+    ink: '#1b2430',
+    muted: '#526173',
+    line: '#c9d4e2',
+    accent: '#335c9d',
+    bodyFont: '"IBM Plex Sans", "Segoe UI", Arial, sans-serif',
+    headingFont: '"IBM Plex Serif", Georgia, "Times New Roman", serif',
+    sectionRadius: '10px',
+    sectionPadding: '20px'
+  },
+  committee: {
+    key: 'committee',
+    label: 'Committee packet',
+    paper: '#fffdf8',
+    ink: '#1a1712',
+    muted: '#5d5548',
+    line: '#d6ccba',
+    accent: '#6d4e24',
+    bodyFont: '"Calibri", "Segoe UI", Arial, sans-serif',
+    headingFont: '"Cambria", Georgia, "Times New Roman", serif',
+    sectionRadius: '14px',
+    sectionPadding: '24px'
+  }
+};
+
+function getQuantChartColor(token) {
+  return QUANT_CHART_PALETTES[String(token ?? '').trim().toLowerCase()] ?? QUANT_CHART_PALETTES.sand;
+}
+
+function getOutputStyleTemplateDefinition(templateKey = state.compiledReportStyleTemplate) {
+  return OUTPUT_STYLE_TEMPLATES[String(templateKey ?? '').trim().toLowerCase()] ?? OUTPUT_STYLE_TEMPLATES.classic;
+}
+
+function applyOutputStyleTemplateToWorkspace() {
+  const shell = document.getElementById('tab-quantitative');
+  if (!shell) return;
+  const template = getOutputStyleTemplateDefinition();
+  shell.setAttribute('data-output-style-template', template.key);
+}
+
+function ensureOutputPivotProfile(view = state.quantOutputView) {
+  if (!view) {
+    return {
+      hiddenColumns: [],
+      numberFormat: 'raw'
+    };
+  }
+  const existing = state.outputPivotProfiles[view];
+  if (existing && Array.isArray(existing.hiddenColumns)) {
+    return existing;
+  }
+  const next = {
+    hiddenColumns: [],
+    numberFormat: 'raw'
+  };
+  state.outputPivotProfiles[view] = next;
+  return next;
+}
+
+function getPivotLayoutsForView(view = state.quantOutputView) {
+  const current = state.outputPivotLayouts?.[view];
+  return Array.isArray(current) ? current : [];
+}
+
+function getChartPresetsForView(view = state.quantOutputView) {
+  const current = state.outputChartPresets?.[view];
+  return Array.isArray(current) ? current : [];
+}
+
+function getActiveQuantOutputPanel() {
+  return document.querySelector(`[data-quant-output="${state.quantOutputView}"]`);
+}
+
+function getQuantOutputTables(panel = getActiveQuantOutputPanel()) {
+  if (!panel) return [];
+  return [...panel.querySelectorAll('table.matrix-table')];
+}
+
+function parseQuantCellNumber(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return Number.NaN;
+  const normalized = text
+    .replace(/[, ]+/g, '')
+    .replace(/%$/, '');
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) ? numeric : Number.NaN;
+}
+
+function getPivotHeaderLabels(table) {
+  if (!table) return [];
+  const headers = [...table.querySelectorAll('thead th')].map((cell, index) => cell.textContent?.trim() || `Column ${index + 1}`);
+  if (headers.length > 0) return headers;
+  const fallback = [...table.querySelectorAll('tbody tr:first-child td')];
+  return fallback.map((cell, index) => cell.textContent?.trim() || `Column ${index + 1}`);
+}
+
+function ensurePivotSnapshotForActiveView(panel) {
+  if (!panel) return;
+  const activeView = state.quantOutputView;
+  if (!activeView) return;
+  if (state.outputPivotState.activeView !== activeView) {
+    state.outputPivotState.activeView = activeView;
+    state.outputPivotState.sortDirection = 'none';
+    state.outputPivotState.hasMutations = false;
+  }
+  if (!state.outputPivotSnapshots[activeView]) {
+    state.outputPivotSnapshots[activeView] = panel.innerHTML;
+    return;
+  }
+  if (!state.outputPivotState.hasMutations) {
+    state.outputPivotSnapshots[activeView] = panel.innerHTML;
+  }
+}
+
+function applyPivotEditableToPanel(panel = getActiveQuantOutputPanel()) {
+  if (!panel) return;
+  panel.querySelectorAll('table.matrix-table tbody td').forEach((cell) => {
+    if (cell.dataset.muRawValue === undefined) {
+      cell.dataset.muRawValue = String(cell.textContent ?? '').trim();
+    }
+    cell.contentEditable = state.outputPivotState.editable ? 'true' : 'false';
+    cell.classList.toggle('pivot-editable-cell', state.outputPivotState.editable);
+    cell.oninput = state.outputPivotState.editable
+      ? () => {
+        cell.dataset.muRawValue = String(cell.textContent ?? '').trim();
+        const profile = ensureOutputPivotProfile(state.quantOutputView);
+        if (profile.numberFormat !== 'raw') {
+          cell.textContent = formatPivotNumericValue(cell.dataset.muRawValue, profile.numberFormat);
+        }
+        state.outputPivotState.hasMutations = true;
+      }
+      : null;
+  });
+}
+
+function sortPivotTableRows(table, columnIndex, direction) {
+  const body = table?.tBodies?.[0];
+  if (!body) return;
+  const rows = [...body.rows];
+  rows.sort((left, right) => {
+    const leftCell = left.cells[columnIndex]?.textContent ?? '';
+    const rightCell = right.cells[columnIndex]?.textContent ?? '';
+    const leftNumeric = parseQuantCellNumber(leftCell);
+    const rightNumeric = parseQuantCellNumber(rightCell);
+    if (Number.isFinite(leftNumeric) && Number.isFinite(rightNumeric)) {
+      return leftNumeric - rightNumeric;
+    }
+    return leftCell.localeCompare(rightCell, undefined, { sensitivity: 'base', numeric: true });
+  });
+  if (direction === 'desc') rows.reverse();
+  rows.forEach((row) => body.appendChild(row));
+}
+
+function transposePivotTable(table) {
+  if (!table) return;
+  const header = getPivotHeaderLabels(table);
+  const bodyRows = [...table.querySelectorAll('tbody tr')].map((row) => [...row.cells].map((cell) => cell.innerHTML));
+  const full = [header, ...bodyRows];
+  if (full.length === 0) return;
+  const width = Math.max(...full.map((row) => row.length));
+  const padded = full.map((row) => Array.from({ length: width }, (_unused, index) => row[index] ?? ''));
+  const transposed = Array.from({ length: width }, (_unused, columnIndex) =>
+    padded.map((row) => row[columnIndex] ?? '')
+  );
+  const [firstRow = [], ...restRows] = transposed;
+  table.innerHTML = `
+    <thead>
+      <tr>${firstRow.map((cell) => `<th>${cell}</th>`).join('')}</tr>
+    </thead>
+    <tbody>
+      ${restRows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join('')}</tr>`).join('')}
+    </tbody>
+  `;
+}
+
+async function copyPivotTableAsTsv(table) {
+  if (!table) return;
+  const header = getPivotHeaderLabels(table);
+  const bodyRows = [...table.querySelectorAll('tbody tr')].map((row) =>
+    [...row.cells].map((cell) => String(cell.textContent ?? '').trim())
+  );
+  const rows = [header, ...bodyRows]
+    .filter((row) => row.length > 0)
+    .map((row) => row.join('\t'))
+    .join('\n');
+  if (!rows) return;
+  await copyTextToClipboard(rows, 'Pivot table copied.');
+}
+
+function restorePivotSnapshotForActiveView() {
+  const panel = getActiveQuantOutputPanel();
+  if (!panel) return;
+  const snapshot = state.outputPivotSnapshots[state.quantOutputView];
+  if (!snapshot) return;
+  panel.innerHTML = snapshot;
+  state.outputPivotState.sortDirection = 'none';
+  state.outputPivotState.sortColumn = 0;
+  state.outputPivotState.tableIndex = 0;
+  state.outputPivotState.hasMutations = false;
+  const profile = ensureOutputPivotProfile(state.quantOutputView);
+  getQuantOutputTables(panel).forEach((table) => applyPivotProfileToTable(table, profile));
+  applyPivotEditableToPanel(panel);
+}
+
+function formatPivotNumericValue(rawValue, numberFormat) {
+  const rawText = String(rawValue ?? '').trim();
+  if (!rawText) return rawText;
+  const numeric = parseQuantCellNumber(rawText);
+  if (!Number.isFinite(numeric)) return rawText;
+  switch (numberFormat) {
+    case 'fixed2':
+      return formatDecimal(numeric, 2);
+    case 'fixed4':
+      return formatDecimal(numeric, 4);
+    case 'percent':
+      return `${formatDecimal(numeric * 100, 2)}%`;
+    default:
+      return rawText;
+  }
+}
+
+function applyPivotNumberFormatToTable(table, profile) {
+  if (!table) return;
+  const numberFormat = profile?.numberFormat ?? 'raw';
+  table.querySelectorAll('tbody td').forEach((cell) => {
+    if (!(cell instanceof HTMLTableCellElement)) return;
+    const rawValue = cell.dataset.muRawValue ?? String(cell.textContent ?? '').trim();
+    cell.dataset.muRawValue = rawValue;
+    cell.textContent = formatPivotNumericValue(rawValue, numberFormat);
+  });
+}
+
+function applyPivotColumnVisibilityToTable(table, profile) {
+  if (!table) return;
+  const hidden = new Set(Array.isArray(profile?.hiddenColumns) ? profile.hiddenColumns.map((value) => Number(value)).filter(Number.isFinite) : []);
+  table.querySelectorAll('tr').forEach((row) => {
+    [...row.cells].forEach((cell, index) => {
+      if (!(cell instanceof HTMLElement)) return;
+      cell.hidden = hidden.has(index);
+    });
+  });
+}
+
+function applyPivotProfileToTable(table, profile) {
+  if (!table || !profile) return;
+  applyPivotNumberFormatToTable(table, profile);
+  applyPivotColumnVisibilityToTable(table, profile);
+}
+
+function getChartColumnCandidates(table) {
+  const headers = getPivotHeaderLabels(table);
+  const rows = [...table.querySelectorAll('tbody tr')].map((row) => [...row.cells].map((cell) => String(cell.textContent ?? '').trim()));
+  const numericColumns = headers
+    .map((_label, index) => {
+      const values = rows.map((row) => parseQuantCellNumber(row[index]));
+      const valid = values.filter((value) => Number.isFinite(value)).length;
+      return {
+        index,
+        valid,
+        ratio: rows.length > 0 ? valid / rows.length : 0
+      };
+    })
+    .filter((column) => column.valid > 0 && column.ratio >= 0.5);
+  return {
+    headers,
+    rows,
+    numericColumns
+  };
+}
+
+function buildChartBuilderPreview(table) {
+  if (!table) return '<p class="small-muted">No pivot table available in this output page.</p>';
+  const { headers, rows, numericColumns } = getChartColumnCandidates(table);
+  if (!headers.length || !rows.length || numericColumns.length === 0) {
+    return '<p class="small-muted">Run an analysis with table output to unlock chart preview controls.</p>';
+  }
+
+  const preferredX = state.outputChartBuilderState.xColumn >= 0 && state.outputChartBuilderState.xColumn < headers.length
+    ? state.outputChartBuilderState.xColumn
+    : 0;
+  const preferredY = numericColumns.find((column) => column.index === state.outputChartBuilderState.yColumn)?.index
+    ?? numericColumns.find((column) => column.index !== preferredX)?.index
+    ?? numericColumns[0].index;
+  state.outputChartBuilderState.xColumn = preferredX;
+  state.outputChartBuilderState.yColumn = preferredY;
+
+  const chartType = state.outputChartBuilderState.chartType;
+  const color = getQuantChartColor(state.outputChartBuilderState.palette);
+  const xLabel = headers[preferredX] ?? 'Category';
+  const yLabel = headers[preferredY] ?? 'Value';
+  const chartTitle = String(state.outputChartBuilderState.title ?? '').trim() || 'Chart preview';
+  const chartSubtitle = String(state.outputChartBuilderState.subtitle ?? '').trim();
+
+  const points = rows.map((row, index) => {
+    const xRaw = row[preferredX] ?? '';
+    const yRaw = row[preferredY] ?? '';
+    const xNumeric = parseQuantCellNumber(xRaw);
+    const yNumeric = parseQuantCellNumber(yRaw);
+    return {
+      label: xRaw || `Row ${index + 1}`,
+      x: Number.isFinite(xNumeric) ? xNumeric : index + 1,
+      y: yNumeric
+    };
+  }).filter((point) => Number.isFinite(point.y));
+
+  const transformed = state.outputChartBuilderState.useLogScale
+    ? points.filter((point) => point.y > 0).map((point) => ({ ...point, y: Math.log10(point.y) }))
+    : points;
+
+  if (!transformed.length) {
+    return '<p class="small-muted">Selected columns do not contain numeric rows for chart preview.</p>';
+  }
+
+  const captionParts = [];
+  if (state.outputChartBuilderState.useLogScale) captionParts.push('log10 scale');
+  if (state.outputChartBuilderState.showTrendLine) captionParts.push('trend line');
+  if (!state.outputChartBuilderState.showDataLabels) captionParts.push('labels hidden');
+  const caption = `${chartSubtitle ? `${chartSubtitle} | ` : ''}X: ${xLabel} | Y: ${yLabel}${captionParts.length ? ` | ${captionParts.join(' | ')}` : ''}`;
+
+  if (chartType === 'scatter') {
+    return buildChartCard(
+      chartTitle,
+      buildSvgScatterPlot(
+        transformed.map((point) => ({ x: point.x, y: point.y })),
+        {
+          color,
+          xLabel,
+          yLabel,
+          showTrendLine: state.outputChartBuilderState.showTrendLine,
+          showDataLabels: state.outputChartBuilderState.showDataLabels
+        }
+      ),
+      caption
+    );
+  }
+
+  if (chartType === 'histogram') {
+    return buildChartCard(
+      chartTitle,
+      buildSvgHistogram(transformed.map((point) => point.y), { color }),
+      caption
+    );
+  }
+
+  if (chartType === 'boxplot') {
+    const grouped = {};
+    transformed.forEach((point) => {
+      const key = String(point.label ?? 'Group').trim() || 'Group';
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(point.y);
+    });
+    return buildChartCard(
+      chartTitle,
+      buildSvgBoxPlot(grouped, { color }),
+      caption
+    );
+  }
+
+  const chartItems = transformed.map((point) => ({ label: point.label, value: point.y }));
+  if (chartType === 'area') {
+    return buildChartCard(
+      chartTitle,
+      buildSvgLineChart(chartItems, {
+        color,
+        showDataLabels: state.outputChartBuilderState.showDataLabels,
+        showTrendLine: state.outputChartBuilderState.showTrendLine,
+        fillArea: true
+      }),
+      caption
+    );
+  }
+  if (chartType === 'line') {
+    return buildChartCard(
+      chartTitle,
+      buildSvgLineChart(chartItems, {
+        color,
+        showDataLabels: state.outputChartBuilderState.showDataLabels,
+        showTrendLine: state.outputChartBuilderState.showTrendLine
+      }),
+      caption
+    );
+  }
+
+  return buildChartCard(
+    chartTitle,
+    buildSvgBarChart(chartItems, {
+      color,
+      showDataLabels: state.outputChartBuilderState.showDataLabels,
+      formatter: (value) => formatStatValue(value, 3)
+    }),
+    caption
+  );
+}
+
+function renderQuantOutputWorkbench() {
+  const node = document.getElementById('quant-output-workbench');
+  if (!node) return;
+  const panel = getActiveQuantOutputPanel();
+  if (!panel) {
+    node.innerHTML = '<p class="small-muted">Select an output page to use pivot and chart builder controls.</p>';
+    return;
+  }
+
+  ensurePivotSnapshotForActiveView(panel);
+  const tables = getQuantOutputTables(panel);
+  if (tables.length === 0) {
+    node.innerHTML = '<p class="small-muted">No matrix table is available on this output page yet.</p>';
+    return;
+  }
+
+  const tableIndex = Math.min(Math.max(Number(state.outputPivotState.tableIndex || 0), 0), tables.length - 1);
+  state.outputPivotState.tableIndex = tableIndex;
+  const table = tables[tableIndex];
+  const profile = ensureOutputPivotProfile(state.quantOutputView);
+  applyPivotProfileToTable(table, profile);
+  const columns = getPivotHeaderLabels(table);
+  profile.hiddenColumns = (profile.hiddenColumns ?? [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value >= 0 && value < columns.length);
+  state.outputPivotState.numberFormat = profile.numberFormat ?? 'raw';
+  const sortColumn = Math.min(Math.max(Number(state.outputPivotState.sortColumn || 0), 0), Math.max(0, columns.length - 1));
+  state.outputPivotState.sortColumn = sortColumn;
+  const hiddenColumns = new Set(profile.hiddenColumns);
+
+  const chartColumnOptions = getChartColumnCandidates(table).headers
+    .map((label, index) => `<option value="${index}">${escapeHtml(label || `Column ${index + 1}`)}</option>`)
+    .join('');
+  const pivotLayouts = getPivotLayoutsForView(state.quantOutputView);
+  const chartPresets = getChartPresetsForView(state.quantOutputView);
+
+  node.innerHTML = `
+    <div class="output-workbench-grid">
+      <section class="output-workbench-card">
+        <div class="section-header">
+          <div>
+            <h3 style="margin-bottom:6px">Pivot editor</h3>
+            <p class="small-muted" style="margin:0">Sort, transpose, format, hide columns, and store reusable pivot layouts.</p>
+          </div>
+        </div>
+        <div class="output-workbench-fields">
+          <label class="field">
+            <span>Active table</span>
+            <select id="output-pivot-table-index">
+              ${tables.map((current, index) => `<option value="${index}" ${index === tableIndex ? 'selected' : ''}>Table ${index + 1} (${getPivotHeaderLabels(current).length} columns)</option>`).join('')}
+            </select>
+          </label>
+          <label class="field">
+            <span>Sort column</span>
+            <select id="output-pivot-sort-column">
+              ${columns.map((label, index) => `<option value="${index}" ${index === sortColumn ? 'selected' : ''}>${escapeHtml(label || `Column ${index + 1}`)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="field">
+            <span>Number format</span>
+            <select id="output-pivot-number-format">
+              <option value="raw" ${state.outputPivotState.numberFormat === 'raw' ? 'selected' : ''}>Raw values</option>
+              <option value="fixed2" ${state.outputPivotState.numberFormat === 'fixed2' ? 'selected' : ''}>Fixed (2 decimals)</option>
+              <option value="fixed4" ${state.outputPivotState.numberFormat === 'fixed4' ? 'selected' : ''}>Fixed (4 decimals)</option>
+              <option value="percent" ${state.outputPivotState.numberFormat === 'percent' ? 'selected' : ''}>Percent</option>
+            </select>
+          </label>
+        </div>
+        <div class="output-workbench-card pivot-column-grid">
+          <div class="section-header">
+            <div>
+              <h4 style="margin-bottom:6px">Visible columns</h4>
+              <p class="small-muted" style="margin:0">Unchecked columns are hidden in the active table output.</p>
+            </div>
+          </div>
+          <div class="output-column-visibility-grid">
+            ${columns.map((label, index) => `
+              <label class="output-column-toggle">
+                <input type="checkbox" data-pivot-column-visible="${index}" ${hiddenColumns.has(index) ? '' : 'checked'} />
+                <span>${escapeHtml(label || `Column ${index + 1}`)}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+        <div class="inline-actions">
+          <button type="button" class="small" id="pivot-sort-asc-btn">Sort A-Z</button>
+          <button type="button" class="small" id="pivot-sort-desc-btn">Sort Z-A</button>
+          <button type="button" class="small" id="pivot-transpose-btn">Transpose</button>
+          <button type="button" class="small" id="pivot-copy-btn">Copy TSV</button>
+          <button type="button" class="small" id="pivot-edit-toggle-btn">${state.outputPivotState.editable ? 'Lock cells' : 'Edit cells'}</button>
+          <button type="button" class="small" id="pivot-reset-btn">Reset</button>
+        </div>
+        <p class="small-muted" style="margin:10px 0 0">
+          Active sort: ${state.outputPivotState.sortDirection === 'none' ? 'none' : `${escapeHtml(columns[sortColumn] || `Column ${sortColumn + 1}`)} (${state.outputPivotState.sortDirection})`}
+        </p>
+        <div class="stack gap-12" style="margin-top:12px">
+          <label class="field">
+            <span>Pivot layout label</span>
+            <input id="pivot-layout-label" type="text" placeholder="Committee crosstab layout" />
+          </label>
+          <div class="inline-actions">
+            <button type="button" class="small" id="pivot-layout-save-btn">Save layout</button>
+          </div>
+          <label class="field">
+            <span>Saved layouts</span>
+            <select id="pivot-layout-select">
+              <option value="">Select layout</option>
+              ${pivotLayouts.map((layout) => `<option value="${escapeHtml(layout.id)}">${escapeHtml(layout.label)}</option>`).join('')}
+            </select>
+          </label>
+          <div class="inline-actions">
+            <button type="button" class="small" id="pivot-layout-apply-btn">Apply layout</button>
+            <button type="button" class="small danger" id="pivot-layout-delete-btn">Delete layout</button>
+          </div>
+        </div>
+      </section>
+      <section class="output-workbench-card">
+        <div class="section-header">
+          <div>
+            <h3 style="margin-bottom:6px">Chart builder</h3>
+            <p class="small-muted" style="margin:0">Create reusable chart specs, then export SVG for reporting.</p>
+          </div>
+        </div>
+        <div class="output-workbench-fields">
+          <label class="field">
+            <span>Chart type</span>
+            <select id="output-chart-type">
+              <option value="bar" ${state.outputChartBuilderState.chartType === 'bar' ? 'selected' : ''}>Bar</option>
+              <option value="line" ${state.outputChartBuilderState.chartType === 'line' ? 'selected' : ''}>Line</option>
+              <option value="area" ${state.outputChartBuilderState.chartType === 'area' ? 'selected' : ''}>Area</option>
+              <option value="scatter" ${state.outputChartBuilderState.chartType === 'scatter' ? 'selected' : ''}>Scatter</option>
+              <option value="histogram" ${state.outputChartBuilderState.chartType === 'histogram' ? 'selected' : ''}>Histogram</option>
+              <option value="boxplot" ${state.outputChartBuilderState.chartType === 'boxplot' ? 'selected' : ''}>Box plot</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Palette</span>
+            <select id="output-chart-palette">
+              ${Object.keys(QUANT_CHART_PALETTES).map((palette) =>
+                `<option value="${palette}" ${state.outputChartBuilderState.palette === palette ? 'selected' : ''}>${escapeHtml(palette)}</option>`
+              ).join('')}
+            </select>
+          </label>
+          <label class="field">
+            <span>X column</span>
+            <select id="output-chart-x-column">${chartColumnOptions}</select>
+          </label>
+          <label class="field">
+            <span>Y column</span>
+            <select id="output-chart-y-column">${chartColumnOptions}</select>
+          </label>
+          <label class="field">
+            <span>Chart title</span>
+            <input id="output-chart-title" type="text" value="${escapeHtml(state.outputChartBuilderState.title || '')}" placeholder="Chart title" />
+          </label>
+          <label class="field">
+            <span>Chart subtitle</span>
+            <input id="output-chart-subtitle" type="text" value="${escapeHtml(state.outputChartBuilderState.subtitle || '')}" placeholder="Optional subtitle" />
+          </label>
+        </div>
+        <div class="output-workbench-toggles">
+          <label><input type="checkbox" id="output-chart-labels" ${state.outputChartBuilderState.showDataLabels ? 'checked' : ''} /> Show data labels</label>
+          <label><input type="checkbox" id="output-chart-trend" ${state.outputChartBuilderState.showTrendLine ? 'checked' : ''} /> Show trend line</label>
+          <label><input type="checkbox" id="output-chart-log" ${state.outputChartBuilderState.useLogScale ? 'checked' : ''} /> Log scale (Y)</label>
+        </div>
+        <div class="stack gap-12" style="margin-top:12px">
+          <label class="field">
+            <span>Chart preset label</span>
+            <input id="output-chart-preset-label" type="text" placeholder="Regression diagnostics chart" />
+          </label>
+          <div class="inline-actions">
+            <button type="button" class="small" id="output-chart-preset-save-btn">Save chart preset</button>
+            <button type="button" class="small" id="output-chart-export-svg-btn">Export chart SVG</button>
+          </div>
+          <label class="field">
+            <span>Saved chart presets</span>
+            <select id="output-chart-preset-select">
+              <option value="">Select chart preset</option>
+              ${chartPresets.map((preset) => `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.label)}</option>`).join('')}
+            </select>
+          </label>
+          <div class="inline-actions">
+            <button type="button" class="small" id="output-chart-preset-apply-btn">Apply preset</button>
+            <button type="button" class="small danger" id="output-chart-preset-delete-btn">Delete preset</button>
+          </div>
+        </div>
+        <div class="chart-grid output-workbench-preview" style="margin-top:14px">${buildChartBuilderPreview(table)}</div>
+      </section>
+    </div>
+  `;
+
+  const xColumnEl = node.querySelector('#output-chart-x-column');
+  const yColumnEl = node.querySelector('#output-chart-y-column');
+  if (xColumnEl) xColumnEl.value = String(state.outputChartBuilderState.xColumn);
+  if (yColumnEl) yColumnEl.value = String(state.outputChartBuilderState.yColumn);
+
+  node.querySelector('#output-pivot-table-index')?.addEventListener('change', (event) => {
+    state.outputPivotState.tableIndex = Number(event.target.value || 0);
+    renderQuantOutputWorkbench();
+  });
+  node.querySelector('#output-pivot-sort-column')?.addEventListener('change', (event) => {
+    state.outputPivotState.sortColumn = Number(event.target.value || 0);
+    renderQuantOutputWorkbench();
+  });
+  node.querySelector('#output-pivot-number-format')?.addEventListener('change', (event) => {
+    const next = String(event.target.value || 'raw');
+    profile.numberFormat = next;
+    state.outputPivotState.numberFormat = next;
+    applyPivotProfileToTable(table, profile);
+    state.outputPivotState.hasMutations = true;
+    persistOutputWorkspaceState();
+    renderQuantOutputWorkbench();
+  });
+  node.querySelectorAll('[data-pivot-column-visible]').forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      const hidden = [...node.querySelectorAll('[data-pivot-column-visible]')]
+        .filter((entry) => !(entry instanceof HTMLInputElement) || !entry.checked)
+        .map((entry) => Number(entry.getAttribute('data-pivot-column-visible')))
+        .filter((value) => Number.isFinite(value));
+      profile.hiddenColumns = hidden;
+      applyPivotProfileToTable(table, profile);
+      state.outputPivotState.hasMutations = true;
+      persistOutputWorkspaceState();
+      renderQuantOutputWorkbench();
+    });
+  });
+  node.querySelector('#pivot-sort-asc-btn')?.addEventListener('click', () => {
+    ensurePivotSnapshotForActiveView(panel);
+    sortPivotTableRows(table, state.outputPivotState.sortColumn, 'asc');
+    state.outputPivotState.sortDirection = 'asc';
+    state.outputPivotState.hasMutations = true;
+    applyPivotEditableToPanel(panel);
+    renderQuantOutputWorkbench();
+  });
+  node.querySelector('#pivot-sort-desc-btn')?.addEventListener('click', () => {
+    ensurePivotSnapshotForActiveView(panel);
+    sortPivotTableRows(table, state.outputPivotState.sortColumn, 'desc');
+    state.outputPivotState.sortDirection = 'desc';
+    state.outputPivotState.hasMutations = true;
+    applyPivotEditableToPanel(panel);
+    renderQuantOutputWorkbench();
+  });
+  node.querySelector('#pivot-transpose-btn')?.addEventListener('click', () => {
+    ensurePivotSnapshotForActiveView(panel);
+    transposePivotTable(table);
+    profile.hiddenColumns = [];
+    state.outputPivotState.hasMutations = true;
+    applyPivotEditableToPanel(panel);
+    persistOutputWorkspaceState();
+    renderQuantOutputWorkbench();
+  });
+  node.querySelector('#pivot-copy-btn')?.addEventListener('click', async () => {
+    try {
+      await copyPivotTableAsTsv(table);
+    } catch (err) {
+      window.alert(`Copy failed: ${err.message}`);
+    }
+  });
+  node.querySelector('#pivot-edit-toggle-btn')?.addEventListener('click', () => {
+    state.outputPivotState.editable = !state.outputPivotState.editable;
+    applyPivotEditableToPanel(panel);
+    renderQuantOutputWorkbench();
+  });
+  node.querySelector('#pivot-reset-btn')?.addEventListener('click', () => {
+    restorePivotSnapshotForActiveView();
+    renderQuantOutputWorkbench();
+  });
+  node.querySelector('#pivot-layout-save-btn')?.addEventListener('click', () => {
+    const input = node.querySelector('#pivot-layout-label');
+    const label = String(input?.value ?? '').trim();
+    if (!label) {
+      window.alert('Enter a pivot layout label first.');
+      return;
+    }
+    const nextLayout = {
+      id: `pivot-layout-${Date.now()}`,
+      label,
+      hiddenColumns: [...(profile.hiddenColumns ?? [])],
+      numberFormat: profile.numberFormat ?? 'raw'
+    };
+    const nextList = [
+      nextLayout,
+      ...getPivotLayoutsForView(state.quantOutputView).filter((entry) => entry.label !== label)
+    ].slice(0, 20);
+    state.outputPivotLayouts[state.quantOutputView] = nextList;
+    persistOutputWorkspaceState();
+    renderQuantOutputWorkbench();
+  });
+  node.querySelector('#pivot-layout-apply-btn')?.addEventListener('click', () => {
+    const select = node.querySelector('#pivot-layout-select');
+    const selectedId = String(select?.value ?? '');
+    if (!selectedId) return;
+    const layout = getPivotLayoutsForView(state.quantOutputView).find((entry) => entry.id === selectedId);
+    if (!layout) return;
+    profile.hiddenColumns = Array.isArray(layout.hiddenColumns) ? [...layout.hiddenColumns] : [];
+    profile.numberFormat = layout.numberFormat ?? 'raw';
+    state.outputPivotState.numberFormat = profile.numberFormat;
+    applyPivotProfileToTable(table, profile);
+    persistOutputWorkspaceState();
+    renderQuantOutputWorkbench();
+  });
+  node.querySelector('#pivot-layout-delete-btn')?.addEventListener('click', () => {
+    const select = node.querySelector('#pivot-layout-select');
+    const selectedId = String(select?.value ?? '');
+    if (!selectedId) return;
+    state.outputPivotLayouts[state.quantOutputView] = getPivotLayoutsForView(state.quantOutputView).filter((entry) => entry.id !== selectedId);
+    persistOutputWorkspaceState();
+    renderQuantOutputWorkbench();
+  });
+
+  const chartControls = [
+    ['#output-chart-type', 'chartType'],
+    ['#output-chart-palette', 'palette'],
+    ['#output-chart-x-column', 'xColumn'],
+    ['#output-chart-y-column', 'yColumn'],
+    ['#output-chart-title', 'title'],
+    ['#output-chart-subtitle', 'subtitle']
+  ];
+  chartControls.forEach(([selector, key]) => {
+    const handler = (event) => {
+      const raw = event.target.value;
+      state.outputChartBuilderState[key] = key.endsWith('Column') ? Number(raw || -1) : raw;
+      persistOutputWorkspaceState();
+      renderQuantOutputWorkbench();
+    };
+    node.querySelector(selector)?.addEventListener('change', handler);
+    node.querySelector(selector)?.addEventListener('input', handler);
+  });
+  node.querySelector('#output-chart-labels')?.addEventListener('change', (event) => {
+    state.outputChartBuilderState.showDataLabels = Boolean(event.target.checked);
+    persistOutputWorkspaceState();
+    renderQuantOutputWorkbench();
+  });
+  node.querySelector('#output-chart-trend')?.addEventListener('change', (event) => {
+    state.outputChartBuilderState.showTrendLine = Boolean(event.target.checked);
+    persistOutputWorkspaceState();
+    renderQuantOutputWorkbench();
+  });
+  node.querySelector('#output-chart-log')?.addEventListener('change', (event) => {
+    state.outputChartBuilderState.useLogScale = Boolean(event.target.checked);
+    persistOutputWorkspaceState();
+    renderQuantOutputWorkbench();
+  });
+  node.querySelector('#output-chart-preset-save-btn')?.addEventListener('click', () => {
+    const input = node.querySelector('#output-chart-preset-label');
+    const label = String(input?.value ?? '').trim();
+    if (!label) {
+      window.alert('Enter a chart preset label first.');
+      return;
+    }
+    const nextPreset = {
+      id: `chart-preset-${Date.now()}`,
+      label,
+      spec: cloneJson(state.outputChartBuilderState)
+    };
+    const nextList = [
+      nextPreset,
+      ...getChartPresetsForView(state.quantOutputView).filter((entry) => entry.label !== label)
+    ].slice(0, 20);
+    state.outputChartPresets[state.quantOutputView] = nextList;
+    persistOutputWorkspaceState();
+    renderQuantOutputWorkbench();
+  });
+  node.querySelector('#output-chart-preset-apply-btn')?.addEventListener('click', () => {
+    const select = node.querySelector('#output-chart-preset-select');
+    const presetId = String(select?.value ?? '');
+    if (!presetId) return;
+    const preset = getChartPresetsForView(state.quantOutputView).find((entry) => entry.id === presetId);
+    if (!preset?.spec) return;
+    state.outputChartBuilderState = {
+      ...state.outputChartBuilderState,
+      ...cloneJson(preset.spec)
+    };
+    persistOutputWorkspaceState();
+    renderQuantOutputWorkbench();
+  });
+  node.querySelector('#output-chart-preset-delete-btn')?.addEventListener('click', () => {
+    const select = node.querySelector('#output-chart-preset-select');
+    const presetId = String(select?.value ?? '');
+    if (!presetId) return;
+    state.outputChartPresets[state.quantOutputView] = getChartPresetsForView(state.quantOutputView).filter((entry) => entry.id !== presetId);
+    persistOutputWorkspaceState();
+    renderQuantOutputWorkbench();
+  });
+  node.querySelector('#output-chart-export-svg-btn')?.addEventListener('click', () => {
+    const svgNode = node.querySelector('.output-workbench-preview svg');
+    if (!(svgNode instanceof SVGElement)) {
+      window.alert('No chart SVG is available to export.');
+      return;
+    }
+    const blob = new Blob([svgNode.outerHTML], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${state.selectedProjectId ?? 'muStatistics'}-${state.quantOutputView}-chart.svg`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  applyPivotEditableToPanel(panel);
 }
 
 function normalizeAnalysisFieldKey(value) {
@@ -836,6 +2292,15 @@ function workspaceItemKey(item) {
   return `${item.kind}:${anchor}:${String(item.text ?? '').slice(0, 40)}`;
 }
 
+function buildMediaPlaybackUrl(source) {
+  const raw = typeof source?.contentUrl === 'string' ? source.contentUrl.trim() : '';
+  if (!source?.id || !state.selectedProjectId) return raw;
+  const params = new URLSearchParams({
+    projectId: state.selectedProjectId
+  });
+  return `${API_BASE}/sources/${encodeURIComponent(source.id)}/media?${params.toString()}`;
+}
+
 function formatInteractionLabel(value) {
   return String(value ?? '')
     .replace(/[_-]+/g, ' ')
@@ -858,6 +2323,9 @@ function renderInteractionStatus() {
   } else if (state.activeTab === 'quantitative') {
     activeMenu = `Quantitative / ${formatInteractionLabel(state.quantitativeView)}`;
     activeSubtab = formatInteractionLabel(state.quantitativeSubViews[state.quantitativeView] ?? 'none');
+  } else if (state.activeTab === 'projects') {
+    activeMenu = `Projects / ${formatInteractionLabel(state.projectsView)}`;
+    activeSubtab = formatInteractionLabel(state.projectsView);
   }
 
   setText('interaction-selected-project', project?.name ?? 'None');
@@ -896,6 +2364,9 @@ function mapAnalysisKindToOutputView(kind) {
     case 'regression': return 'regression';
     case 'reliability': return 'reliability';
     case 'factor_analysis': return 'factor-analysis';
+    case 'optimal_scaling': return 'optimal-scaling';
+    case 'conjoint_analysis': return 'conjoint-analysis';
+    case 'direct_marketing': return 'direct-marketing';
     case 'forecasting': return 'forecasting';
     case 'cluster_analysis': return 'cluster-analysis';
     case 'decision_tree': return 'decision-tree';
@@ -946,7 +2417,13 @@ function describeQuantAnalysis(analysisKind, analysis = {}) {
     case 'exact_test':
       return {
         title: 'Exact test',
-        detail: `${analysis.rowField ?? 'row'} by ${analysis.columnField ?? 'column'}`
+        detail: analysis.testType === 'binomial'
+          ? `Binomial exact on ${analysis.binaryField ?? 'binary field'}`
+          : analysis.testType === 'mcnemar'
+            ? `McNemar ${analysis.beforeField ?? 'before'} vs ${analysis.afterField ?? 'after'}`
+            : analysis.testType === 'sign'
+              ? `Sign ${analysis.beforeField ?? 'before'} vs ${analysis.afterField ?? 'after'}`
+              : `${analysis.rowField ?? 'row'} by ${analysis.columnField ?? 'column'}`
       };
     case 'bootstrap':
       return {
@@ -982,6 +2459,21 @@ function describeQuantAnalysis(analysisKind, analysis = {}) {
       return {
         title: 'Factor analysis',
         detail: `${(analysis.fields ?? []).join(', ') || 'selected factor fields'}`
+      };
+    case 'optimal_scaling':
+      return {
+        title: 'Categories',
+        detail: `${(analysis.fields ?? []).join(', ') || 'selected categorical fields'}${analysis.anchorField ? ` (anchor ${analysis.anchorField})` : ''}`
+      };
+    case 'conjoint_analysis':
+      return {
+        title: 'Conjoint',
+        detail: `${analysis.ratingField ?? 'rating'} by ${(analysis.attributeFields ?? []).join(', ') || 'attribute fields'}`
+      };
+    case 'direct_marketing':
+      return {
+        title: 'Direct marketing',
+        detail: [analysis.responseField, analysis.recencyField, analysis.frequencyField, analysis.monetaryField].filter(Boolean).join(', ') || 'RFM/response setup'
       };
     case 'forecasting':
       return {
@@ -1080,6 +2572,9 @@ function quantOutputTitle(view) {
     regression: 'Regression',
     reliability: 'Reliability',
     'factor-analysis': 'Factor analysis',
+    'optimal-scaling': 'Categories',
+    'conjoint-analysis': 'Conjoint',
+    'direct-marketing': 'Direct marketing',
     forecasting: 'Forecasting',
     'cluster-analysis': 'Cluster analysis',
     'decision-tree': 'Decision tree',
@@ -1113,6 +2608,9 @@ function getAllCompiledReportViews() {
     'regression',
     'reliability',
     'factor-analysis',
+    'optimal-scaling',
+    'conjoint-analysis',
+    'direct-marketing',
     'forecasting',
     'cluster-analysis',
     'decision-tree',
@@ -1143,6 +2641,9 @@ function getDefaultCommitteePackViews() {
     'bootstrap',
     'correlation',
     'regression',
+    'optimal-scaling',
+    'conjoint-analysis',
+    'direct-marketing',
     'forecasting',
     'cluster-analysis',
     'decision-tree',
@@ -1162,6 +2663,237 @@ function ensureCompiledReportViews() {
   const allowed = new Set(getAllCompiledReportViews());
   const current = Array.isArray(state.compiledReportIncludedViews) ? state.compiledReportIncludedViews.filter((view) => allowed.has(view)) : [];
   state.compiledReportIncludedViews = current.length > 0 ? current : getAllCompiledReportViews();
+}
+
+function loadOutputWorkspaceState() {
+  if (!state.selectedProjectId) {
+    state.compiledReportStyleTemplate = 'classic';
+    state.outputPivotProfiles = {};
+    state.outputPivotLayouts = {};
+    state.outputChartPresets = {};
+    state.outputChartBuilderState = {
+      chartType: 'bar',
+      palette: 'sand',
+      showDataLabels: true,
+      showTrendLine: false,
+      useLogScale: false,
+      xColumn: -1,
+      yColumn: -1,
+      title: '',
+      subtitle: ''
+    };
+    return;
+  }
+  try {
+    const raw = window.localStorage.getItem(OUTPUT_WORKSPACE_STATE_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const scoped = parsed?.[state.selectedProjectId] ?? {};
+    state.compiledReportStyleTemplate = getOutputStyleTemplateDefinition(scoped.styleTemplate)?.key ?? 'classic';
+    state.outputPivotProfiles = scoped.outputPivotProfiles && typeof scoped.outputPivotProfiles === 'object' ? scoped.outputPivotProfiles : {};
+    state.outputPivotLayouts = scoped.outputPivotLayouts && typeof scoped.outputPivotLayouts === 'object' ? scoped.outputPivotLayouts : {};
+    state.outputChartPresets = scoped.outputChartPresets && typeof scoped.outputChartPresets === 'object' ? scoped.outputChartPresets : {};
+    state.outputChartBuilderState = {
+      chartType: 'bar',
+      palette: 'sand',
+      showDataLabels: true,
+      showTrendLine: false,
+      useLogScale: false,
+      xColumn: -1,
+      yColumn: -1,
+      title: '',
+      subtitle: '',
+      ...(scoped.outputChartBuilderState && typeof scoped.outputChartBuilderState === 'object' ? scoped.outputChartBuilderState : {})
+    };
+    if (Array.isArray(scoped.compiledReportIncludedViews) && scoped.compiledReportIncludedViews.length > 0) {
+      state.compiledReportIncludedViews = scoped.compiledReportIncludedViews;
+    }
+  } catch {
+    state.compiledReportStyleTemplate = 'classic';
+    state.outputPivotProfiles = {};
+    state.outputPivotLayouts = {};
+    state.outputChartPresets = {};
+  }
+}
+
+function persistOutputWorkspaceState() {
+  if (!state.selectedProjectId) return;
+  try {
+    const raw = window.localStorage.getItem(OUTPUT_WORKSPACE_STATE_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    parsed[state.selectedProjectId] = {
+      styleTemplate: getOutputStyleTemplateDefinition().key,
+      outputPivotProfiles: state.outputPivotProfiles,
+      outputPivotLayouts: state.outputPivotLayouts,
+      outputChartBuilderState: state.outputChartBuilderState,
+      outputChartPresets: state.outputChartPresets,
+      compiledReportIncludedViews: state.compiledReportIncludedViews
+    };
+    window.localStorage.setItem(OUTPUT_WORKSPACE_STATE_STORAGE_KEY, JSON.stringify(parsed));
+  } catch {
+    // Ignore localStorage failures in the browser shell.
+  }
+}
+
+function loadOutputPacks() {
+  if (!state.selectedProjectId) {
+    state.outputPacks = [];
+    return;
+  }
+  try {
+    const raw = window.localStorage.getItem(OUTPUT_PACKS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    state.outputPacks = Array.isArray(parsed?.[state.selectedProjectId]) ? parsed[state.selectedProjectId] : [];
+  } catch {
+    state.outputPacks = [];
+  }
+}
+
+function persistOutputPacks() {
+  if (!state.selectedProjectId) return;
+  try {
+    const raw = window.localStorage.getItem(OUTPUT_PACKS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    parsed[state.selectedProjectId] = state.outputPacks;
+    window.localStorage.setItem(OUTPUT_PACKS_STORAGE_KEY, JSON.stringify(parsed));
+  } catch {
+    // Ignore localStorage failures in the browser shell.
+  }
+}
+
+function buildOutputPackPayload(label = '') {
+  return {
+    id: `output-pack-${Date.now()}`,
+    label: String(label || 'Output pack').trim(),
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    projectId: state.selectedProjectId ?? null,
+    projectName: state.selectedSummary?.project?.name ?? '',
+    styleTemplate: getOutputStyleTemplateDefinition().key,
+    quantOutputView: state.quantOutputView,
+    quantOutputTreeSelection: state.quantOutputTreeSelection,
+    quantOutputTreeOpenGroups: cloneJson(state.quantOutputTreeOpenGroups),
+    compiledReportIncludedViews: cloneJson(state.compiledReportIncludedViews),
+    outputPivotProfiles: cloneJson(state.outputPivotProfiles),
+    outputPivotLayouts: cloneJson(state.outputPivotLayouts),
+    outputChartBuilderState: cloneJson(state.outputChartBuilderState),
+    outputChartPresets: cloneJson(state.outputChartPresets),
+    quantOutputHistory: cloneJson(state.quantOutputHistory)
+  };
+}
+
+function applyOutputPack(pack, options = {}) {
+  if (!pack || typeof pack !== 'object') throw new Error('Invalid output pack payload.');
+  const targetProject = String(pack.projectId ?? '').trim();
+  if (targetProject && state.selectedProjectId && targetProject !== state.selectedProjectId) {
+    const proceed = window.confirm(`This pack is for project ${targetProject}. Apply anyway?`);
+    if (!proceed) return false;
+  }
+  state.compiledReportStyleTemplate = getOutputStyleTemplateDefinition(pack.styleTemplate)?.key ?? 'classic';
+  state.quantOutputView = String(pack.quantOutputView || state.quantOutputView || 'descriptives');
+  state.quantOutputTreeSelection = String(pack.quantOutputTreeSelection || '');
+  state.quantOutputTreeOpenGroups = {
+    live: true,
+    history: true,
+    saved: true,
+    ...(pack.quantOutputTreeOpenGroups && typeof pack.quantOutputTreeOpenGroups === 'object' ? pack.quantOutputTreeOpenGroups : {})
+  };
+  state.compiledReportIncludedViews = Array.isArray(pack.compiledReportIncludedViews)
+    ? pack.compiledReportIncludedViews
+    : getAllCompiledReportViews();
+  state.outputPivotProfiles = pack.outputPivotProfiles && typeof pack.outputPivotProfiles === 'object' ? pack.outputPivotProfiles : {};
+  state.outputPivotLayouts = pack.outputPivotLayouts && typeof pack.outputPivotLayouts === 'object' ? pack.outputPivotLayouts : {};
+  state.outputChartBuilderState = {
+    chartType: 'bar',
+    palette: 'sand',
+    showDataLabels: true,
+    showTrendLine: false,
+    useLogScale: false,
+    xColumn: -1,
+    yColumn: -1,
+    title: '',
+    subtitle: '',
+    ...(pack.outputChartBuilderState && typeof pack.outputChartBuilderState === 'object' ? pack.outputChartBuilderState : {})
+  };
+  state.outputChartPresets = pack.outputChartPresets && typeof pack.outputChartPresets === 'object' ? pack.outputChartPresets : {};
+  if (Array.isArray(pack.quantOutputHistory) && pack.quantOutputHistory.length > 0) {
+    state.quantOutputHistory = pack.quantOutputHistory.slice(0, 24);
+  }
+  ensureCompiledReportViews();
+  applyOutputStyleTemplateToWorkspace();
+  persistOutputWorkspaceState();
+  renderAll();
+  return true;
+}
+
+function exportOutputPackJson(pack) {
+  requireProjectExportPermission();
+  const payload = cloneJson(pack ?? buildOutputPackPayload('Output pack'));
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  const labelToken = normalizeAnalysisFieldKey(payload.label || 'output-pack');
+  anchor.download = `${state.selectedProjectId ?? 'muStatistics'}-${labelToken || 'output-pack'}.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function renderOutputPackList() {
+  const node = document.getElementById('output-pack-list');
+  if (!node) return;
+  if (!state.selectedProjectId || state.outputPacks.length === 0) {
+    node.innerHTML = '<li class="interactive-list-item empty">No output packs saved for this project yet.</li>';
+    return;
+  }
+  node.innerHTML = '';
+  for (const pack of state.outputPacks) {
+    const li = document.createElement('li');
+    li.className = 'interactive-list-item';
+    li.innerHTML = `
+      <div class="compiled-report-preset-row">
+        <div class="compiled-report-preset-meta">
+          <span class="workspace-meta">Output pack v${escapeHtml(String(pack.version ?? 1))}</span>
+          <span class="project-title">${escapeHtml(String(pack.label ?? 'Output pack'))}</span>
+          <span class="source-meta">${escapeHtml(new Date(pack.generatedAt || Date.now()).toLocaleString())}</span>
+        </div>
+        <div class="compiled-report-preset-actions">
+          <button type="button" class="small output-pack-apply-btn">Apply</button>
+          <button type="button" class="small output-pack-open-btn">Open report</button>
+          <button type="button" class="small output-pack-export-btn">JSON</button>
+          <button type="button" class="small danger output-pack-delete-btn">Delete</button>
+        </div>
+      </div>
+    `;
+    li.querySelector('.output-pack-apply-btn')?.addEventListener('click', () => {
+      try {
+        applyOutputPack(pack);
+      } catch (err) {
+        window.alert(`Output pack apply failed: ${err.message}`);
+      }
+    });
+    li.querySelector('.output-pack-open-btn')?.addEventListener('click', () => {
+      try {
+        if (applyOutputPack(pack)) openCompiledReportWindow();
+      } catch (err) {
+        window.alert(`Output pack open failed: ${err.message}`);
+      }
+    });
+    li.querySelector('.output-pack-export-btn')?.addEventListener('click', () => {
+      try {
+        exportOutputPackJson(pack);
+      } catch (err) {
+        window.alert(`Output pack export failed: ${err.message}`);
+      }
+    });
+    li.querySelector('.output-pack-delete-btn')?.addEventListener('click', () => {
+      state.outputPacks = state.outputPacks.filter((entry) => entry.id !== pack.id);
+      persistOutputPacks();
+      renderOutputPackList();
+    });
+    node.appendChild(li);
+  }
 }
 
 function loadCompiledReportPresets() {
@@ -1219,6 +2951,12 @@ function buildCompiledReportHtml() {
   const projectName = state.selectedSummary?.project?.name ?? 'muStatistics project';
   const generatedAt = new Date().toLocaleString();
   const sections = getCompiledReportSections();
+  const style = getOutputStyleTemplateDefinition();
+  const documentTree = state.quantOutputDocumentTree ?? buildQuantOutputDocumentTree();
+  const nodeCount = (documentTree.groups ?? []).reduce(
+    (total, group) => total + (group.sections ?? []).reduce((sum, section) => sum + (section.items?.length ?? 0), 0),
+    0
+  );
   const historyItems = state.quantOutputHistory.map((entry) => `
     <li><span>${escapeHtml(entry.title)}</span><span>${escapeHtml(entry.stamp)}</span></li>
   `).join('');
@@ -1231,17 +2969,17 @@ function buildCompiledReportHtml() {
     <style>
       :root {
         color-scheme: light;
-        --paper:#fcfaf5;
-        --ink:#1e1e1e;
-        --muted:#666;
-        --line:#d8d0c0;
-        --accent:#8b6d3b;
+        --paper:${escapeHtml(style.paper)};
+        --ink:${escapeHtml(style.ink)};
+        --muted:${escapeHtml(style.muted)};
+        --line:${escapeHtml(style.line)};
+        --accent:${escapeHtml(style.accent)};
       }
       * { box-sizing:border-box; }
       body {
         margin:0;
         padding:32px;
-        font-family: "Segoe UI", Arial, sans-serif;
+        font-family: ${escapeHtml(style.bodyFont)};
         color:var(--ink);
         background:var(--paper);
       }
@@ -1249,13 +2987,13 @@ function buildCompiledReportHtml() {
       .cover, .index, .section {
         background:#fff;
         border:1px solid var(--line);
-        border-radius:18px;
-        padding:28px;
+        border-radius:${escapeHtml(style.sectionRadius)};
+        padding:${escapeHtml(style.sectionPadding)};
         page-break-inside: avoid;
       }
       .cover h1, .section h2 {
         margin:6px 0 0;
-        font-family: Georgia, "Times New Roman", serif;
+        font-family: ${escapeHtml(style.headingFont)};
       }
       .kicker {
         color:var(--accent);
@@ -1317,6 +3055,8 @@ function buildCompiledReportHtml() {
         <p>Saved analysis stack, current output pages, and recent viewer history assembled into one report document.</p>
         <div class="meta">
           <span>Generated ${escapeHtml(generatedAt)}</span>
+          <span>Template ${escapeHtml(style.label)}</span>
+          <span>Tree nodes ${nodeCount}</span>
           <span>Sections ${sections.length}</span>
         </div>
       </section>
@@ -1367,7 +3107,7 @@ function exportCompiledReportHtml() {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `${state.selectedProjectId ?? 'muStatistics'}-compiled-report.html`;
+  anchor.download = `${state.selectedProjectId ?? 'muStatistics'}-${getOutputStyleTemplateDefinition().key}-compiled-report.html`;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
@@ -1403,6 +3143,7 @@ function renderCompiledReportControls() {
     input.addEventListener('change', () => {
       const checked = [...node.querySelectorAll('[data-report-include]:checked')].map((entry) => entry.dataset.reportInclude);
       state.compiledReportIncludedViews = checked.length > 0 ? checked : getAllCompiledReportViews();
+      persistOutputWorkspaceState();
       renderCompiledReportControls();
     });
   });
@@ -1417,6 +3158,7 @@ function renderCompiledReportControls() {
       const reordered = [...state.compiledReportIncludedViews];
       [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
       state.compiledReportIncludedViews = reordered;
+      persistOutputWorkspaceState();
       renderCompiledReportControls();
     });
   });
@@ -1443,6 +3185,7 @@ function renderCompiledReportControls() {
       if (targetIndex < 0) return;
       reordered.splice(targetIndex, 0, draggedView);
       state.compiledReportIncludedViews = reordered;
+      persistOutputWorkspaceState();
       renderCompiledReportControls();
     });
   });
@@ -1494,6 +3237,7 @@ function renderCompiledReportPresets() {
     `;
     const applyPreset = () => {
       state.compiledReportIncludedViews = Array.isArray(preset.views) && preset.views.length > 0 ? preset.views : getAllCompiledReportViews();
+      persistOutputWorkspaceState();
       renderCompiledReportControls();
     };
     li.querySelector('.report-preset-favorite-btn')?.addEventListener('click', () => {
@@ -1545,6 +3289,15 @@ function renderCompiledReportPresets() {
   }
 }
 
+function renderOutputStyleTemplateControls() {
+  const select = document.getElementById('output-style-template-select');
+  if (!select) return;
+  const currentKey = getOutputStyleTemplateDefinition().key;
+  select.innerHTML = Object.values(OUTPUT_STYLE_TEMPLATES)
+    .map((template) => `<option value="${escapeHtml(template.key)}" ${template.key === currentKey ? 'selected' : ''}>${escapeHtml(template.label)}</option>`)
+    .join('');
+}
+
 function getWorkspaceSelection(container, baseStart = 0) {
   if (!container) return null;
   const selection = window.getSelection();
@@ -1570,22 +3323,761 @@ function getWorkspaceSelection(container, baseStart = 0) {
   };
 }
 
+function setAriaCurrent(button, isActive) {
+  if (!(button instanceof HTMLElement)) return;
+  if (isActive) {
+    button.setAttribute('aria-current', 'page');
+  } else {
+    button.removeAttribute('aria-current');
+  }
+}
+
+function renderTabGuideDiagram(tabKey) {
+  if (tabKey === 'collaboration') {
+    return `<svg class="tab-guide-diagram" viewBox="0 0 960 220" role="img" aria-label="Collaboration flow diagram">
+      <rect x="20" y="70" width="180" height="78" rx="12" fill="rgba(126,167,161,0.2)" stroke="rgba(126,167,161,0.7)"></rect>
+      <text x="110" y="103" fill="#f4efe6" font-size="14" text-anchor="middle">Select project</text>
+      <text x="110" y="124" fill="#b9b1a4" font-size="12" text-anchor="middle">workspace target</text>
+      <rect x="260" y="70" width="200" height="78" rx="12" fill="rgba(210,178,122,0.2)" stroke="rgba(210,178,122,0.7)"></rect>
+      <text x="360" y="103" fill="#f4efe6" font-size="14" text-anchor="middle">Add members</text>
+      <text x="360" y="124" fill="#b9b1a4" font-size="12" text-anchor="middle">owner or collaborator</text>
+      <rect x="520" y="70" width="200" height="78" rx="12" fill="rgba(126,167,161,0.2)" stroke="rgba(126,167,161,0.7)"></rect>
+      <text x="620" y="103" fill="#f4efe6" font-size="14" text-anchor="middle">Set mode</text>
+      <text x="620" y="124" fill="#b9b1a4" font-size="12" text-anchor="middle">solo or collaborative</text>
+      <rect x="760" y="70" width="180" height="78" rx="12" fill="rgba(210,178,122,0.2)" stroke="rgba(210,178,122,0.7)"></rect>
+      <text x="850" y="103" fill="#f4efe6" font-size="14" text-anchor="middle">Monitor + chat</text>
+      <text x="850" y="124" fill="#b9b1a4" font-size="12" text-anchor="middle">presence and popup chat</text>
+      <path d="M206 109 H252 M466 109 H512 M726 109 H752" stroke="rgba(244,239,230,0.78)" stroke-width="2" marker-end="url(#arr)"></path>
+      <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><polygon points="0,0 8,4 0,8" fill="rgba(244,239,230,0.78)"></polygon></marker></defs>
+    </svg>`;
+  }
+  if (tabKey === 'projects') {
+    return `<svg class="tab-guide-diagram" viewBox="0 0 960 220" role="img" aria-label="Projects workflow diagram">
+      <rect x="40" y="52" width="250" height="116" rx="14" fill="rgba(210,178,122,0.18)" stroke="rgba(210,178,122,0.7)"></rect>
+      <text x="165" y="90" fill="#f4efe6" font-size="15" text-anchor="middle">Project List (Rail)</text>
+      <text x="165" y="112" fill="#b9b1a4" font-size="12" text-anchor="middle">select active project shell</text>
+      <rect x="355" y="52" width="250" height="116" rx="14" fill="rgba(126,167,161,0.18)" stroke="rgba(126,167,161,0.7)"></rect>
+      <text x="480" y="90" fill="#f4efe6" font-size="15" text-anchor="middle">Canvas</text>
+      <text x="480" y="112" fill="#b9b1a4" font-size="12" text-anchor="middle">overview and chat tools</text>
+      <rect x="670" y="52" width="250" height="116" rx="14" fill="rgba(210,178,122,0.18)" stroke="rgba(210,178,122,0.7)"></rect>
+      <text x="795" y="90" fill="#f4efe6" font-size="15" text-anchor="middle">Inspector</text>
+      <text x="795" y="112" fill="#b9b1a4" font-size="12" text-anchor="middle">create, settings, delete</text>
+    </svg>`;
+  }
+  if (tabKey === 'qualitative') {
+    return `<svg class="tab-guide-diagram" viewBox="0 0 960 240" role="img" aria-label="Qualitative read-code-inspect diagram">
+      <rect x="20" y="24" width="920" height="192" rx="16" fill="rgba(12,15,20,0.7)" stroke="rgba(207,188,154,0.22)"></rect>
+      <rect x="44" y="56" width="240" height="140" rx="12" fill="rgba(126,167,161,0.2)" stroke="rgba(126,167,161,0.7)"></rect>
+      <text x="164" y="85" fill="#f4efe6" font-size="14" text-anchor="middle">Library + Capture</text>
+      <text x="164" y="108" fill="#b9b1a4" font-size="12" text-anchor="middle">sources, codes, segments</text>
+      <rect x="312" y="56" width="336" height="140" rx="12" fill="rgba(210,178,122,0.2)" stroke="rgba(210,178,122,0.7)"></rect>
+      <text x="480" y="85" fill="#f4efe6" font-size="14" text-anchor="middle">Coding Canvas</text>
+      <text x="480" y="108" fill="#b9b1a4" font-size="12" text-anchor="middle">read + select + code + memo</text>
+      <rect x="676" y="56" width="240" height="140" rx="12" fill="rgba(126,167,161,0.2)" stroke="rgba(126,167,161,0.7)"></rect>
+      <text x="796" y="85" fill="#f4efe6" font-size="14" text-anchor="middle">Evidence + Queries</text>
+      <text x="796" y="108" fill="#b9b1a4" font-size="12" text-anchor="middle">retrieval, matrix, reports</text>
+      <path d="M290 126 H306 M654 126 H670" stroke="rgba(244,239,230,0.78)" stroke-width="2" marker-end="url(#arrq)"></path>
+      <defs><marker id="arrq" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><polygon points="0,0 8,4 0,8" fill="rgba(244,239,230,0.78)"></polygon></marker></defs>
+    </svg>`;
+  }
+  if (tabKey === 'quantitative') {
+    return `<svg class="tab-guide-diagram" viewBox="0 0 960 240" role="img" aria-label="Quantitative procedure and output diagram">
+      <rect x="20" y="24" width="920" height="192" rx="16" fill="rgba(12,15,20,0.7)" stroke="rgba(207,188,154,0.22)"></rect>
+      <rect x="44" y="56" width="180" height="140" rx="12" fill="rgba(210,178,122,0.2)" stroke="rgba(210,178,122,0.7)"></rect>
+      <text x="134" y="85" fill="#f4efe6" font-size="14" text-anchor="middle">Output Nav</text>
+      <text x="134" y="108" fill="#b9b1a4" font-size="12" text-anchor="middle">popup window</text>
+      <rect x="254" y="56" width="412" height="140" rx="12" fill="rgba(126,167,161,0.2)" stroke="rgba(126,167,161,0.7)"></rect>
+      <text x="460" y="85" fill="#f4efe6" font-size="14" text-anchor="middle">Procedure Workspace</text>
+      <text x="460" y="108" fill="#b9b1a4" font-size="12" text-anchor="middle">data, transform, tests, models</text>
+      <rect x="696" y="56" width="220" height="140" rx="12" fill="rgba(210,178,122,0.2)" stroke="rgba(210,178,122,0.7)"></rect>
+      <text x="806" y="85" fill="#f4efe6" font-size="14" text-anchor="middle">Inspector</text>
+      <text x="806" y="108" fill="#b9b1a4" font-size="12" text-anchor="middle">browser + diagnostics</text>
+      <path d="M230 126 H246 M672 126 H690" stroke="rgba(244,239,230,0.78)" stroke-width="2" marker-end="url(#arrt)"></path>
+      <defs><marker id="arrt" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><polygon points="0,0 8,4 0,8" fill="rgba(244,239,230,0.78)"></polygon></marker></defs>
+    </svg>`;
+  }
+  return `<svg class="tab-guide-diagram" viewBox="0 0 960 220" role="img" aria-label="Status governance diagram">
+    <rect x="40" y="52" width="250" height="116" rx="14" fill="rgba(126,167,161,0.18)" stroke="rgba(126,167,161,0.7)"></rect>
+    <text x="165" y="90" fill="#f4efe6" font-size="15" text-anchor="middle">Health + Readiness</text>
+    <text x="165" y="112" fill="#b9b1a4" font-size="12" text-anchor="middle">governance and deployment</text>
+    <rect x="355" y="52" width="250" height="116" rx="14" fill="rgba(210,178,122,0.18)" stroke="rgba(210,178,122,0.7)"></rect>
+    <text x="480" y="90" fill="#f4efe6" font-size="15" text-anchor="middle">Diagnostics Canvas</text>
+    <text x="480" y="112" fill="#b9b1a4" font-size="12" text-anchor="middle">payload, trace, issue lists</text>
+    <rect x="670" y="52" width="250" height="116" rx="14" fill="rgba(126,167,161,0.18)" stroke="rgba(126,167,161,0.7)"></rect>
+    <text x="795" y="90" fill="#f4efe6" font-size="15" text-anchor="middle">Action Controls</text>
+    <text x="795" y="112" fill="#b9b1a4" font-size="12" text-anchor="middle">policy, backup, audit export</text>
+  </svg>`;
+}
+
+function getTabGuidePayload(tabKey) {
+  if (tabKey === 'collaboration') {
+    return {
+      title: 'Collaboration User Instructions',
+      subtitle: 'Full feature guide: project selection, member sharing, workspace mode, presence alerts, and popup chat.',
+      html: `
+        <section class="tab-guide-section">
+          <h3>Quick start workflow</h3>
+          <ol>
+            <li>In <strong>Workspace selection</strong> (left rail), click a project. The selected project becomes active for collaboration.</li>
+            <li>In <strong>Share project</strong> (right inspector), enter MU username + role, then click <strong>Add member</strong>.</li>
+            <li>In <strong>Collaboration settings</strong>, choose <code>solo</code> or <code>collaborative</code>, then click <strong>Save collaboration mode</strong>.</li>
+            <li>Use <strong>Open popup chat</strong> in this tab (or top bar) to start team messaging for the selected project.</li>
+            <li>Watch <strong>Members</strong>, <strong>Active now</strong>, and live metric cards to confirm collaboration state.</li>
+          </ol>
+          ${renderTabGuideDiagram('collaboration')}
+        </section>
+        <section class="tab-guide-section">
+          <h3>Left rail features</h3>
+          <ul>
+            <li><strong>Workspace selection:</strong> click a project card to load its collaboration context. This drives membership, presence, chat eligibility, and permissions.</li>
+            <li><strong>Members of selected project:</strong> read-only list of who is attached to the project, including role badge (<code>owner</code> or <code>collaborator</code>) and account role (Student/Professor).</li>
+            <li><strong>Active now:</strong> real-time presence list for users currently active in this project.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Center canvas features</h3>
+          <ul>
+            <li><strong>Live activity cards:</strong>
+              <br><strong>Projects</strong> = total projects visible to your account.
+              <br><strong>Members</strong> = total memberships on selected project.
+              <br><strong>Active now</strong> = users currently active in selected project.
+              <br><strong>Recent chat</strong> = saved message count for selected project.
+            </li>
+            <li><strong>Project chat panel:</strong> click <strong>Open popup chat</strong> to launch chat in a separate window. Chat history is persisted and also available in Projects tab chat tools.</li>
+            <li><strong>Professor presence warning:</strong> student users in collaborative mode receive alert banner + join alert when a professor appears in live presence.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Right inspector features</h3>
+          <ul>
+            <li><strong>Share project form:</strong>
+              <br>1. Confirm selected project field is not "No project selected".
+              <br>2. Enter MU username in <strong>Add collaborator</strong>.
+              <br>3. Choose role: <code>Collaborator</code> or <code>Owner</code>.
+              <br>4. Click <strong>Add member</strong>.
+            </li>
+            <li><strong>Collaboration settings:</strong>
+              <br>1. Select <code>solo</code> or <code>collaborative</code>.
+              <br>2. Click <strong>Save collaboration mode</strong>.
+              <br>3. In <code>collaborative</code> mode, professor presence and collaboration behavior are enabled.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Permissions and expected behavior</h3>
+          <ul>
+            <li><strong>No project selected:</strong> collaboration actions stay disabled until a project is selected.</li>
+            <li><strong>Owner-gated controls:</strong> adding members and changing workspace mode require project owner permission.</li>
+            <li><strong>Role rules:</strong> owners manage collaboration settings; non-owners can still view members/presence and use chat when a project is selected.</li>
+            <li><strong>Session timeout:</strong> inactive sessions expire per governance timeout (default 90 minutes).</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Troubleshooting</h3>
+          <ul>
+            <li><strong>Buttons disabled:</strong> select a project first; if still disabled, your account is not an owner on that project.</li>
+            <li><strong>Cannot add member:</strong> verify exact MU username and that the target account already exists in the system.</li>
+            <li><strong>Active now is empty:</strong> no users are currently active in that project, or you just switched projects and presence has not refreshed yet.</li>
+            <li><strong>Popup chat did not open:</strong> allow popups for <code>localhost:3000</code>, then click <strong>Open popup chat</strong> again.</li>
+          </ul>
+          <p class="tab-guide-callout">Tip: start every collaboration task by selecting the project in the left rail. Everything else on this tab is scoped to that selection.</p>
+        </section>`
+    };
+  }
+  if (tabKey === 'projects') {
+    return {
+      title: 'Projects User Instructions',
+      subtitle: 'Full feature guide: project views, creation, selection, chat tools, and lifecycle management.',
+      html: `
+        <section class="tab-guide-section">
+          <h3>Quick start workflow</h3>
+          <ol>
+            <li>Use the Projects sub-menu to switch between <strong>Project list</strong>, <strong>Overview</strong>, <strong>Chat tools</strong>, and <strong>Settings</strong>.</li>
+            <li>In <strong>Settings → Create project</strong>, enter project details and click <strong>Save project</strong>.</li>
+            <li>In <strong>Project list</strong>, click the target project card to make it the active project across the app.</li>
+            <li>Check <strong>Overview</strong> to confirm selected project summary, chat totals, and live status.</li>
+            <li>Use <strong>Chat tools</strong> for popup chat launch and Word/Excel/JSON chat history export.</li>
+            <li>Use <strong>Settings → Selected project</strong> only for lifecycle operations (including delete).</li>
+          </ol>
+          ${renderTabGuideDiagram('projects')}
+        </section>
+        <section class="tab-guide-section">
+          <h3>Projects local menu (sub-navigation)</h3>
+          <ul>
+            <li><strong>Project list:</strong> left-rail list of projects you can select.</li>
+            <li><strong>Overview:</strong> center summary for currently selected project.</li>
+            <li><strong>Chat tools:</strong> popup chat launcher + chat export actions.</li>
+            <li><strong>Settings:</strong> create project form + selected project management.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Project list features</h3>
+          <ul>
+            <li><strong>Project count badge:</strong> shows total visible projects.</li>
+            <li><strong>Project cards:</strong> each card includes project name and workspace mode; click a card to select it.</li>
+            <li><strong>Filter name / Mode controls:</strong> currently visual scaffolds only in this build (not wired to live filtering yet).</li>
+            <li><strong>No projects state:</strong> list shows “No projects yet.” until at least one project is created.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Overview features</h3>
+          <ul>
+            <li><strong>Selected project summary:</strong> shows project name, mode, member count, active user count, and recent chat message count.</li>
+            <li><strong>Saved chat card:</strong> displays persisted message count for the selected project.</li>
+            <li><strong>Status card:</strong> confirms project shell readiness for downstream tabs.</li>
+            <li><strong>None selected state:</strong> shows “Select a project.” until a project is chosen.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Chat tools features</h3>
+          <ul>
+            <li><strong>Open popup chat:</strong> launches project chat in a separate browser window.</li>
+            <li><strong>Chat history Word:</strong> exports persisted project chat history as <code>.docx</code>.</li>
+            <li><strong>Chat history Excel:</strong> exports persisted project chat history as <code>.xlsx</code>.</li>
+            <li><strong>Chat history JSON:</strong> exports persisted project chat history as <code>.json</code>.</li>
+            <li><strong>Saved messages counter:</strong> shows current persisted message total for selected project.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Settings features: Create project</h3>
+          <ul>
+            <li><strong>Project name:</strong> required, minimum 3 characters.</li>
+            <li><strong>Description:</strong> optional free text.</li>
+            <li><strong>Workspace mode:</strong> set initial mode to <code>solo</code> or <code>collaborative</code>.</li>
+            <li><strong>Save project:</strong> creates the project, auto-selects it, and refreshes the workspace data.</li>
+            <li><strong>Inline status:</strong> success/error guidance appears directly under the form.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Settings features: Selected project management</h3>
+          <ul>
+            <li><strong>Current selection field:</strong> confirms which project delete actions will target.</li>
+            <li><strong>Delete selected project:</strong> destructive action that removes project data and stored artifacts after confirmation.</li>
+            <li><strong>Management status line:</strong> shows delete progress and error/success state.</li>
+            <li><strong>Owner restriction:</strong> only project owners can perform delete operations.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Permissions and behavior rules</h3>
+          <ul>
+            <li><strong>No project selected:</strong> chat popup launch and export actions are disabled until you select a project.</li>
+            <li><strong>Export access:</strong> chat export actions require project owner or Professor export permission.</li>
+            <li><strong>Owner access:</strong> delete action requires owner-level project management permission.</li>
+            <li><strong>Global impact:</strong> selected project here becomes the active context for Collaboration, Qualitative, Quantitative, and Status tabs.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Troubleshooting</h3>
+          <ul>
+            <li><strong>Save project fails:</strong> verify project name is at least 3 characters and not a duplicate restricted by backend rules.</li>
+            <li><strong>Delete disabled:</strong> confirm a project is selected and your account is an owner for that project.</li>
+            <li><strong>Chat popup blocked:</strong> allow popups for <code>localhost:3000</code>, then retry.</li>
+            <li><strong>Chat export disabled:</strong> you are missing export permission for the selected project.</li>
+          </ul>
+        </section>`
+    };
+  }
+  if (tabKey === 'qualitative') {
+    return {
+      title: 'Qualitative User Instructions',
+      subtitle: 'Full feature guide: what each Qualitative feature does and exactly how to use it.',
+      html: `
+        <section class="tab-guide-section">
+          <h3>Start here (required order)</h3>
+          <ol>
+            <li>Select an active project first (Projects tab).</li>
+            <li>In Qualitative, use <strong>Capture</strong> to create sources and codes.</li>
+            <li>Use <strong>Coding</strong> to code text passages or media ranges.</li>
+            <li>Use <strong>Evidence</strong> to run retrieval/query workbench outputs and team-quality checks.</li>
+            <li>Save reusable query definitions and export committee/review packages.</li>
+          </ol>
+          ${renderTabGuideDiagram('qualitative')}
+        </section>
+        <section class="tab-guide-section">
+          <h3>Workspace map (what each menu does)</h3>
+          <ul>
+            <li><strong>Library:</strong> browse project sources/codes plus evidence records (segments, code applications, memos, annotations, see-also links, references).</li>
+            <li><strong>Coding:</strong> active-source coding canvas for text and media workflows.</li>
+            <li><strong>Capture:</strong> create/edit raw analytic inputs (sources, codes, segments, coding links, memos, annotations, relationships).</li>
+            <li><strong>Evidence:</strong> retrieval filters, advanced query workbench, team-coding quality controls, and report/export tooling.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Capture: Create source</h3>
+          <ul>
+            <li><strong>What it does:</strong> adds a source record for documents/transcripts/audio/video/pdf/datasets/surveys.</li>
+            <li><strong>How to use:</strong>
+              <br>1. Fill <strong>Source title</strong>.
+              <br>2. Choose <strong>Kind</strong> and set <strong>Content type</strong>.
+              <br>3. For audio/video, provide <strong>Media URL</strong>.
+              <br>4. Paste or type source text in <strong>Source text</strong>.
+              <br>5. Click <strong>Save source</strong>.
+            </li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Capture: Create code</h3>
+          <ul>
+            <li><strong>What it does:</strong> adds codebook entries used by all coding actions and query outputs.</li>
+            <li><strong>How to use:</strong>
+              <br>1. Enter <strong>Code name</strong> and optional description.
+              <br>2. Optionally set <strong>Parent code ID</strong> for hierarchy.
+              <br>3. Set <strong>Color token</strong> for visual coding emphasis.
+              <br>4. Click <strong>Save code</strong>.
+            </li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Coding: Document reader workflow</h3>
+          <ul>
+            <li><strong>What it does:</strong> supports read-code-inspect flow on the active text source with contextual inspector feedback.</li>
+            <li><strong>How to use:</strong>
+              <br>1. Choose <strong>Active source</strong>, <strong>Active code</strong>, and optional <strong>Active case</strong>.
+              <br>2. Use passage list and selected passage pane to focus evidence.
+              <br>3. Use inline coding actions in the reader/mini-inspector to apply codes without leaving text context.
+              <br>4. Click <strong>Refresh workspace</strong> after imports or bulk updates.
+            </li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Coding: Media, transcription, and transcript sync</h3>
+          <ul>
+            <li><strong>What it does:</strong> enables media time-range coding, transcription job pipeline, sync-link editing, and diarization QA/corrections.</li>
+            <li><strong>How to use:</strong>
+              <br>1. Select an audio/video source.
+              <br>2. Configure transcription settings (provider/model/language/chunking/diarization).
+              <br>3. Click <strong>Queue transcription job</strong>, then run jobs in the jobs list.
+              <br>4. Define start/end (or capture from playhead), set speaker/confidence/sync score, and click <strong>Save media segment and code it</strong>.
+              <br>5. Maintain sync rows with split/merge/nudge/save focused-range tools.
+              <br>6. Use <strong>Auto-align sync links</strong> for drift correction.
+              <br>7. Run <strong>Diarization QA</strong>, filter/inspect flagged rows, then apply bulk relabel/floor corrections.
+            </li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Capture: Segment and coding link forms</h3>
+          <ul>
+            <li><strong>Create segment:</strong>
+              <br><strong>What it does:</strong> creates explicit evidence segments (text/time/page).
+              <br><strong>How to use:</strong> fill source ID, segment text, kind, and start/end anchor values; click save.
+            </li>
+            <li><strong>Apply code to segment:</strong>
+              <br><strong>What it does:</strong> creates a coded application link between segment and code, with optional case + confidence.
+              <br><strong>How to use:</strong> enter segment ID + code ID (required), optional case ID/confidence, then save.
+            </li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Capture: Memos, annotations, and see-also links</h3>
+          <ul>
+            <li><strong>Write memo:</strong>
+              <br><strong>What it does:</strong> attaches analytic notes to project/source/segment/code/case.
+              <br><strong>How to use:</strong> set target type + target ID, add title/body, save.
+            </li>
+            <li><strong>Add annotation:</strong>
+              <br><strong>What it does:</strong> stores targeted quote-note annotations with optional start/end offsets and color token.
+              <br><strong>How to use:</strong> set target, quote, note, offsets, color, save (or edit/cancel edit).
+            </li>
+            <li><strong>Add see-also link:</strong>
+              <br><strong>What it does:</strong> creates explicit relationships between evidence items.
+              <br><strong>How to use:</strong> set relation type, left/right target types + IDs, optional note, save.
+            </li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Library and evidence record browsers</h3>
+          <ul>
+            <li><strong>Sources list:</strong> shows all sources; click to seed source-dependent forms/workspace context.</li>
+            <li><strong>Codes list:</strong> shows codebook entries with hierarchy and styling metadata.</li>
+            <li><strong>Evidence record lists:</strong> segments, code applications, memos, annotations, and see-also links provide direct evidence auditing and navigation.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Reference manager features</h3>
+          <ul>
+            <li><strong>What it does:</strong> keeps bibliographic records linked to qualitative evidence and sources (import/edit/export/collections/links/duplicate merge).</li>
+            <li><strong>How to use:</strong>
+              <br>1. Create or edit references in the reference editor.
+              <br>2. Import RIS/BibTeX/CSL-JSON via the import panel.
+              <br>3. Build collections, add references to collections, and link references to project entities.
+              <br>4. Review duplicate candidates and merge.
+              <br>5. Export references in the selected reference format.
+            </li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Evidence retrieval and scoped filtering</h3>
+          <ul>
+            <li><strong>What it does:</strong> filters evidence by source/source-kind/segment-kind/code/co-code/case/coder/text/memo-only and returns scoped matches.</li>
+            <li><strong>How to use:</strong> set any retrieval filters, click <strong>Run retrieval</strong>, then use result actions to jump back into coding context.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Text-search, lexical, sentiment, and autocoding tools</h3>
+          <ul>
+            <li><strong>Text search:</strong> literal/whole-word/regex/fuzzy/proximity with linguistic mode, case sensitivity, context window, sorting, limits.</li>
+            <li><strong>Word frequency + word cloud:</strong> token-level lexical summaries and weighted term visualization for scoped evidence.</li>
+            <li><strong>Sentiment analysis:</strong> segment-level sentiment labels/scores with aggregate counts.</li>
+            <li><strong>Keyword/pattern autocoding:</strong> applies selected code to matched segments; supports dry-run preview before writing changes.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Compound query workbench</h3>
+          <ul>
+            <li><strong>What it does:</strong> combines up to five clauses with group logic, clause operators, linguistic/fuzzy/proximity settings, and report profiles.</li>
+            <li><strong>How to use:</strong>
+              <br>1. Set clause enable/group/field/operator/negation/value.
+              <br>2. Configure group operators and optional min-groups/min-clauses thresholds.
+              <br>3. Optionally apply template, operator family, or saved preset.
+              <br>4. Run <strong>compound query</strong> or <strong>Run + report</strong>.
+              <br>5. Save/delete presets for one-click reuse.
+            </li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Matrix/query output views</h3>
+          <ul>
+            <li><strong>Map view:</strong> aggregates evidence by location-like attributes using metric/normalization/min/max settings.</li>
+            <li><strong>Code hierarchy:</strong> summarizes parent-child code structure with coding volume.</li>
+            <li><strong>Concept map + clusters:</strong> relationship/co-occurrence network and cluster groupings for code systems.</li>
+            <li><strong>Framework matrix:</strong> case x code synthesis with narrative/memo highlights.</li>
+            <li><strong>Co-occurrence / matrix coding / code x code / code-by-case:</strong> complementary cross-structure evidence summaries.</li>
+            <li><strong>Query report:</strong> source/case/excerpt report packaging with profile controls.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Team coding quality, governance, and saved queries</h3>
+          <ul>
+            <li><strong>Coding comparison:</strong> pairwise coder agreement/kappa and disagreement review.</li>
+            <li><strong>Inter-rater summary:</strong> cross-code agreement summary with row/kappa filters.</li>
+            <li><strong>Merge review:</strong> conflict triage/approval/resolve/defer/reopen/restore workflow with history.</li>
+            <li><strong>Merge governance policy:</strong> project-level rules for notes, resolver restrictions, second-reviewer and SLA defaults.</li>
+            <li><strong>Team assignments:</strong> task assignment by assignee/source/code/case with due/status/priority tracking.</li>
+            <li><strong>Calibration sessions:</strong> scoped calibration setup + run + target agreement/kappa tracking.</li>
+            <li><strong>Saved qualitative queries:</strong> save query definitions by mode, pin favorites, set run profile.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Qualitative exports and report packaging</h3>
+          <ul>
+            <li><strong>What it does:</strong> exports evidence/report artifacts for committees and review workflows.</li>
+            <li><strong>How to use:</strong> run the target analysis first, then export using the matching button (Word/Excel/PDF/JSON depending on artifact).</li>
+            <li><strong>Available export groups:</strong> framework, matrix, code x code, co-occurrence, query report, compound workbench, coding comparison, inter-rater, merge review, committee/review pack.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Troubleshooting and guardrails</h3>
+          <ul>
+            <li><strong>Nothing runs:</strong> confirm a project is selected and required IDs (source/code/segment) are populated for the action.</li>
+            <li><strong>Media tools hidden:</strong> active source must be audio/video to show media panel actions.</li>
+            <li><strong>Autocode errors:</strong> provide a target code ID plus keywords/patterns before running.</li>
+            <li><strong>Exports disabled:</strong> export permission is required (owner/professor policy).</li>
+            <li><strong>Popup/transcription issues:</strong> allow popups and verify server transcription provider configuration.</li>
+          </ul>
+          <p class="tab-guide-callout">Tip: set active source + active code before coding actions to avoid validation errors.</p>
+        </section>`
+    };
+  }
+  if (tabKey === 'quantitative') {
+    return {
+      title: 'Quantitative User Instructions',
+      subtitle: 'Full feature guide: what each Quantitative feature does and exactly how to use it.',
+      html: `
+        <section class="tab-guide-section">
+          <h3>Start order (recommended)</h3>
+          <ol>
+            <li>Select an active project first (Projects tab).</li>
+            <li>Use <strong>Data</strong> to import/create variables, cases, and attributes.</li>
+            <li>Use <strong>Transform</strong> for derivation, filters, recodes, weights, and missing rules.</li>
+            <li>Run procedures in <strong>Describe</strong>, <strong>Tests</strong>, and <strong>Models</strong>.</li>
+            <li>Read and package results through <strong>Output navigator</strong>, compiled reports, and output packs.</li>
+          </ol>
+          ${renderTabGuideDiagram('quantitative')}
+        </section>
+        <section class="tab-guide-section">
+          <h3>Workspace menu and submenus</h3>
+          <ul>
+            <li><strong>Data:</strong> Import/export, external connectors, design forms, browser, and syntax runner.</li>
+            <li><strong>Transform:</strong> Derivation, filters/recode/weights/missing controls, saved transforms, and trace links.</li>
+            <li><strong>Describe:</strong> Summary pages, frequency, missing analysis/imputation preview, variable inspector.</li>
+            <li><strong>Tests:</strong> Compare means, t-tests, nonparametric, crosstab, custom tables, exact, bootstrap.</li>
+            <li><strong>Models:</strong> Correlation, regression, reliability, factor, categories, conjoint, marketing, forecast, cluster, tree, GLM, mixed, GEE, repeated, survival, complex samples, neural network.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Output navigator and result workspace</h3>
+          <ul>
+            <li><strong>What it does:</strong> central result reader for every procedure, with output tree, pivot/chart editing, and report packaging.</li>
+            <li><strong>How to use:</strong>
+              <br>1. Click an output page button (Descriptives, T-test, Regression, etc.) to switch views.
+              <br>2. Use <strong>Open output window</strong> to move the full output strip into a popup.
+              <br>3. Use <strong>Output tree</strong> to revisit recent and saved runs.
+              <br>4. Use <strong>Pivot + chart builder</strong> to edit table/chart presentation.
+              <br>5. Save finished runs with <strong>Save current analysis</strong>.
+            </li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Compiled reports and output packs</h3>
+          <ul>
+            <li><strong>Compiled report sections:</strong> select included pages, then open/export one assembled report.</li>
+            <li><strong>Preset workflows:</strong> save named presets, duplicate/reorder/favorite, and use <strong>Default committee pack</strong>.</li>
+            <li><strong>Output packs:</strong> save full output-document state (tree/style/pivot/chart settings), then export/import as JSON for reproducibility.</li>
+            <li><strong>Print:</strong> print active output directly from the output toolbar.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Data: import/export and file ingestion</h3>
+          <ul>
+            <li><strong>What it does:</strong> ingests common research files and exports analysis/evidence packages.</li>
+            <li><strong>How to use:</strong>
+              <br>1. Click <strong>Browse files</strong> or drop files into the import dropzone.
+              <br>2. Supported inputs include CSV/Excel/SPSS/text/docs/media/PDF.
+              <br>3. Review import status in the import result panel.
+              <br>4. Export dataset with CSV/Excel/JSON/SPSS SAV/SPSS ZSAV buttons.
+              <br>5. Export evidence/codebooks/case summaries/appendices in Word/Excel/PDF when needed.
+            </li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Data: Office launch and external connectors</h3>
+          <ul>
+            <li><strong>Open recent Word / Open recent Excel:</strong> launches latest exported files in Office on Windows.</li>
+            <li><strong>Office connector:</strong> scans a folder profile for allowed file extensions and supports scheduled sync jobs.</li>
+            <li><strong>Reference connector:</strong> searches live providers, previews references, imports records, and schedules query jobs.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Data: SQL profiles, preview, import jobs, query runner, and write-back</h3>
+          <ul>
+            <li><strong>What it does:</strong> connects to PostgreSQL/SQL Server profiles for table import, refresh jobs, query preview, and dataset export/upsert.</li>
+            <li><strong>How to use:</strong>
+              <br>1. Create or select a SQL profile (host/port/database/credentials/client type/SSL).
+              <br>2. Load tables and choose case label column, row limit, and column mapping.
+              <br>3. Preview table, then import into cases/variables.
+              <br>4. Save scheduled import jobs and run refreshes.
+              <br>5. Use SQL query runner for ad hoc preview.
+              <br>6. Use external export settings (schema/table/mode/key mapping) to write dataset back to SQL.
+            </li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Data design forms: Variables, cases, attributes</h3>
+          <ul>
+            <li><strong>Create variable:</strong> defines analysis variables (binary/categorical/continuous/text) with source-kind and optional code-derived rule.</li>
+            <li><strong>Create case:</strong> creates analytic rows and optionally links case to source IDs.</li>
+            <li><strong>Create attribute:</strong> attaches typed metadata to cases or sources.</li>
+            <li><strong>How to use:</strong> complete required fields in each form and click save.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Data browser and syntax</h3>
+          <ul>
+            <li><strong>Data browser:</strong> view lists/counts for variables, cases, and attributes.</li>
+            <li><strong>Syntax runner:</strong> execute supported SPSS-style syntax against active transformed dataset.</li>
+            <li><strong>How to use syntax:</strong> select Data > Syntax, enter commands, click <strong>Run syntax</strong>, then inspect the Syntax run output page.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Transform: Derive trace links</h3>
+          <ul>
+            <li><strong>What it does:</strong> computes case-variable trace links from qualitative coding evidence for derived variables.</li>
+            <li><strong>How to use:</strong> click <strong>Run derivation</strong> after coding is updated, then read derivation status/results.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Transform: Filters, recodes, weights, missing controls, saved transforms</h3>
+          <ul>
+            <li><strong>Filter:</strong> choose field/operator/value, then click <strong>Apply filter</strong>.</li>
+            <li><strong>Recode:</strong> choose source field, set output key/label, define mapping rules, click <strong>Apply recode</strong>.</li>
+            <li><strong>Weight + missing:</strong> set active weight field, missing strategy, and custom missing codes.</li>
+            <li><strong>Saved transforms:</strong> label current setup and click <strong>Save current transform</strong> to reuse later.</li>
+            <li><strong>Reset analysis:</strong> clears current transform state.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Transform: Trace links list</h3>
+          <ul>
+            <li><strong>What it does:</strong> shows evidence-to-variable lineage for transparency and auditability.</li>
+            <li><strong>How to use:</strong> open Transform > Trace and inspect link records/counts.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Describe features</h3>
+          <ul>
+            <li><strong>Descriptive summary:</strong> high-level case/field summaries shown via output viewer.</li>
+            <li><strong>Frequency table:</strong> select one field and review distribution/cumulative percentages.</li>
+            <li><strong>Missing values:</strong> run missing analysis, then preview imputation plan (mean/mode/constant).</li>
+            <li><strong>Variable inspector:</strong> inspect selected variable profile and value preview.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Tests features</h3>
+          <ul>
+            <li><strong>Compare means:</strong> numeric outcome by grouping field with ANOVA-style summary.</li>
+            <li><strong>T-test:</strong> independent-samples test for two-group comparisons.</li>
+            <li><strong>Paired t-test:</strong> before/after numeric fields on same cases.</li>
+            <li><strong>Nonparametric:</strong> Mann-Whitney or Kruskal-Wallis based on group count.</li>
+            <li><strong>Crosstab:</strong> row-by-column contingency analysis.</li>
+            <li><strong>Custom table:</strong> row/column/measure selection for table assembly.</li>
+            <li><strong>Exact test:</strong> Fisher/binomial/McNemar/sign variants based on selected type.</li>
+            <li><strong>Bootstrap:</strong> choose procedure/targets/iterations/confidence for resampling output.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Models features</h3>
+          <ul>
+            <li><strong>Correlation:</strong> pairwise association for numeric fields.</li>
+            <li><strong>Regression:</strong> linear/logistic selection with predictors and diagnostics output.</li>
+            <li><strong>Reliability:</strong> scale reliability with subscale and stratified summaries.</li>
+            <li><strong>Factor analysis:</strong> extraction + rotation controls and loading outputs.</li>
+            <li><strong>Categories:</strong> optimal-scaling style categorical transformation.</li>
+            <li><strong>Conjoint:</strong> profile/rating/attribute utility estimation.</li>
+            <li><strong>Direct marketing:</strong> response + RFM-style score model.</li>
+            <li><strong>Forecasting:</strong> moving average / exponential / damped trend controls.</li>
+            <li><strong>Cluster analysis:</strong> group cases by selected numeric fields.</li>
+            <li><strong>Decision tree:</strong> CART/random forest options and split criteria.</li>
+            <li><strong>GLM/ANCOVA:</strong> dependent + factors/covariates with family/link settings.</li>
+            <li><strong>Mixed model:</strong> dependent + predictors + grouping effect.</li>
+            <li><strong>GEE:</strong> dependent + predictors + cluster with working correlation.</li>
+            <li><strong>Repeated measures:</strong> repeated numeric fields for within-subject patterns.</li>
+            <li><strong>Survival analysis:</strong> Kaplan-Meier/Cox-style workflow using time/event/group/predictors.</li>
+            <li><strong>Complex samples:</strong> analysis with strata/cluster/group survey fields.</li>
+            <li><strong>Neural network:</strong> target + predictors with task/hidden-unit controls.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Saved analyses and history</h3>
+          <ul>
+            <li><strong>Saved analyses list:</strong> reopen prior procedure outputs and include them in compiled reporting.</li>
+            <li><strong>Output history:</strong> quick access to recent pages without rerunning each test/model.</li>
+          </ul>
+        </section>
+        <section class="tab-guide-section">
+          <h3>Troubleshooting and guardrails</h3>
+          <ul>
+            <li><strong>Buttons disabled:</strong> select a project first; many controls require active project context.</li>
+            <li><strong>No output visible:</strong> run the procedure, then switch to its matching output page in the navigator.</li>
+            <li><strong>Model run errors:</strong> verify required fields are selected and variable types match the procedure.</li>
+            <li><strong>SQL/Office connector issues:</strong> confirm profile credentials/path/permissions and rerun discovery or preview.</li>
+            <li><strong>Popup blocked:</strong> allow popups for <code>localhost:3000</code> and retry.</li>
+          </ul>
+          <p class="tab-guide-callout">Tip: treat Transform settings as analysis context. Save transforms before running large batches of procedures.</p>
+        </section>`
+    };
+  }
+  return {
+    title: 'Status User Instructions',
+    subtitle: 'Monitor deployment readiness, diagnostics, governance policy, backups, and audit controls.',
+    html: `
+      <section class="tab-guide-section">
+        <h3>How to use this tab</h3>
+        <ol>
+          <li>Review rail cards for governance, audit count, backup count, and deployment issues.</li>
+          <li>In the canvas, inspect payload/trace diagnostics and run deployment + cutover validation checks.</li>
+          <li>In the inspector, configure governance policy settings and save them.</li>
+          <li>Create and refresh backups, and restore when needed (owner restrictions apply).</li>
+          <li>Filter audit trail events and export to JSON/CSV/Excel/TXT for compliance records.</li>
+        </ol>
+        ${renderTabGuideDiagram('status')}
+      </section>
+      <section class="tab-guide-section">
+        <h3>Everything on this tab</h3>
+        <ul>
+          <li><strong>Diagnostics:</strong> selected-project payload, status trace, readiness summaries.</li>
+          <li><strong>Deployment:</strong> validation issue list and cutover checks.</li>
+          <li><strong>Governance policy:</strong> session, password, auth mode, audit, and retention controls.</li>
+          <li><strong>Backup and restore:</strong> snapshot lifecycle and restore actions.</li>
+          <li><strong>Audit tools:</strong> filters and multi-format exports.</li>
+        </ul>
+        <p class="tab-guide-callout">Tip: use this tab as the final pre-deployment gate after feature work in other tabs.</p>
+      </section>`
+  };
+}
+
+let tabGuideLastFocusedElement = null;
+
+function openTabGuide(tabKey = state.activeTab) {
+  const modal = document.getElementById('tab-guide-modal');
+  if (!(modal instanceof HTMLElement)) return;
+  const resolvedTab = String(tabKey || state.activeTab || 'collaboration');
+  const payload = getTabGuidePayload(resolvedTab);
+  setText('tab-guide-title', payload.title);
+  setText('tab-guide-subtitle', payload.subtitle);
+  setHtml('tab-guide-content', payload.html);
+  tabGuideLastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  modal.hidden = false;
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('modal-open');
+  document.getElementById('tab-guide-close-btn')?.focus();
+}
+
+function closeTabGuide() {
+  const modal = document.getElementById('tab-guide-modal');
+  if (!(modal instanceof HTMLElement)) return;
+  modal.hidden = true;
+  modal.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('modal-open');
+  if (tabGuideLastFocusedElement instanceof HTMLElement) {
+    tabGuideLastFocusedElement.focus();
+  }
+}
+
+function initTabGuideButtons() {
+  document.querySelectorAll('.tab-guide-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      openTabGuide(button.dataset.guideTab || state.activeTab);
+    });
+  });
+  document.getElementById('tab-guide-close-btn')?.addEventListener('click', closeTabGuide);
+  document.getElementById('tab-guide-backdrop')?.addEventListener('click', closeTabGuide);
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    const modal = document.getElementById('tab-guide-modal');
+    if (!(modal instanceof HTMLElement) || modal.hidden) return;
+    event.preventDefault();
+    closeTabGuide();
+  });
+}
+
 function syncWorkspaceMenus() {
+  const activeProjectsView = state.projectsView;
+  document.querySelectorAll('[data-projects-menu]').forEach((button) => {
+    const isActive = button.dataset.projectsMenu === activeProjectsView;
+    button.classList.toggle('active', isActive);
+    setAriaCurrent(button, isActive);
+  });
+  document.querySelectorAll('[data-projects-view-item]').forEach((item) => {
+    const visibleViews = (item.dataset.projectsView ?? '')
+      .split(/\s+/)
+      .filter(Boolean);
+    item.hidden = !visibleViews.includes(activeProjectsView);
+    item.setAttribute('aria-hidden', item.hidden ? 'true' : 'false');
+  });
+  document.querySelectorAll('[data-projects-view-container]').forEach((container) => {
+    const hasVisibleItem = Array.from(container.querySelectorAll('[data-projects-view-item]'))
+      .some((item) => !item.hidden);
+    container.hidden = !hasVisibleItem;
+    container.setAttribute('aria-hidden', container.hidden ? 'true' : 'false');
+  });
+
   const activeQualSubView = state.qualitativeSubViews[state.qualitativeView];
   document.querySelectorAll('[data-qual-menu]').forEach((button) => {
-    button.classList.toggle('active', button.dataset.qualMenu === state.qualitativeView);
+    const isActive = button.dataset.qualMenu === state.qualitativeView;
+    button.classList.toggle('active', isActive);
+    setAriaCurrent(button, isActive);
   });
   document.querySelectorAll('[data-qual-section]').forEach((section) => {
     section.hidden = section.dataset.qualSection !== state.qualitativeView;
+    section.setAttribute('aria-hidden', section.hidden ? 'true' : 'false');
   });
   document.querySelectorAll('[data-qual-submenu]').forEach((menu) => {
     menu.hidden = menu.dataset.qualSubmenu !== state.qualitativeView;
+    menu.setAttribute('aria-hidden', menu.hidden ? 'true' : 'false');
   });
   document.querySelectorAll('[data-qual-subtab]').forEach((button) => {
-    button.classList.toggle(
-      'active',
-      button.dataset.qualParent === state.qualitativeView && button.dataset.qualSubtab === activeQualSubView
-    );
+    const isActive = button.dataset.qualParent === state.qualitativeView && button.dataset.qualSubtab === activeQualSubView;
+    button.classList.toggle('active', isActive);
+    setAriaCurrent(button, isActive);
   });
   document.querySelectorAll('[data-qual-subsection]').forEach((section) => {
     const matchesParent = section.dataset.qualParent === state.qualitativeView;
@@ -1593,23 +4085,32 @@ function syncWorkspaceMenus() {
       .split(/\s+/)
       .filter(Boolean);
     section.hidden = !(matchesParent && visibleSubViews.includes(activeQualSubView));
+    section.setAttribute('aria-hidden', section.hidden ? 'true' : 'false');
   });
 
   const activeQuantSubView = state.quantitativeSubViews[state.quantitativeView];
   document.querySelectorAll('[data-quant-menu]').forEach((button) => {
-    button.classList.toggle('active', button.dataset.quantMenu === state.quantitativeView);
+    const isActive = button.dataset.quantMenu === state.quantitativeView;
+    button.classList.toggle('active', isActive);
+    setAriaCurrent(button, isActive);
   });
   document.querySelectorAll('[data-quant-section]').forEach((section) => {
     section.hidden = section.dataset.quantSection !== state.quantitativeView;
+    section.setAttribute('aria-hidden', section.hidden ? 'true' : 'false');
   });
-  document.querySelectorAll('[data-quant-submenu]').forEach((menu) => {
-    menu.hidden = menu.dataset.quantSubmenu !== state.quantitativeView;
+  document.querySelectorAll('[data-quant-dropdown-select]').forEach((select) => {
+    const parent = select.dataset.quantDropdownParent;
+    if (!parent) return;
+    const subView = state.quantitativeSubViews[parent];
+    if (typeof subView === 'string' && select.value !== subView) {
+      select.value = subView;
+      if (select.value !== subView && select.options.length > 0) {
+        state.quantitativeSubViews[parent] = select.value;
+      }
+    }
   });
-  document.querySelectorAll('[data-quant-subtab]').forEach((button) => {
-    button.classList.toggle(
-      'active',
-      button.dataset.quantParent === state.quantitativeView && button.dataset.quantSubtab === activeQuantSubView
-    );
+  document.querySelectorAll('.quant-menu-combo[data-quant-dropdown-parent]').forEach((entry) => {
+    entry.classList.toggle('active', entry.dataset.quantDropdownParent === state.quantitativeView);
   });
   document.querySelectorAll('[data-quant-subsection]').forEach((section) => {
     const matchesParent = section.dataset.quantParent === state.quantitativeView;
@@ -1617,14 +4118,23 @@ function syncWorkspaceMenus() {
       .split(/\s+/)
       .filter(Boolean);
     section.hidden = !(matchesParent && visibleSubViews.includes(activeQuantSubView));
+    section.setAttribute('aria-hidden', section.hidden ? 'true' : 'false');
   });
   document.querySelectorAll('[data-quant-output-nav]').forEach((button) => {
-    button.classList.toggle('active', button.dataset.quantOutputNav === state.quantOutputView);
+    const isActive = button.dataset.quantOutputNav === state.quantOutputView;
+    button.classList.toggle('active', isActive);
+    setAriaCurrent(button, isActive);
   });
   document.querySelectorAll('[data-quant-output]').forEach((panel) => {
     panel.hidden = panel.dataset.quantOutput !== state.quantOutputView;
+    panel.setAttribute('aria-hidden', panel.hidden ? 'true' : 'false');
   });
+  applyOutputStyleTemplateToWorkspace();
+  applyPivotEditableToPanel();
+  renderQuantOutputWorkbench();
   renderInteractionStatus();
+  updateQuantOutputPopupStatus();
+  syncQuantOutputPopup();
 }
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
@@ -1632,24 +4142,71 @@ function syncWorkspaceMenus() {
 function activateTab(tab) {
   state.activeTab = tab;
   document.querySelectorAll('.tab-btn').forEach((btn) => {
-    btn.classList.toggle('active', btn.dataset.tab === tab);
+    const isActive = btn.dataset.tab === tab;
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    btn.tabIndex = isActive ? 0 : -1;
+    setAriaCurrent(btn, isActive);
+  });
+  document.querySelectorAll('.tab-guide-btn').forEach((button) => {
+    const isActive = button.dataset.guideTab === tab;
+    button.classList.toggle('active', isActive);
+    setAriaCurrent(button, isActive);
   });
   document.querySelectorAll('.tab-panel').forEach((panel) => {
-    panel.classList.toggle('active', panel.id === `tab-${tab}`);
+    const isActive = panel.id === `tab-${tab}`;
+    panel.classList.toggle('active', isActive);
+    panel.hidden = !isActive;
+    panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+    panel.tabIndex = isActive ? 0 : -1;
   });
   syncWorkspaceMenus();
   updateGlobalChatButton();
 }
 
 function initTabs() {
+  const topTabs = Array.from(document.querySelectorAll('.tab-bar .tab-btn'));
   document.querySelectorAll('.tab-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       activateTab(btn.dataset.tab);
+    });
+    btn.addEventListener('keydown', (event) => {
+      if (topTabs.length === 0) return;
+      const currentIndex = topTabs.indexOf(btn);
+      if (currentIndex < 0) return;
+      if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+        event.preventDefault();
+        const nextIndex = event.key === 'ArrowRight'
+          ? (currentIndex + 1) % topTabs.length
+          : (currentIndex - 1 + topTabs.length) % topTabs.length;
+        const target = topTabs[nextIndex];
+        target?.focus();
+        if (target?.dataset.tab) activateTab(target.dataset.tab);
+      } else if (event.key === 'Home') {
+        event.preventDefault();
+        const target = topTabs[0];
+        target?.focus();
+        if (target?.dataset.tab) activateTab(target.dataset.tab);
+      } else if (event.key === 'End') {
+        event.preventDefault();
+        const target = topTabs[topTabs.length - 1];
+        target?.focus();
+        if (target?.dataset.tab) activateTab(target.dataset.tab);
+      } else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        if (btn.dataset.tab) activateTab(btn.dataset.tab);
+      }
     });
   });
   document.querySelectorAll('[data-qual-menu]').forEach((button) => {
     button.addEventListener('click', () => {
       state.qualitativeView = button.dataset.qualMenu;
+      syncWorkspaceMenus();
+    });
+  });
+  document.querySelectorAll('[data-projects-menu]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.projectsView = button.dataset.projectsMenu;
       syncWorkspaceMenus();
     });
   });
@@ -1665,33 +4222,32 @@ function initTabs() {
       syncWorkspaceMenus();
     });
   });
-  document.querySelectorAll('[data-quant-subtab]').forEach((button) => {
-    button.addEventListener('click', () => {
-      state.quantitativeSubViews[button.dataset.quantParent] = button.dataset.quantSubtab;
+  document.querySelectorAll('[data-quant-dropdown-select]').forEach((select) => {
+    select.addEventListener('change', () => {
+      const parent = select.dataset.quantDropdownParent;
+      if (!parent) return;
+      state.quantitativeView = parent;
+      state.quantitativeSubViews[parent] = select.value;
       syncWorkspaceMenus();
     });
   });
   document.querySelectorAll('[data-quant-output-nav]').forEach((button) => {
     button.addEventListener('click', () => {
       state.quantOutputView = button.dataset.quantOutputNav;
+      state.quantOutputTreeSelection = `live:${state.quantOutputView}`;
       syncWorkspaceMenus();
     });
   });
   document.addEventListener('click', (event) => {
-    const target = event.target instanceof Element ? event.target.closest('[data-qual-subtab],[data-quant-subtab]') : null;
+    const target = event.target instanceof Element ? event.target.closest('[data-qual-subtab]') : null;
     if (!(target instanceof HTMLElement)) return;
     if (target.dataset.qualSubtab && target.dataset.qualParent) {
       state.qualitativeSubViews[target.dataset.qualParent] = target.dataset.qualSubtab;
       syncWorkspaceMenus();
-      return;
-    }
-    if (target.dataset.quantSubtab && target.dataset.quantParent) {
-      state.quantitativeSubViews[target.dataset.quantParent] = target.dataset.quantSubtab;
-      syncWorkspaceMenus();
     }
   });
-  syncWorkspaceMenus();
-  updateGlobalChatButton();
+  initTabGuideButtons();
+  activateTab(state.activeTab);
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -1712,6 +4268,8 @@ function formatExpiryDate(value) {
 function buildIntegrationSummaryText() {
   const sql = state.integrationStatus?.sql ?? null;
   const office = state.integrationStatus?.office ?? null;
+  const transcription = state.integrationStatus?.transcription ?? null;
+  const sem = state.integrationStatus?.sem ?? null;
   const sqlText = sql
     ? sql.activeMode === 'embedded-portable'
       ? 'Embedded SQL ready'
@@ -1724,7 +4282,17 @@ function buildIntegrationSummaryText() {
   if (office?.excelLaunchAvailable) officeParts.push('Excel found');
   if (office && officeParts.length === 0) officeParts.push('Word/Excel not found');
   if (!office) officeParts.push('Office status unavailable');
-  return `${sqlText}. ${officeParts.join(', ')}.`;
+  const transcriptionText = transcription
+    ? transcription.providerReady
+      ? `Transcription provider ready (${transcription.model || 'configured model'})`
+      : 'Transcription provider not configured (internal fallback)'
+    : 'Transcription status unavailable';
+  const semText = sem
+    ? sem.strategy === 'integration_boundary'
+      ? `SEM strategy: integration boundary (${sem.executionReady ? 'execution ready' : 'configure provider bridge'})`
+      : `SEM strategy: native (${sem.nativeSemImplemented ? 'ready' : 'not implemented'})`
+    : 'SEM status unavailable';
+  return `${sqlText}. ${officeParts.join(', ')}. ${transcriptionText}. ${semText}.`;
 }
 
 function setCurrentUserUi() {
@@ -2044,9 +4612,17 @@ async function loadGovernanceStatus() {
     } catch {
       state.deploymentValidation = null;
     }
+
+    try {
+      const env = await getJson(`${API_BASE}/deployment/cutover-check`);
+      state.cutoverValidation = env.data;
+    } catch {
+      state.cutoverValidation = null;
+    }
   } else {
     state.governancePolicy = null;
     state.deploymentValidation = null;
+    state.cutoverValidation = null;
   }
 }
 
@@ -2081,10 +4657,21 @@ async function loadSelectedProjectData() {
       state.selectedRelationships = [];
       state.editingRelationshipId = null;
       state.selectedReferences = [];
+      state.referenceLinks = [];
+      state.referenceCollections = [];
+      state.referenceCollectionItems = [];
+      state.referenceDuplicateCandidates = [];
+      state.referenceMergeEvents = [];
+      state.editingReferenceId = null;
       state.selectedTranscriptSyncLinks = [];
     state.selectedAttributes = [];
     state.selectedPresence = [];
     state.selectedMessages = [];
+    state.codingAssignments = [];
+    state.codingCalibrationSessions = [];
+    state.codingCalibrationResult = null;
+    state.mergeGovernancePolicy = null;
+    state.mergeConflictTriages = [];
     state.selectedSegments = [];
     state.selectedCodeApplications = [];
     state.selectedTraceLinks = [];
@@ -2095,6 +4682,14 @@ async function loadSelectedProjectData() {
     state.externalSqlQueryPreview = null;
     state.selectedSqlProfileId = null;
     state.selectedSqlTableKey = '';
+    state.officeConnectorProfiles = [];
+    state.officeConnectorJobs = [];
+    state.officeConnectorDiscovery = [];
+    state.selectedOfficeConnectorProfileId = null;
+    state.referenceConnectorProfiles = [];
+    state.referenceConnectorJobs = [];
+    state.referenceConnectorSearchResults = [];
+    state.selectedReferenceConnectorProfileId = null;
     state.selectedAuditEvents = [];
     state.backupItems = [];
     state.recentOfficeArtifacts = [];
@@ -2115,6 +4710,9 @@ async function loadSelectedProjectData() {
     state.autocodeResult = null;
       state.sentimentResult = null;
       state.mergeReviewResult = null;
+      state.mergeReviewHistory = [];
+      state.mergeReviewApprovals = [];
+      state.mergeReviewStatusFilter = 'open';
       state.textSearchResult = null;
       state.wordFrequencyResult = null;
       state.wordCloudResult = null;
@@ -2129,6 +4727,7 @@ async function loadSelectedProjectData() {
     state.workspaceSelectedCaseId = null;
     state.workspaceFocusedSegmentId = null;
     state.workspaceEditingSyncLinkId = null;
+    state.workspaceFocusedSyncLinkId = null;
     state.selectedDescriptivesBase = null;
     state.selectedDescriptives = null;
     state.selectedCrosstab = null;
@@ -2146,6 +4745,9 @@ async function loadSelectedProjectData() {
     state.regressionResult = null;
     state.reliabilityResult = null;
     state.factorAnalysisResult = null;
+    state.optimalScalingResult = null;
+    state.conjointResult = null;
+    state.directMarketingResult = null;
     state.forecastingResult = null;
     state.clusterAnalysisResult = null;
     state.decisionTreeResult = null;
@@ -2161,8 +4763,26 @@ async function loadSelectedProjectData() {
     state.selectedMissingCodes = '';
     state.selectedCrosstabRowField = null;
     state.selectedCrosstabColumnField = null;
+    state.quantOutputDocumentTree = null;
     state.compiledReportPresets = [];
+    state.compiledReportStyleTemplate = 'classic';
+    state.outputPacks = [];
+    state.outputPivotProfiles = {};
+    state.outputPivotLayouts = {};
+    state.outputChartPresets = {};
+    state.outputChartBuilderState = {
+      chartType: 'bar',
+      palette: 'sand',
+      showDataLabels: true,
+      showTrendLine: false,
+      useLogScale: false,
+      xColumn: -1,
+      yColumn: -1,
+      title: '',
+      subtitle: ''
+    };
     state.mediaTimeline = null;
+    resetDiarizationQaWorkspaceState();
     state.transcriptionJobs = [];
     renderPresenceBanner();
     return;
@@ -2170,7 +4790,38 @@ async function loadSelectedProjectData() {
 
   const pid = encodeURIComponent(state.selectedProjectId);
 
-  const [summaryEnv, membersEnv, sourcesEnv, codesEnv, variablesEnv, casesEnv, memosEnv, annotationsEnv, relationshipsEnv, referencesEnv, transcriptSyncEnv, transcriptionJobsEnv, attributesEnv, messagesEnv, segmentsEnv, caEnv, tlEnv, descriptivesEnv, transformsEnv, analysisJobsEnv, qualQueriesEnv] = await Promise.all([
+  const [
+    summaryEnv,
+    membersEnv,
+    sourcesEnv,
+    codesEnv,
+    variablesEnv,
+    casesEnv,
+    memosEnv,
+    annotationsEnv,
+    relationshipsEnv,
+    referencesEnv,
+    referenceLinksEnv,
+    referenceCollectionsEnv,
+    referenceCollectionItemsEnv,
+    referenceDuplicatesEnv,
+    referenceMergeEventsEnv,
+    transcriptSyncEnv,
+    transcriptionJobsEnv,
+    attributesEnv,
+    messagesEnv,
+    segmentsEnv,
+    caEnv,
+    tlEnv,
+    descriptivesEnv,
+    transformsEnv,
+    analysisJobsEnv,
+    qualQueriesEnv,
+    assignmentsEnv,
+    calibrationEnv,
+    mergeTriageEnv,
+    mergeGovernanceEnv
+  ] = await Promise.all([
       getJson(`${API_BASE}/project-summary?projectId=${pid}`),
       getJson(`${API_BASE}/projects/${state.selectedProjectId}/members`),
       getJson(`${API_BASE}/sources?projectId=${pid}`),
@@ -2181,6 +4832,11 @@ async function loadSelectedProjectData() {
       getJson(`${API_BASE}/annotations?projectId=${pid}`),
       getJson(`${API_BASE}/relationships?projectId=${pid}`),
       getJson(`${API_BASE}/references?projectId=${pid}`),
+      getJson(`${API_BASE}/reference-links?projectId=${pid}`),
+      getJson(`${API_BASE}/reference-collections?projectId=${pid}`),
+      getJson(`${API_BASE}/reference-collection-items?projectId=${pid}`),
+      getJson(`${API_BASE}/references/duplicates?projectId=${pid}`),
+      getJson(`${API_BASE}/reference-merge-events?projectId=${pid}`),
       getJson(`${API_BASE}/transcript-sync-links?projectId=${pid}`),
     getJson(`${API_BASE}/transcription-jobs?projectId=${pid}`),
     getJson(`${API_BASE}/attributes?projectId=${pid}`),
@@ -2191,7 +4847,11 @@ async function loadSelectedProjectData() {
     getJson(`${API_BASE}/descriptives?projectId=${pid}`),
     getJson(`${API_BASE}/saved-transforms?projectId=${pid}`),
     getJson(`${API_BASE}/saved-analysis-jobs?projectId=${pid}`),
-    getJson(`${API_BASE}/saved-qualitative-queries?projectId=${pid}`)
+    getJson(`${API_BASE}/saved-qualitative-queries?projectId=${pid}`),
+    getJson(`${API_BASE}/coding-assignments?projectId=${pid}`),
+    getJson(`${API_BASE}/coding-calibration-sessions?projectId=${pid}&limit=500`),
+    getJson(`${API_BASE}/merge-review/triage?projectId=${pid}&limit=2000`),
+    getJson(`${API_BASE}/merge-review/governance-policy?projectId=${pid}`)
   ]);
 
   state.selectedSummary = summaryEnv.data;
@@ -2213,13 +4873,28 @@ async function loadSelectedProjectData() {
       state.editingRelationshipId = null;
     }
     state.selectedReferences = referencesEnv.data.items ?? [];
-    state.selectedTranscriptSyncLinks = transcriptSyncEnv.data.items ?? [];
+    state.referenceLinks = referenceLinksEnv.data.items ?? [];
+    state.referenceCollections = referenceCollectionsEnv.data.items ?? [];
+    state.referenceCollectionItems = referenceCollectionItemsEnv.data.items ?? [];
+    state.referenceDuplicateCandidates = referenceDuplicatesEnv.data.items ?? [];
+    state.referenceMergeEvents = referenceMergeEventsEnv.data.items ?? [];
+    if (state.editingReferenceId && !state.selectedReferences.some((reference) => reference.id === state.editingReferenceId)) {
+      state.editingReferenceId = null;
+    }
+  state.selectedTranscriptSyncLinks = transcriptSyncEnv.data.items ?? [];
   if (state.workspaceEditingSyncLinkId && !state.selectedTranscriptSyncLinks.some((link) => link.id === state.workspaceEditingSyncLinkId)) {
     state.workspaceEditingSyncLinkId = null;
+  }
+  if (state.workspaceFocusedSyncLinkId && !state.selectedTranscriptSyncLinks.some((link) => link.id === state.workspaceFocusedSyncLinkId)) {
+    state.workspaceFocusedSyncLinkId = null;
   }
   state.transcriptionJobs = transcriptionJobsEnv.data.items ?? [];
   state.selectedAttributes = attributesEnv.data.items ?? [];
   state.selectedMessages = messagesEnv.data.items ?? [];
+  state.codingAssignments = assignmentsEnv.data.items ?? [];
+  state.codingCalibrationSessions = calibrationEnv.data.items ?? [];
+  state.mergeConflictTriages = mergeTriageEnv.data.items ?? [];
+  state.mergeGovernancePolicy = mergeGovernanceEnv.data.policy ?? null;
   state.selectedSegments = segmentsEnv.data.items ?? [];
   state.selectedCodeApplications = caEnv.data.items ?? [];
   state.selectedTraceLinks = tlEnv.data.items ?? [];
@@ -2230,6 +4905,14 @@ async function loadSelectedProjectData() {
   state.externalSqlQueryPreview = null;
   state.selectedSqlProfileId = null;
   state.selectedSqlTableKey = '';
+  state.officeConnectorProfiles = [];
+  state.officeConnectorJobs = [];
+  state.officeConnectorDiscovery = [];
+  state.selectedOfficeConnectorProfileId = null;
+  state.referenceConnectorProfiles = [];
+  state.referenceConnectorJobs = [];
+  state.referenceConnectorSearchResults = [];
+  state.selectedReferenceConnectorProfileId = null;
   state.savedTransforms = transformsEnv.data.items ?? [];
   state.savedAnalysisJobs = analysisJobsEnv.data.items ?? [];
   state.savedQualitativeQueries = qualQueriesEnv.data.items ?? [];
@@ -2247,6 +4930,9 @@ async function loadSelectedProjectData() {
   state.autocodeResult = null;
     state.sentimentResult = null;
     state.mergeReviewResult = null;
+    state.mergeReviewHistory = [];
+    state.mergeReviewApprovals = [];
+    state.mergeReviewStatusFilter = 'open';
     state.textSearchResult = null;
     state.wordFrequencyResult = null;
     state.wordCloudResult = null;
@@ -2269,6 +4955,9 @@ async function loadSelectedProjectData() {
   state.regressionResult = null;
   state.reliabilityResult = null;
   state.factorAnalysisResult = null;
+  state.optimalScalingResult = null;
+  state.conjointResult = null;
+  state.directMarketingResult = null;
   state.forecastingResult = null;
   state.clusterAnalysisResult = null;
   state.decisionTreeResult = null;
@@ -2300,6 +4989,9 @@ async function loadSelectedProjectData() {
   state.regressionResult = null;
   state.reliabilityResult = null;
   state.factorAnalysisResult = null;
+  state.optimalScalingResult = null;
+  state.conjointResult = null;
+  state.directMarketingResult = null;
   state.forecastingResult = null;
   state.clusterAnalysisResult = null;
   state.decisionTreeResult = null;
@@ -2325,6 +5017,7 @@ async function loadSelectedProjectData() {
   state.selectedCrosstabError = '';
   state.quantOutputView = 'descriptives';
   state.mediaTimeline = null;
+  resetDiarizationQaWorkspaceState();
   state.quantOutputHistory = [{
     id: `descriptives-${Date.now()}`,
     view: 'descriptives',
@@ -2332,8 +5025,13 @@ async function loadSelectedProjectData() {
     detail: 'Current project dataset overview',
     stamp: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
   }];
+  state.quantOutputDocumentTree = null;
   state.compiledReportIncludedViews = getAllCompiledReportViews();
   loadCompiledReportPresets();
+  loadOutputWorkspaceState();
+  ensureCompiledReportViews();
+  loadOutputPacks();
+  applyOutputStyleTemplateToWorkspace();
   if (state.selectedDatasetFilters.length > 0 || state.selectedDatasetRecodes.length > 0) {
     await refreshDatasetAnalysis({ includeCrosstab: false });
   } else {
@@ -2412,6 +5110,9 @@ function formatAnalysisKindLabel(kind) {
     case 'regression': return 'regression';
     case 'reliability': return 'reliability analysis';
     case 'factor_analysis': return 'factor analysis';
+    case 'optimal_scaling': return 'categories / optimal scaling';
+    case 'conjoint_analysis': return 'conjoint analysis';
+    case 'direct_marketing': return 'direct marketing';
     case 'forecasting': return 'forecasting';
     case 'cluster_analysis': return 'cluster analysis';
     case 'decision_tree': return 'decision tree';
@@ -2446,6 +5147,9 @@ function clearQuantResults() {
   state.regressionResult = null;
   state.reliabilityResult = null;
   state.factorAnalysisResult = null;
+  state.optimalScalingResult = null;
+  state.conjointResult = null;
+  state.directMarketingResult = null;
   state.forecastingResult = null;
   state.clusterAnalysisResult = null;
   state.decisionTreeResult = null;
@@ -2583,13 +5287,17 @@ async function runSavedAnalysisJob(savedJob) {
           fields: Array.isArray(item?.fields) ? item.fields.filter((field) => typeof field === 'string' && field) : []
         }))
         : [];
+      const stratifyField = typeof analysis.stratifyField === 'string' ? analysis.stratifyField : '';
+      const reliabilityStratifyEl = document.getElementById('reliability-stratify-field');
+      if (reliabilityStratifyEl) reliabilityStratifyEl.value = stratifyField;
       const env = await postJson(`${API_BASE}/reliability`, {
         projectId: state.selectedProjectId,
         filters: state.selectedDatasetFilters,
         recodes: state.selectedDatasetRecodes,
         analysis: getAnalysisOptionsPayload(),
         fields,
-        subscales
+        subscales,
+        stratifyField
       });
       state.reliabilityResult = env.data.reliability;
       break;
@@ -2605,9 +5313,59 @@ async function runSavedAnalysisJob(savedJob) {
         analysis: getAnalysisOptionsPayload(),
         fields,
         factorCount: analysis.factorCount,
-        rotation: analysis.rotation
+        rotation: analysis.rotation,
+        extraction: analysis.extraction
       });
       state.factorAnalysisResult = env.data.factorAnalysis;
+      break;
+    }
+    case 'optimal_scaling': {
+      const fields = Array.isArray(analysis.fields)
+        ? analysis.fields.filter((item) => typeof item === 'string' && item)
+        : [];
+      const env = await postJson(`${API_BASE}/optimal-scaling`, {
+        projectId: state.selectedProjectId,
+        filters: state.selectedDatasetFilters,
+        recodes: state.selectedDatasetRecodes,
+        analysis: getAnalysisOptionsPayload(),
+        fields,
+        anchorField: analysis.anchorField,
+        maxIterations: analysis.maxIterations
+      });
+      state.optimalScalingResult = env.data.optimalScaling;
+      break;
+    }
+    case 'conjoint_analysis': {
+      const attributeFields = Array.isArray(analysis.attributeFields)
+        ? analysis.attributeFields.filter((item) => typeof item === 'string' && item)
+        : [];
+      const env = await postJson(`${API_BASE}/conjoint-analysis`, {
+        projectId: state.selectedProjectId,
+        filters: state.selectedDatasetFilters,
+        recodes: state.selectedDatasetRecodes,
+        analysis: getAnalysisOptionsPayload(),
+        profileField: analysis.profileField,
+        ratingField: analysis.ratingField,
+        attributeFields,
+        holdoutFraction: analysis.holdoutFraction
+      });
+      state.conjointResult = env.data.conjointAnalysis;
+      break;
+    }
+    case 'direct_marketing': {
+      const env = await postJson(`${API_BASE}/direct-marketing`, {
+        projectId: state.selectedProjectId,
+        filters: state.selectedDatasetFilters,
+        recodes: state.selectedDatasetRecodes,
+        analysis: getAnalysisOptionsPayload(),
+        customerField: analysis.customerField,
+        responseField: analysis.responseField,
+        recencyField: analysis.recencyField,
+        frequencyField: analysis.frequencyField,
+        monetaryField: analysis.monetaryField,
+        scoringWeights: analysis.scoringWeights
+      });
+      state.directMarketingResult = env.data.directMarketing;
       break;
     }
     case 'crosstab': {
@@ -2635,8 +5393,15 @@ async function runSavedAnalysisJob(savedJob) {
         filters: state.selectedDatasetFilters,
         recodes: state.selectedDatasetRecodes,
         analysis: getAnalysisOptionsPayload(),
+        testType: analysis.testType,
         rowField: analysis.rowField,
-        columnField: analysis.columnField
+        columnField: analysis.columnField,
+        binaryField: analysis.binaryField,
+        successValue: analysis.successValue,
+        nullProportion: analysis.nullProportion,
+        beforeField: analysis.beforeField,
+        afterField: analysis.afterField,
+        positiveValue: analysis.positiveValue
       });
       state.exactTestResult = env.data.exactTest;
       break;
@@ -2687,7 +5452,9 @@ async function runSavedAnalysisJob(savedJob) {
         horizon: analysis.horizon,
         method: analysis.method,
         movingAverageWindow: analysis.movingAverageWindow,
-        smoothingAlpha: analysis.smoothingAlpha
+        smoothingAlpha: analysis.smoothingAlpha,
+        smoothingBeta: analysis.smoothingBeta,
+        dampingPhi: analysis.dampingPhi
       });
       state.forecastingResult = env.data.forecast;
       break;
@@ -2712,7 +5479,12 @@ async function runSavedAnalysisJob(savedJob) {
         analysis: getAnalysisOptionsPayload(),
         targetField: analysis.targetField,
         predictorFields: Array.isArray(analysis.predictorFields) ? analysis.predictorFields : [],
-        maxDepth: analysis.maxDepth
+        maxDepth: analysis.maxDepth,
+        method: analysis.method,
+        criterion: analysis.criterion,
+        treeCount: analysis.treeCount,
+        minSamplesLeaf: analysis.minSamplesLeaf,
+        featureSubsetCount: analysis.featureSubsetCount
       });
       state.decisionTreeResult = env.data.decisionTree;
       break;
@@ -2725,7 +5497,9 @@ async function runSavedAnalysisJob(savedJob) {
         analysis: getAnalysisOptionsPayload(),
         dependentField: analysis.dependentField,
         factorFields: Array.isArray(analysis.factorFields) ? analysis.factorFields : [],
-        covariateFields: Array.isArray(analysis.covariateFields) ? analysis.covariateFields : []
+        covariateFields: Array.isArray(analysis.covariateFields) ? analysis.covariateFields : [],
+        family: analysis.family,
+        link: analysis.link
       });
       state.generalLinearModelResult = env.data.generalLinearModel;
       break;
@@ -2777,7 +5551,8 @@ async function runSavedAnalysisJob(savedJob) {
         analysis: getAnalysisOptionsPayload(),
         timeField: analysis.timeField,
         eventField: analysis.eventField,
-        groupField: analysis.groupField
+        groupField: analysis.groupField,
+        predictorFields: Array.isArray(analysis.predictorFields) ? analysis.predictorFields : []
       });
       state.survivalAnalysisResult = env.data.survivalAnalysis;
       break;
@@ -2896,8 +5671,32 @@ async function refreshDatasetAnalysis({ includeCrosstab = false } = {}) {
 
 // ── Render functions ──────────────────────────────────────────────────────────
 
-function renderProjects() {
-  const node = document.getElementById('projects-list');
+async function selectProjectAndRefresh(projectId) {
+  state.selectedProjectId = projectId;
+  state.lastActivityTs = null;
+  await refreshPage();
+}
+
+function createProjectSelectionButton(project, { rail = false } = {}) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'project-button';
+  if (project.id === state.selectedProjectId) button.classList.add('selected');
+  button.innerHTML = `
+    <span class="project-title">${escapeHtml(project.name)}</span>
+    <span class="project-meta">${escapeHtml(project.id)}</span>
+    <span class="source-meta">Mode: ${escapeHtml(project.workspaceMode ?? 'solo')}</span>
+    ${rail ? '' : `<span class="project-meta">${escapeHtml(project.description || 'No description')}</span>`}
+  `;
+  button.addEventListener('click', async () => {
+    await selectProjectAndRefresh(project.id);
+  });
+  return button;
+}
+
+function renderProjectSelectionList(nodeId, { rail = false } = {}) {
+  const node = document.getElementById(nodeId);
+  if (!node) return;
   node.innerHTML = '';
   if (state.projects.length === 0) {
     node.innerHTML = '<li class="interactive-list-item empty">No projects yet.</li>';
@@ -2906,26 +5705,18 @@ function renderProjects() {
   for (const project of state.projects) {
     const li = document.createElement('li');
     li.className = 'interactive-list-item';
-    const btn = document.createElement('button');
-    btn.className = 'project-button';
-    if (project.id === state.selectedProjectId) btn.classList.add('selected');
-    btn.innerHTML = `
-      <span class="project-title">${escapeHtml(project.name)}</span>
-      <span class="project-meta">${escapeHtml(project.id)}</span>
-      <span class="source-meta">Mode: ${escapeHtml(project.workspaceMode ?? 'solo')}</span>
-      <span class="project-meta">${escapeHtml(project.description || 'No description')}</span>
-    `;
-    btn.addEventListener('click', async () => {
-      state.selectedProjectId = project.id;
-      state.lastActivityTs = null;
-      await refreshPage();
-    });
-    li.appendChild(btn);
+    li.appendChild(createProjectSelectionButton(project, { rail }));
     node.appendChild(li);
   }
 }
 
-function renderProjectActions() {
+function renderProjects() {
+  renderProjectSelectionList('projects-secondary-list', { rail: true });
+  renderProjectSelectionList('projects-list');
+  setText('project-secondary-count', `${state.projects.length}`);
+}
+
+function renderProjectActionsLegacy() {
   if (jobsEl) {
     const formatRunStamp = (value) => {
       if (!value) return 'Never';
@@ -2977,6 +5768,10 @@ function renderProjectActions() {
   setButtonAccessState('create-backup-btn', permissions.canManageProject, manageTitle);
   setButtonAccessState('refresh-backups-btn', permissions.canManageProject, manageTitle);
   setButtonAccessState('open-compiled-report-btn', permissions.canExportProject, exportTitle);
+  setButtonAccessState('save-output-pack-btn', permissions.hasProject, permissions.hasProject ? 'Save the current output document state as a reusable pack.' : 'Select a project first.');
+  setButtonAccessState('import-output-pack-btn', permissions.hasProject, permissions.hasProject ? 'Import a previously exported output pack JSON file.' : 'Select a project first.');
+  setButtonAccessState('open-descriptive-popup-btn', permissions.hasProject, permissions.hasProject ? 'Open Descriptive output in a popup window.' : 'Select a project first.');
+  setButtonAccessState('open-quant-output-popup-btn', permissions.hasProject, permissions.hasProject ? 'Open the quantitative output strip in a separate window.' : 'Select a project first.');
 
   ['member-username', 'member-role', 'collaboration-workspace-mode'].forEach((id) => {
     const input = document.getElementById(id);
@@ -2989,18 +5784,119 @@ function renderProjectActions() {
   });
 
   [
-    'export-csv-btn', 'export-xlsx-btn', 'export-json-btn',
+    'export-csv-btn', 'export-xlsx-btn', 'export-json-btn', 'export-sav-btn', 'export-zsav-btn',
     'export-evidence-btn', 'export-evidence-docx-btn', 'export-evidence-xlsx-btn', 'export-evidence-pdf-btn',
     'export-codebook-docx-btn', 'export-codebook-xlsx-btn', 'export-codebook-pdf-btn',
     'export-case-summaries-docx-btn', 'export-case-summaries-xlsx-btn', 'export-case-summaries-pdf-btn',
     'export-appendix-docx-btn', 'export-appendix-xlsx-btn', 'export-appendix-pdf-btn',
     'export-chat-history-word-btn', 'export-chat-history-excel-btn', 'export-chat-history-json-btn',
-    'export-framework-word-btn', 'export-framework-excel-btn', 'export-matrix-word-btn', 'export-matrix-excel-btn',
+    'export-framework-word-btn', 'export-framework-excel-btn', 'export-framework-pdf-btn', 'export-matrix-word-btn', 'export-matrix-excel-btn',
+    'export-code-code-word-btn', 'export-code-code-excel-btn', 'export-cooccurrence-word-btn',
+	    'export-query-report-word-btn', 'export-coding-comparison-word-btn', 'export-inter-rater-word-btn',
+	    'export-merge-review-word-btn', 'export-merge-review-excel-btn',
+      'export-committee-pack-word-btn', 'export-committee-pack-pdf-btn', 'export-committee-pack-json-btn',
+	    'export-audit-json-btn', 'export-audit-csv-btn', 'export-audit-xlsx-btn', 'export-audit-txt-btn',
+	    'export-compiled-report-btn', 'export-output-pack-btn'
+	  ].forEach((id) => setButtonAccessState(id, permissions.canExportProject, exportTitle));
+
+  const styleSelect = document.getElementById('output-style-template-select');
+  if (styleSelect) {
+    styleSelect.disabled = !permissions.hasProject;
+    styleSelect.title = permissions.hasProject
+      ? 'Choose the output style template for report rendering.'
+      : 'Select a project first.';
+  }
+
+  setText(
+    'import-result',
+    !permissions.hasProject
+      ? 'Select a project to enable import and export actions.'
+      : permissions.canExportProject
+        ? 'Import files or export project outputs from this workspace.'
+        : 'Project data is available for analysis, but exports are limited to project owners and Professor accounts.'
+  );
+  setText(
+    'backup-result',
+    !permissions.hasProject
+      ? 'Select a project to review backup and audit access.'
+      : permissions.canManageProject
+        ? 'Project owners can create and restore backup snapshots here.'
+        : 'Backup, restore, workspace settings, and deletion are limited to project owners.'
+  );
+}
+
+function renderProjectActions() {
+  const permissions = getProjectPermissionState();
+  const manageTitle = !permissions.hasProject
+    ? 'Select a project first.'
+    : permissions.canManageProject
+      ? 'Project owner access is available.'
+      : 'Only project owners can manage this project.';
+  const exportTitle = !permissions.hasProject
+    ? 'Select a project first.'
+    : permissions.canExportProject
+      ? 'Export access is available.'
+      : 'Only project owners and Professor accounts can export project outputs.';
+
+  // Projects tab inspector/canvas controls only.
+  setButtonAccessState('delete-project-btn', permissions.canManageProject, manageTitle);
+  setButtonAccessState('project-chat-popup-btn', permissions.hasProject, permissions.hasProject ? 'Open popup chat for the selected project.' : 'Select a project first.');
+  ['export-chat-history-word-btn', 'export-chat-history-excel-btn', 'export-chat-history-json-btn']
+    .forEach((id) => setButtonAccessState(id, permissions.canExportProject, exportTitle));
+}
+
+function renderWorkspacePermissionStates() {
+  const permissions = getProjectPermissionState();
+  const manageTitle = !permissions.hasProject
+    ? 'Select a project first.'
+    : permissions.canManageProject
+      ? 'Project owner access is available.'
+      : 'Only project owners can manage this project.';
+  const exportTitle = !permissions.hasProject
+    ? 'Select a project first.'
+    : permissions.canExportProject
+      ? 'Export access is available.'
+      : 'Only project owners and Professor accounts can export project outputs.';
+
+  setButtonAccessState('save-workspace-mode-btn', permissions.canManageProject, manageTitle);
+  setButtonAccessState('share-project-btn', permissions.canManageProject, manageTitle);
+  setButtonAccessState('create-backup-btn', permissions.canManageProject, manageTitle);
+  setButtonAccessState('refresh-backups-btn', permissions.canManageProject, manageTitle);
+  setButtonAccessState('open-compiled-report-btn', permissions.canExportProject, exportTitle);
+  setButtonAccessState('save-output-pack-btn', permissions.hasProject, permissions.hasProject ? 'Save the current output document state as a reusable pack.' : 'Select a project first.');
+  setButtonAccessState('import-output-pack-btn', permissions.hasProject, permissions.hasProject ? 'Import a previously exported output pack JSON file.' : 'Select a project first.');
+  setButtonAccessState('open-descriptive-popup-btn', permissions.hasProject, permissions.hasProject ? 'Open Descriptive output in a popup window.' : 'Select a project first.');
+  setButtonAccessState('open-quant-output-popup-btn', permissions.hasProject, permissions.hasProject ? 'Open the quantitative output strip in a separate window.' : 'Select a project first.');
+
+  ['member-username', 'member-role', 'collaboration-workspace-mode'].forEach((id) => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    input.disabled = !permissions.canManageProject;
+    input.title = manageTitle;
+  });
+
+  [
+    'export-csv-btn', 'export-xlsx-btn', 'export-json-btn', 'export-sav-btn', 'export-zsav-btn',
+    'export-evidence-btn', 'export-evidence-docx-btn', 'export-evidence-xlsx-btn', 'export-evidence-pdf-btn',
+    'export-codebook-docx-btn', 'export-codebook-xlsx-btn', 'export-codebook-pdf-btn',
+    'export-case-summaries-docx-btn', 'export-case-summaries-xlsx-btn', 'export-case-summaries-pdf-btn',
+    'export-appendix-docx-btn', 'export-appendix-xlsx-btn', 'export-appendix-pdf-btn',
+    'export-framework-word-btn', 'export-framework-excel-btn', 'export-framework-pdf-btn', 'export-matrix-word-btn', 'export-matrix-excel-btn',
     'export-code-code-word-btn', 'export-code-code-excel-btn', 'export-cooccurrence-word-btn',
     'export-query-report-word-btn', 'export-coding-comparison-word-btn', 'export-inter-rater-word-btn',
+    'export-merge-review-word-btn', 'export-merge-review-excel-btn',
+    'export-committee-pack-word-btn', 'export-committee-pack-pdf-btn', 'export-committee-pack-json-btn',
     'export-audit-json-btn', 'export-audit-csv-btn', 'export-audit-xlsx-btn', 'export-audit-txt-btn',
-    'export-compiled-report-btn'
+    'export-compiled-report-btn', 'export-output-pack-btn'
   ].forEach((id) => setButtonAccessState(id, permissions.canExportProject, exportTitle));
+
+  const styleSelect = document.getElementById('output-style-template-select');
+  if (styleSelect) {
+    styleSelect.disabled = !permissions.hasProject;
+    styleSelect.title = permissions.hasProject
+      ? 'Choose the output style template for report rendering.'
+      : 'Select a project first.';
+  }
 
   setText(
     'import-result',
@@ -3083,31 +5979,7 @@ function renderProjectChatHistory() {
 }
 
 function renderProjectsSecondary() {
-  const node = document.getElementById('projects-secondary-list');
-  if (!node) return;
-  node.innerHTML = '';
-  setText('project-secondary-count', `${state.projects.length}`);
-  if (state.projects.length === 0) {
-    node.innerHTML = '<li class="interactive-list-item empty">No projects yet.</li>';
-    return;
-  }
-  for (const project of state.projects) {
-    const li = document.createElement('li');
-    li.className = 'interactive-list-item';
-    li.innerHTML = `
-      <button class="project-button ${project.id === state.selectedProjectId ? 'selected' : ''}">
-        <span class="project-title">${escapeHtml(project.name)}</span>
-        <span class="project-meta">${escapeHtml(project.id)}</span>
-        <span class="source-meta">Mode: ${escapeHtml(project.workspaceMode ?? 'solo')}</span>
-      </button>
-    `;
-    li.querySelector('button')?.addEventListener('click', async () => {
-      state.selectedProjectId = project.id;
-      state.lastActivityTs = null;
-      await refreshPage();
-    });
-    node.appendChild(li);
-  }
+  // Merged into renderProjects() to keep one rendering path for project lists.
 }
 
 function renderSources() {
@@ -3730,9 +6602,12 @@ function renderMediaTimelineLegacy() {
   const node = document.getElementById('workspace-media-timeline');
   const jobsNode = document.getElementById('workspace-transcription-jobs');
   if (jobsNode) {
-    jobsNode.innerHTML = state.transcriptionJobs.length === 0
+    const scopedJobs = state.activeSourceId
+      ? state.transcriptionJobs.filter((job) => job.mediaSourceId === state.activeSourceId)
+      : state.transcriptionJobs;
+    jobsNode.innerHTML = scopedJobs.length === 0
       ? '<div class="small-muted">No transcription jobs yet.</div>'
-      : state.transcriptionJobs
+      : scopedJobs
         .map((job) => `
           <div class="interactive-list-item">
             <div class="source-row">
@@ -3796,6 +6671,900 @@ function formatMediaClock(ms) {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
+function parseBoundedInput(value, fallback, min, max, digits = null) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const bounded = Math.min(max, Math.max(min, numeric));
+  if (typeof digits === 'number') {
+    const multiplier = 10 ** digits;
+    return Math.round(bounded * multiplier) / multiplier;
+  }
+  return bounded;
+}
+
+function readTranscriptionPipelineInputs() {
+  const modeEl = document.getElementById('workspace-transcription-mode');
+  const providerEl = document.getElementById('workspace-transcription-provider');
+  const providerModelEl = document.getElementById('workspace-transcription-provider-model');
+  const providerPromptEl = document.getElementById('workspace-transcription-provider-prompt');
+  const languageEl = document.getElementById('workspace-transcription-language');
+  const diarizationEl = document.getElementById('workspace-transcription-diarization');
+  const punctuationEl = document.getElementById('workspace-transcription-punctuation');
+  const chunkSecondsEl = document.getElementById('workspace-transcription-chunk-seconds');
+  const confidenceThresholdEl = document.getElementById('workspace-transcription-confidence-threshold');
+  const speakerStrategyEl = document.getElementById('workspace-transcription-speaker-strategy');
+  const mode = modeEl?.value === 'timeline_chunked' || modeEl?.value === 'hybrid'
+    ? modeEl.value
+    : 'segment_assembly';
+  const provider = providerEl?.value === 'openai' ? 'openai' : 'internal';
+  return {
+    mode,
+    pipelineConfig: {
+      provider,
+      providerModel: providerModelEl?.value?.trim() || 'gpt-4o-mini-transcribe',
+      providerPrompt: providerPromptEl?.value?.trim() || '',
+      language: languageEl?.value?.trim() || 'en',
+      diarization: diarizationEl?.checked !== false,
+      punctuation: punctuationEl?.checked !== false,
+      chunkSeconds: parseBoundedInput(chunkSecondsEl?.value, 12, 3, 120),
+      confidenceThreshold: parseBoundedInput(confidenceThresholdEl?.value, 0.55, 0, 1, 2),
+      speakerStrategy: speakerStrategyEl?.value === 'single' || speakerStrategyEl?.value === 'content_based'
+        ? speakerStrategyEl.value
+        : 'alternating'
+    }
+  };
+}
+
+function readManualSyncMetadata() {
+  const speakerLabelEl = document.getElementById('workspace-media-speaker-label');
+  const confidenceEl = document.getElementById('workspace-media-confidence');
+  const syncScoreEl = document.getElementById('workspace-media-sync-score');
+  return {
+    speakerLabel: speakerLabelEl?.value?.trim() || '',
+    confidence: parseBoundedInput(confidenceEl?.value, 0.9, 0, 1, 2),
+    syncScore: parseBoundedInput(syncScoreEl?.value, 0.9, 0, 1, 2)
+  };
+}
+
+function buildManualTokenTimeline(text, startMs, endMs, speakerLabel, confidence) {
+  const tokens = String(text ?? '').match(/[A-Za-z0-9][A-Za-z0-9'-]*/g) ?? [];
+  if (tokens.length === 0) return [];
+  const durationMs = Math.max(1, endMs - startMs);
+  return tokens.map((token, index) => {
+    const tokenStartMs = startMs + Math.floor((index / tokens.length) * durationMs);
+    const tokenEndMs = index === tokens.length - 1
+      ? endMs
+      : startMs + Math.floor(((index + 1) / tokens.length) * durationMs);
+    return {
+      token,
+      startMs: tokenStartMs,
+      endMs: Math.max(tokenStartMs, tokenEndMs),
+      confidence,
+      speakerLabel: speakerLabel || null
+    };
+  });
+}
+
+function parseTranscriptionJobPipeline(job) {
+  try {
+    const parsed = JSON.parse(job.pipelineJson || '{}');
+    const stages = Array.isArray(parsed.stages) ? parsed.stages : [];
+    return {
+      startedAt: parsed.startedAt || job.startedAt || null,
+      completedAt: parsed.completedAt || job.completedAt || null,
+      config: parsed.config && typeof parsed.config === 'object' ? parsed.config : null,
+      stages
+    };
+  } catch {
+    return {
+      startedAt: job.startedAt || null,
+      completedAt: job.completedAt || null,
+      config: null,
+      stages: []
+    };
+  }
+}
+
+function seekWorkspaceMedia(ms) {
+  const mediaEl = document.getElementById('workspace-media-element');
+  if (!mediaEl) return;
+  try {
+    mediaEl.currentTime = Math.max(0, (Number(ms) || 0) / 1000);
+  } catch {
+    // no-op for invalid media states
+  }
+}
+
+function parseSyncTokenTimeline(link) {
+  if (!link || typeof link.tokenTimelineJson !== 'string' || !link.tokenTimelineJson.trim()) return [];
+  try {
+    const parsed = JSON.parse(link.tokenTimelineJson);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((entry) => {
+        const token = typeof entry?.token === 'string' ? entry.token.trim() : '';
+        if (!token) return null;
+        const startMs = Math.max(0, Math.round(Number(entry?.startMs ?? 0)));
+        const endMs = Math.max(startMs, Math.round(Number(entry?.endMs ?? startMs)));
+        const confidence = Number.isFinite(Number(entry?.confidence)) ? parseBoundedInput(entry?.confidence, 0.85, 0, 1, 2) : null;
+        const speakerLabel = typeof entry?.speakerLabel === 'string' ? entry.speakerLabel.trim() : '';
+        return {
+          token,
+          startMs,
+          endMs,
+          confidence,
+          speakerLabel: speakerLabel || null
+        };
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function getWorkspaceMediaPlayheadMs() {
+  const mediaEl = document.getElementById('workspace-media-element');
+  if (!mediaEl) return null;
+  const seconds = Number(mediaEl.currentTime ?? Number.NaN);
+  if (!Number.isFinite(seconds)) return null;
+  return Math.max(0, Math.round(seconds * 1000));
+}
+
+function splitTranscriptTextByRatio(text, ratio) {
+  const normalized = String(text ?? '').trim();
+  if (!normalized) return { first: '', second: '' };
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (words.length <= 1) return { first: normalized, second: '' };
+  const cutIndex = Math.max(1, Math.min(words.length - 1, Math.round(words.length * ratio)));
+  return {
+    first: words.slice(0, cutIndex).join(' '),
+    second: words.slice(cutIndex).join(' ')
+  };
+}
+
+function getFocusedSyncLink() {
+  if (!state.workspaceFocusedSyncLinkId) return null;
+  return state.selectedTranscriptSyncLinks.find((link) => link.id === state.workspaceFocusedSyncLinkId) ?? null;
+}
+
+function findSyncRangeOverlapConflicts(linkId, mediaSourceId, startMs, endMs) {
+  return state.selectedTranscriptSyncLinks
+    .filter((candidate) => candidate.id !== linkId && candidate.mediaSourceId === mediaSourceId)
+    .filter((candidate) => Number(candidate.endMs) > startMs && Number(candidate.startMs) < endMs)
+    .sort((left, right) => Number(left.startMs) - Number(right.startMs));
+}
+
+function updateFocusedSyncLinkIndicator() {
+  const focusedInput = document.getElementById('workspace-focused-sync-link-id');
+  if (!focusedInput) return;
+  focusedInput.value = state.workspaceFocusedSyncLinkId || '';
+}
+
+function focusTranscriptSyncLink(linkId, { beginEdit = true } = {}) {
+  const link = state.selectedTranscriptSyncLinks.find((entry) => entry.id === linkId) ?? null;
+  if (!link) return;
+  state.workspaceFocusedSyncLinkId = link.id;
+  updateFocusedSyncLinkIndicator();
+  if (beginEdit) {
+    beginTranscriptSyncEdit(link.id);
+  } else {
+    renderMediaTimeline();
+  }
+}
+
+async function applyCodeToSegmentIfNeeded(segmentId) {
+  if (!segmentId || !state.workspaceSelectedCodeId || !state.selectedProjectId) return false;
+  const alreadyApplied = state.selectedCodeApplications.some((application) =>
+    application.segmentId === segmentId && application.codeId === state.workspaceSelectedCodeId
+  );
+  if (alreadyApplied) return false;
+  await postJson(`${API_BASE}/code-applications`, {
+    projectId: state.selectedProjectId,
+    segmentId,
+    codeId: state.workspaceSelectedCodeId,
+    caseId: state.workspaceSelectedCaseId || null,
+    confidence: 1
+  });
+  return true;
+}
+
+async function ensureSyncLinkSegment(link, { startMs, endMs, text, attachToLink = true }) {
+  if (!state.selectedProjectId || !state.activeSourceId) {
+    throw new Error('Select a project and media source first.');
+  }
+  const segmentText = String(text ?? '').trim() || String(link.transcriptText ?? '').trim() || '[media segment]';
+  let segmentId = typeof link.segmentId === 'string' && link.segmentId.trim() ? link.segmentId.trim() : '';
+  if (segmentId) {
+    await putJson(`${API_BASE}/segments/${encodeURIComponent(segmentId)}`, {
+      projectId: state.selectedProjectId,
+      sourceId: state.activeSourceId,
+      kind: 'time_range',
+      anchor: {
+        kind: 'time_range',
+        startMs,
+        endMs
+      },
+      text: segmentText
+    });
+  } else {
+    const env = await postJson(`${API_BASE}/segments`, {
+      projectId: state.selectedProjectId,
+      sourceId: state.activeSourceId,
+      kind: 'time_range',
+      anchor: {
+        kind: 'time_range',
+        startMs,
+        endMs
+      },
+      text: segmentText
+    });
+    segmentId = env.data.segment?.id ?? '';
+  }
+  if (attachToLink && segmentId) {
+    await putJson(`${API_BASE}/transcript-sync-links/${encodeURIComponent(link.id)}`, {
+      projectId: state.selectedProjectId,
+      mediaSourceId: link.mediaSourceId,
+      transcriptSourceId: link.transcriptSourceId,
+      segmentId,
+      startMs,
+      endMs,
+      transcriptText: segmentText,
+      speakerLabel: link.speakerLabel || '',
+      confidence: typeof link.confidence === 'number' ? link.confidence : null,
+      syncScore: typeof link.syncScore === 'number' ? link.syncScore : null,
+      tokenTimeline: parseSyncTokenTimeline(link)
+    });
+  }
+  return segmentId || null;
+}
+
+async function codeTranscriptSyncLink(linkId, { contextSeconds = 0 } = {}) {
+  if (!state.selectedProjectId) {
+    window.alert('Select a project first.');
+    return;
+  }
+  if (!state.workspaceSelectedCodeId) {
+    window.alert('Choose an active code first.');
+    return;
+  }
+  const link = state.selectedTranscriptSyncLinks.find((entry) => entry.id === linkId) ?? null;
+  if (!link) {
+    window.alert('Transcript row not found. Refresh the workspace and try again.');
+    return;
+  }
+  const contextMs = Math.max(0, Math.round(Number(contextSeconds) * 1000));
+  const startMs = Math.max(0, Math.round(link.startMs) - contextMs);
+  const endMs = Math.max(startMs + 250, Math.round(link.endMs) + contextMs);
+  let segmentId = null;
+  if (contextMs > 0) {
+    const env = await postJson(`${API_BASE}/segments`, {
+      projectId: state.selectedProjectId,
+      sourceId: link.mediaSourceId,
+      kind: 'time_range',
+      anchor: { kind: 'time_range', startMs, endMs },
+      text: String(link.transcriptText ?? '').trim() || '[media excerpt]'
+    });
+    segmentId = env.data.segment?.id ?? null;
+  } else {
+    segmentId = await ensureSyncLinkSegment(link, {
+      startMs,
+      endMs,
+      text: link.transcriptText,
+      attachToLink: true
+    });
+  }
+  if (!segmentId) {
+    throw new Error('Unable to create or resolve a segment for coding.');
+  }
+  const created = await applyCodeToSegmentIfNeeded(segmentId);
+  await loadSelectedProjectData();
+  await loadMediaTimelineForActiveSource();
+  renderAll();
+  state.workspaceFocusedSyncLinkId = linkId;
+  updateFocusedSyncLinkIndicator();
+  const statusEl = document.getElementById('workspace-status');
+  if (statusEl) {
+    statusEl.textContent = created
+      ? `Code applied to transcript row${contextMs > 0 ? ' context range' : ''}.`
+      : 'The active code was already applied to that row.';
+  }
+}
+
+async function saveFocusedSyncLinkRangeEdits() {
+  if (!state.selectedProjectId) return;
+  const link = getFocusedSyncLink();
+  if (!link) {
+    window.alert('Select a transcript row first.');
+    return;
+  }
+  const startSeconds = Number(document.getElementById('workspace-media-start')?.value ?? Number.NaN);
+  const endSeconds = Number(document.getElementById('workspace-media-end')?.value ?? Number.NaN);
+  const transcriptText = document.getElementById('workspace-media-text')?.value?.trim() || link.transcriptText || '';
+  if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || endSeconds <= startSeconds) {
+    window.alert('Enter a valid start/end range first.');
+    return;
+  }
+  const startMs = Math.max(0, Math.round(startSeconds * 1000));
+  const endMs = Math.max(startMs + 250, Math.round(endSeconds * 1000));
+  const overlapConflicts = findSyncRangeOverlapConflicts(link.id, link.mediaSourceId, startMs, endMs);
+  if (overlapConflicts.length > 0) {
+    const conflictLabel = overlapConflicts
+      .slice(0, 4)
+      .map((candidate) => `${candidate.id} (${formatMediaClock(candidate.startMs)}-${formatMediaClock(candidate.endMs)})`)
+      .join(', ');
+    const confirmed = window.confirm(`This edit overlaps ${overlapConflicts.length} adjacent transcript row(s): ${conflictLabel}${overlapConflicts.length > 4 ? ', ...' : ''}. Save anyway?`);
+    if (!confirmed) return;
+  }
+  const syncMeta = readManualSyncMetadata();
+  const tokenTimeline = buildManualTokenTimeline(
+    transcriptText,
+    startMs,
+    endMs,
+    syncMeta.speakerLabel || link.speakerLabel || 'Speaker 1',
+    syncMeta.confidence
+  );
+  await putJson(`${API_BASE}/transcript-sync-links/${encodeURIComponent(link.id)}`, {
+    projectId: state.selectedProjectId,
+    mediaSourceId: link.mediaSourceId,
+    transcriptSourceId: link.transcriptSourceId,
+    segmentId: link.segmentId,
+    startMs,
+    endMs,
+    transcriptText,
+    speakerLabel: syncMeta.speakerLabel || link.speakerLabel || '',
+    confidence: syncMeta.confidence,
+    syncScore: syncMeta.syncScore,
+    tokenTimeline
+  });
+  if (link.segmentId) {
+    await putJson(`${API_BASE}/segments/${encodeURIComponent(link.segmentId)}`, {
+      projectId: state.selectedProjectId,
+      sourceId: link.mediaSourceId,
+      kind: 'time_range',
+      anchor: { kind: 'time_range', startMs, endMs },
+      text: transcriptText
+    });
+  }
+  await loadSelectedProjectData();
+  await loadMediaTimelineForActiveSource();
+  renderAll();
+  state.workspaceFocusedSyncLinkId = link.id;
+  updateFocusedSyncLinkIndicator();
+  const statusEl = document.getElementById('workspace-status');
+  if (statusEl) statusEl.textContent = `Saved range edits for transcript row ${link.id}.`;
+}
+
+async function nudgeFocusedSyncLinkRange(deltaMs) {
+  const link = getFocusedSyncLink();
+  if (!link) {
+    window.alert('Select a transcript row first.');
+    return;
+  }
+  const duration = Math.max(250, Number(link.endMs) - Number(link.startMs));
+  const nextStartMs = Math.max(0, Math.round(Number(link.startMs) + Number(deltaMs)));
+  const nextEndMs = Math.max(nextStartMs + 250, nextStartMs + duration);
+  const startEl = document.getElementById('workspace-media-start');
+  const endEl = document.getElementById('workspace-media-end');
+  if (startEl) startEl.value = (nextStartMs / 1000).toFixed(1);
+  if (endEl) endEl.value = (nextEndMs / 1000).toFixed(1);
+  await saveFocusedSyncLinkRangeEdits();
+}
+
+async function splitFocusedSyncLinkAtPlayhead() {
+  if (!state.selectedProjectId) return;
+  const link = getFocusedSyncLink();
+  if (!link) {
+    window.alert('Select a transcript row first.');
+    return;
+  }
+  const splitMsRaw = getWorkspaceMediaPlayheadMs();
+  const splitMs = splitMsRaw === null
+    ? Math.round((Number(link.startMs) + Number(link.endMs)) / 2)
+    : splitMsRaw;
+  const safeSplitMs = Math.max(Number(link.startMs) + 250, Math.min(Number(link.endMs) - 250, splitMs));
+  if (safeSplitMs <= Number(link.startMs) || safeSplitMs >= Number(link.endMs)) {
+    window.alert('Move the playhead inside the focused row to split it.');
+    return;
+  }
+  const ratio = (safeSplitMs - Number(link.startMs)) / Math.max(1, Number(link.endMs) - Number(link.startMs));
+  const splitText = splitTranscriptTextByRatio(link.transcriptText, ratio);
+  const existingTokens = parseSyncTokenTimeline(link);
+  const leftTokens = existingTokens.filter((token) => token.endMs <= safeSplitMs);
+  const rightTokens = existingTokens.filter((token) => token.startMs >= safeSplitMs);
+
+  let secondSegmentId = null;
+  if (link.segmentId) {
+    await putJson(`${API_BASE}/segments/${encodeURIComponent(link.segmentId)}`, {
+      projectId: state.selectedProjectId,
+      sourceId: link.mediaSourceId,
+      kind: 'time_range',
+      anchor: { kind: 'time_range', startMs: Number(link.startMs), endMs: safeSplitMs },
+      text: splitText.first || link.transcriptText
+    });
+    const secondSegmentEnv = await postJson(`${API_BASE}/segments`, {
+      projectId: state.selectedProjectId,
+      sourceId: link.mediaSourceId,
+      kind: 'time_range',
+      anchor: { kind: 'time_range', startMs: safeSplitMs, endMs: Number(link.endMs) },
+      text: splitText.second || splitText.first || link.transcriptText
+    });
+    secondSegmentId = secondSegmentEnv.data.segment?.id ?? null;
+  }
+
+  await putJson(`${API_BASE}/transcript-sync-links/${encodeURIComponent(link.id)}`, {
+    projectId: state.selectedProjectId,
+    mediaSourceId: link.mediaSourceId,
+    transcriptSourceId: link.transcriptSourceId,
+    segmentId: link.segmentId,
+    startMs: Number(link.startMs),
+    endMs: safeSplitMs,
+    transcriptText: splitText.first || link.transcriptText,
+    speakerLabel: link.speakerLabel || '',
+    confidence: typeof link.confidence === 'number' ? link.confidence : null,
+    syncScore: typeof link.syncScore === 'number' ? link.syncScore : null,
+    tokenTimeline: leftTokens
+  });
+
+  const createEnv = await postJson(`${API_BASE}/transcript-sync-links`, {
+    projectId: state.selectedProjectId,
+    mediaSourceId: link.mediaSourceId,
+    transcriptSourceId: link.transcriptSourceId,
+    segmentId: secondSegmentId,
+    startMs: safeSplitMs,
+    endMs: Number(link.endMs),
+    transcriptText: splitText.second || splitText.first || link.transcriptText,
+    speakerLabel: link.speakerLabel || '',
+    confidence: typeof link.confidence === 'number' ? link.confidence : null,
+    syncScore: typeof link.syncScore === 'number' ? link.syncScore : null,
+    tokenTimeline: rightTokens
+  });
+
+  await loadSelectedProjectData();
+  await loadMediaTimelineForActiveSource();
+  renderAll();
+  const nextLinkId = createEnv.data.link?.id ?? null;
+  if (nextLinkId) {
+    state.workspaceFocusedSyncLinkId = nextLinkId;
+    focusTranscriptSyncLink(nextLinkId, { beginEdit: true });
+  } else {
+    state.workspaceFocusedSyncLinkId = link.id;
+    focusTranscriptSyncLink(link.id, { beginEdit: true });
+  }
+  const statusEl = document.getElementById('workspace-status');
+  if (statusEl) statusEl.textContent = `Split transcript row ${link.id} at ${formatMediaClock(safeSplitMs)}.`;
+}
+
+async function mergeFocusedSyncLinkWithNext() {
+  if (!state.selectedProjectId) return;
+  const focused = getFocusedSyncLink();
+  if (!focused) {
+    window.alert('Select a transcript row first.');
+    return;
+  }
+  const scoped = state.selectedTranscriptSyncLinks
+    .filter((link) => link.mediaSourceId === focused.mediaSourceId)
+    .sort((left, right) => Number(left.startMs) - Number(right.startMs));
+  const index = scoped.findIndex((link) => link.id === focused.id);
+  if (index < 0 || index >= scoped.length - 1) {
+    window.alert('No next transcript row available to merge.');
+    return;
+  }
+  const next = scoped[index + 1];
+  const mergedStartMs = Math.min(Number(focused.startMs), Number(next.startMs));
+  const mergedEndMs = Math.max(Number(focused.endMs), Number(next.endMs));
+  const mergedText = [String(focused.transcriptText ?? '').trim(), String(next.transcriptText ?? '').trim()]
+    .filter(Boolean)
+    .join('\n');
+  const mergedConfidence = (() => {
+    const values = [focused.confidence, next.confidence].filter((value) => typeof value === 'number' && Number.isFinite(value));
+    if (values.length === 0) return null;
+    return values.reduce((total, value) => total + value, 0) / values.length;
+  })();
+  const mergedSyncScore = (() => {
+    const values = [focused.syncScore, next.syncScore].filter((value) => typeof value === 'number' && Number.isFinite(value));
+    if (values.length === 0) return null;
+    return values.reduce((total, value) => total + value, 0) / values.length;
+  })();
+  const mergedTokens = [...parseSyncTokenTimeline(focused), ...parseSyncTokenTimeline(next)]
+    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+  const mergedSegmentId = focused.segmentId || next.segmentId || null;
+  if (mergedSegmentId) {
+    await putJson(`${API_BASE}/segments/${encodeURIComponent(mergedSegmentId)}`, {
+      projectId: state.selectedProjectId,
+      sourceId: focused.mediaSourceId,
+      kind: 'time_range',
+      anchor: { kind: 'time_range', startMs: mergedStartMs, endMs: mergedEndMs },
+      text: mergedText || focused.transcriptText || next.transcriptText
+    });
+  }
+  await putJson(`${API_BASE}/transcript-sync-links/${encodeURIComponent(focused.id)}`, {
+    projectId: state.selectedProjectId,
+    mediaSourceId: focused.mediaSourceId,
+    transcriptSourceId: focused.transcriptSourceId || next.transcriptSourceId,
+    segmentId: mergedSegmentId,
+    startMs: mergedStartMs,
+    endMs: mergedEndMs,
+    transcriptText: mergedText || focused.transcriptText || next.transcriptText,
+    speakerLabel: focused.speakerLabel || next.speakerLabel || '',
+    confidence: mergedConfidence,
+    syncScore: mergedSyncScore,
+    tokenTimeline: mergedTokens
+  });
+  await deleteJson(`${API_BASE}/transcript-sync-links/${encodeURIComponent(next.id)}?projectId=${encodeURIComponent(state.selectedProjectId)}`);
+  await loadSelectedProjectData();
+  await loadMediaTimelineForActiveSource();
+  renderAll();
+  state.workspaceFocusedSyncLinkId = focused.id;
+  focusTranscriptSyncLink(focused.id, { beginEdit: true });
+  const statusEl = document.getElementById('workspace-status');
+  if (statusEl) statusEl.textContent = `Merged transcript row ${focused.id} with ${next.id}.`;
+}
+
+function renderDiarizationSpeakerStatus(timeline) {
+  const statusEl = document.getElementById('workspace-diarization-status');
+  const optionsEl = document.getElementById('workspace-speaker-label-options');
+  if (!statusEl || !optionsEl) return;
+  const links = Array.isArray(timeline?.syncLinks) ? timeline.syncLinks : [];
+  const counts = new Map();
+  for (const link of links) {
+    const label = typeof link?.speakerLabel === 'string' && link.speakerLabel.trim()
+      ? link.speakerLabel.trim()
+      : '(unlabeled)';
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const ordered = [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  optionsEl.innerHTML = ordered.map(([label]) => `<option value="${escapeHtml(label === '(unlabeled)' ? '' : label)}"></option>`).join('');
+  const diagnostics = timeline?.diarizationDiagnostics ?? timeline?.summary ?? {};
+  const flaggedCount = diagnostics.flaggedSyncLinkCount ?? diagnostics.diarizationFlaggedCount ?? 0;
+  statusEl.textContent = ordered.length > 0
+    ? `Speaker rows: ${ordered.map(([label, count]) => `${label} (${count})`).join(', ')}.${flaggedCount > 0 ? ` QA flags on ${flaggedCount} row(s).` : ''}`
+    : 'No transcript rows yet for diarization correction.';
+}
+
+function resetDiarizationQaWorkspaceState({ preserveFilters = false } = {}) {
+  state.diarizationQaResult = null;
+  state.diarizationQaSelectedLinkIds = [];
+  state.diarizationQaQueueIndex = 0;
+  if (!preserveFilters) {
+    state.diarizationQaFilters = createDefaultDiarizationQaFilters();
+    state.diarizationQaSpeakerFilter = '';
+  }
+}
+
+function getFilteredDiarizationQaCandidates() {
+  const qa = state.diarizationQaResult;
+  const candidates = Array.isArray(qa?.candidates) ? qa.candidates : [];
+  const activeFlags = new Set(
+    DIARIZATION_QA_FLAG_KEYS.filter((key) => state.diarizationQaFilters?.[key] !== false)
+  );
+  const speakerFilter = String(state.diarizationQaSpeakerFilter ?? '').trim().toLowerCase();
+  return candidates.filter((candidate) => {
+    const flags = Array.isArray(candidate.flags) ? candidate.flags : [];
+    const flagMatch = flags.some((flag) => activeFlags.has(flag));
+    if (!flagMatch) return false;
+    if (!speakerFilter) return true;
+    const speakerLabel = String(candidate.speakerLabel ?? '').trim().toLowerCase();
+    return speakerLabel.includes(speakerFilter);
+  });
+}
+
+async function applyBatchDiarizationQaUpdate(options = {}) {
+  if (!state.selectedProjectId || !state.activeSourceId) {
+    window.alert('Select a project and media source first.');
+    return;
+  }
+  const filteredCandidates = getFilteredDiarizationQaCandidates();
+  const filteredIdSet = new Set(filteredCandidates.map((candidate) => candidate.linkId));
+  const selectedIds = state.diarizationQaSelectedLinkIds.filter((linkId) => filteredIdSet.has(linkId));
+  const linkIds = selectedIds.length > 0 ? selectedIds : filteredCandidates.map((candidate) => candidate.linkId);
+  if (linkIds.length === 0) {
+    window.alert('No QA rows match the active filters.');
+    return;
+  }
+  if (selectedIds.length === 0) {
+    const proceed = window.confirm(`No rows are explicitly selected. Apply this action to all ${linkIds.length} visible QA rows?`);
+    if (!proceed) return;
+  }
+  const statusEl = document.getElementById('workspace-diarization-status');
+  if (statusEl) statusEl.textContent = 'Applying QA batch update...';
+  const body = {
+    projectId: state.selectedProjectId,
+    mediaSourceId: state.activeSourceId,
+    linkIds,
+    ...options
+  };
+  const env = await postJson(`${API_BASE}/transcript-sync-links/batch-update`, body);
+  await loadSelectedProjectData();
+  await loadMediaTimelineForActiveSource();
+  await runDiarizationQaReview();
+  const batch = env.data?.batch ?? {};
+  if (statusEl) {
+    statusEl.textContent = `Batch QA updated ${batch.updatedCount ?? 0} row(s), skipped ${batch.skippedCount ?? 0}.`;
+  }
+}
+
+async function applyDiarizationCorrection() {
+  if (!state.selectedProjectId || !state.activeSourceId) {
+    window.alert('Select a project and media source first.');
+    return;
+  }
+  const fromInput = document.getElementById('workspace-diarization-from-label');
+  const toInput = document.getElementById('workspace-diarization-to-label');
+  const maxConfidenceInput = document.getElementById('workspace-diarization-max-confidence');
+  const statusEl = document.getElementById('workspace-diarization-status');
+  const fromLabel = fromInput?.value?.trim() ?? '';
+  const toLabel = toInput?.value?.trim() ?? '';
+  if (!toLabel) {
+    window.alert('Enter the target speaker label for the correction.');
+    return;
+  }
+  const maxConfidenceRaw = maxConfidenceInput?.value;
+  const maxConfidenceValue = maxConfidenceRaw === '' || maxConfidenceRaw === undefined
+    ? null
+    : parseBoundedInput(maxConfidenceRaw, 1, 0, 1, 2);
+  if (statusEl) statusEl.textContent = 'Applying diarization correction...';
+  const env = await postJson(`${API_BASE}/transcript-sync-links/diarization-corrections`, {
+    projectId: state.selectedProjectId,
+    mediaSourceId: state.activeSourceId,
+    replacements: [{ fromLabel, toLabel }],
+    maxConfidence: maxConfidenceValue
+  });
+  await loadSelectedProjectData();
+  await loadMediaTimelineForActiveSource();
+  resetDiarizationQaWorkspaceState({ preserveFilters: true });
+  renderAll();
+  const correction = env.data.correction ?? {};
+  if (statusEl) {
+    statusEl.textContent = `Diarization correction updated ${correction.updatedCount ?? 0} row(s), skipped ${correction.skippedByConfidence ?? 0} by confidence.`;
+  }
+}
+
+async function runDiarizationQaReview() {
+  if (!state.selectedProjectId || !state.activeSourceId) {
+    window.alert('Select a project and media source first.');
+    return;
+  }
+  const source = getActiveSource();
+  if (!source || (source.kind !== 'audio' && source.kind !== 'video')) {
+    window.alert('Choose an audio or video source first.');
+    return;
+  }
+  const statusEl = document.getElementById('workspace-diarization-status');
+  if (statusEl) statusEl.textContent = 'Running diarization QA review...';
+  const maxConfidence = parseBoundedInput(
+    document.getElementById('workspace-diarization-qa-max-confidence')?.value,
+    0.62,
+    0,
+    1,
+    2
+  );
+  const switchWindowMs = Math.round(parseBoundedInput(
+    document.getElementById('workspace-diarization-qa-switch-window-ms')?.value,
+    1500,
+    100,
+    120000
+  ));
+  const maxRows = Math.round(parseBoundedInput(
+    document.getElementById('workspace-diarization-qa-max-rows')?.value,
+    300,
+    25,
+    2000
+  ));
+  const params = new URLSearchParams({
+    projectId: state.selectedProjectId,
+    mediaSourceId: state.activeSourceId,
+    maxRows: String(maxRows),
+    maxConfidence: String(maxConfidence),
+    switchWindowMs: String(switchWindowMs)
+  });
+  const env = await getJson(`${API_BASE}/transcript-sync-links/diarization-qa?${params.toString()}`);
+  state.diarizationQaResult = env.data.qa ?? null;
+  state.diarizationQaSelectedLinkIds = [];
+  state.diarizationQaQueueIndex = 0;
+  renderAll();
+  const summary = state.diarizationQaResult?.summary ?? null;
+  if (statusEl && summary) {
+    statusEl.textContent = `Diarization QA flagged ${summary.candidateCount ?? 0} row(s): low-confidence ${summary.lowConfidenceCount ?? 0}, unlabeled ${summary.unlabeledSpeakerCount ?? 0}, rapid switch ${summary.rapidSwitchCount ?? 0}.`;
+  }
+}
+
+function renderDiarizationQaReview() {
+  const node = document.getElementById('workspace-diarization-qa-result');
+  if (!node) return;
+  const qa = state.diarizationQaResult;
+  if (!qa) {
+    node.innerHTML = '<div class="small-muted">Run diarization QA to flag low-confidence rows, rapid speaker switches, and overlap conflicts before relabeling.</div>';
+    return;
+  }
+  const summary = qa.summary ?? {};
+  const candidates = Array.isArray(qa.candidates) ? qa.candidates : [];
+  const filteredCandidates = getFilteredDiarizationQaCandidates();
+  const candidateIdSet = new Set(filteredCandidates.map((candidate) => candidate.linkId));
+  state.diarizationQaSelectedLinkIds = state.diarizationQaSelectedLinkIds.filter((linkId) => candidateIdSet.has(linkId));
+  if (state.diarizationQaQueueIndex >= filteredCandidates.length) {
+    state.diarizationQaQueueIndex = Math.max(0, filteredCandidates.length - 1);
+  }
+  const activeCandidate = filteredCandidates[state.diarizationQaQueueIndex] ?? null;
+  const flagCounts = Object.fromEntries(
+    DIARIZATION_QA_FLAG_KEYS.map((flag) => [
+      flag,
+      candidates.filter((candidate) => (candidate.flags ?? []).includes(flag)).length
+    ])
+  );
+  const speakerFilterValue = String(state.diarizationQaSpeakerFilter ?? '');
+  node.innerHTML = `
+    <div class="diarization-qa-toolbar">
+      <div class="small-muted">
+        QA scope: max confidence ${escapeHtml(formatStatValue(summary.maxConfidence, 2))}, switch window ${escapeHtml(String(summary.switchWindowMs ?? 1500))}ms.
+        Candidates ${escapeHtml(String(summary.candidateCount ?? candidates.length))}. Visible ${escapeHtml(String(filteredCandidates.length))}. Selected ${escapeHtml(String(state.diarizationQaSelectedLinkIds.length))}.
+      </div>
+      <div class="diarization-qa-filters">
+        ${DIARIZATION_QA_FLAG_KEYS.map((flag) => `
+          <button type="button" class="small qa-flag-filter-btn${state.diarizationQaFilters?.[flag] !== false ? ' active' : ''}" data-qa-flag="${escapeHtml(flag)}">
+            ${escapeHtml(DIARIZATION_QA_FLAG_LABELS[flag] ?? flag)} ${escapeHtml(String(flagCounts[flag] ?? 0))}
+          </button>
+        `).join('')}
+      </div>
+      <div class="diarization-qa-controls">
+        <label class="field">
+          <span>Speaker filter</span>
+          <input id="workspace-diarization-qa-speaker-filter" type="text" value="${escapeHtml(speakerFilterValue)}" placeholder="Professor / Student / unlabeled" />
+        </label>
+        <label class="field">
+          <span>Bulk speaker label</span>
+          <input id="workspace-diarization-qa-bulk-speaker" type="text" placeholder="Set speaker label for selected rows" />
+        </label>
+        <label class="field">
+          <span>Confidence floor</span>
+          <input id="workspace-diarization-qa-confidence-floor" type="number" min="0" max="1" step="0.01" value="0.85" />
+        </label>
+        <label class="field">
+          <span>Sync floor</span>
+          <input id="workspace-diarization-qa-sync-floor" type="number" min="0" max="1" step="0.01" value="0.90" />
+        </label>
+      </div>
+      <div class="inline-actions">
+        <button type="button" class="small" id="workspace-diarization-qa-select-visible-btn">Select visible</button>
+        <button type="button" class="small" id="workspace-diarization-qa-clear-selection-btn">Clear selection</button>
+        <button type="button" class="small" id="workspace-diarization-qa-prev-btn">Previous flagged</button>
+        <button type="button" class="small" id="workspace-diarization-qa-next-btn">Next flagged</button>
+        <button type="button" class="small" id="workspace-diarization-qa-bulk-relabel-btn">Relabel selected</button>
+        <button type="button" class="small" id="workspace-diarization-qa-bulk-floor-btn">Apply score floors</button>
+      </div>
+    </div>
+    <div class="code-chip-row" style="margin-top:8px">
+      <span class="badge">Low confidence ${escapeHtml(String(summary.lowConfidenceCount ?? 0))}</span>
+      <span class="badge">Unlabeled ${escapeHtml(String(summary.unlabeledSpeakerCount ?? 0))}</span>
+      <span class="badge">Rapid switch ${escapeHtml(String(summary.rapidSwitchCount ?? 0))}</span>
+      <span class="badge">Overlap conflict ${escapeHtml(String(summary.overlapSpeakerConflictCount ?? 0))}</span>
+      <span class="badge">Short low-confidence ${escapeHtml(String(summary.shortLowConfidenceCount ?? 0))}</span>
+    </div>
+    <div class="interactive-list" style="margin-top:10px">
+      ${filteredCandidates.length === 0
+        ? '<div class="interactive-list-item empty">No diarization QA candidates under current thresholds.</div>'
+        : filteredCandidates.slice(0, 80).map((candidate) => `
+          <div class="interactive-list-item diarization-qa-candidate${activeCandidate?.linkId === candidate.linkId ? ' active' : ''}">
+            <div class="source-row">
+              <div>
+                <span class="project-title">${escapeHtml(formatMediaClock(candidate.startMs))} - ${escapeHtml(formatMediaClock(candidate.endMs))}</span>
+                <span class="source-meta">Speaker: ${escapeHtml(candidate.speakerLabel || '(unlabeled)')} | Confidence: ${escapeHtml(formatStatValue(candidate.confidence, 2))} | Sync: ${escapeHtml(formatStatValue(candidate.syncScore, 2))}</span>
+                <span class="source-meta">Flags: ${escapeHtml((candidate.flags ?? []).join(', '))}</span>
+                <span class="source-meta">${escapeHtml(candidate.excerpt || '')}</span>
+              </div>
+              <div class="inline-actions">
+                <label class="diarization-qa-select">
+                  <input type="checkbox" class="diarization-qa-select-row" data-link-id="${escapeHtml(candidate.linkId)}"${state.diarizationQaSelectedLinkIds.includes(candidate.linkId) ? ' checked' : ''} />
+                  select
+                </label>
+                <button type="button" class="small diarization-qa-select-btn" data-link-id="${escapeHtml(candidate.linkId)}">Inspect row</button>
+                <button type="button" class="small diarization-qa-use-speaker-btn" data-speaker-label="${escapeHtml(candidate.speakerLabel || '')}">Use speaker</button>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+    </div>
+  `;
+  node.querySelectorAll('.diarization-qa-select-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      const index = filteredCandidates.findIndex((candidate) => candidate.linkId === button.dataset.linkId);
+      if (index >= 0) state.diarizationQaQueueIndex = index;
+      focusTranscriptSyncLink(button.dataset.linkId, { beginEdit: true });
+      renderDiarizationQaReview();
+    });
+  });
+  node.querySelectorAll('.diarization-qa-use-speaker-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      const fromInput = document.getElementById('workspace-diarization-from-label');
+      if (fromInput) fromInput.value = button.dataset.speakerLabel || '';
+    });
+  });
+  node.querySelectorAll('.diarization-qa-select-row').forEach((checkbox) => {
+    checkbox.addEventListener('change', (event) => {
+      const linkId = event.target.dataset.linkId;
+      if (!linkId) return;
+      const selected = event.target.checked === true;
+      const selectedSet = new Set(state.diarizationQaSelectedLinkIds);
+      if (selected) selectedSet.add(linkId);
+      else selectedSet.delete(linkId);
+      state.diarizationQaSelectedLinkIds = [...selectedSet];
+      renderDiarizationQaReview();
+    });
+  });
+  node.querySelectorAll('.qa-flag-filter-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      const flag = button.dataset.qaFlag;
+      if (!flag || !DIARIZATION_QA_FLAG_KEYS.includes(flag)) return;
+      state.diarizationQaFilters = {
+        ...state.diarizationQaFilters,
+        [flag]: state.diarizationQaFilters?.[flag] === false
+      };
+      const hasAnyFlag = DIARIZATION_QA_FLAG_KEYS.some((key) => state.diarizationQaFilters?.[key] !== false);
+      if (!hasAnyFlag) {
+        state.diarizationQaFilters[flag] = true;
+      }
+      state.diarizationQaQueueIndex = 0;
+      renderDiarizationQaReview();
+    });
+  });
+  node.querySelector('#workspace-diarization-qa-speaker-filter')?.addEventListener('input', (event) => {
+    state.diarizationQaSpeakerFilter = event.target.value ?? '';
+    state.diarizationQaQueueIndex = 0;
+    renderDiarizationQaReview();
+  });
+  node.querySelector('#workspace-diarization-qa-select-visible-btn')?.addEventListener('click', () => {
+    state.diarizationQaSelectedLinkIds = filteredCandidates.map((candidate) => candidate.linkId);
+    renderDiarizationQaReview();
+  });
+  node.querySelector('#workspace-diarization-qa-clear-selection-btn')?.addEventListener('click', () => {
+    state.diarizationQaSelectedLinkIds = [];
+    renderDiarizationQaReview();
+  });
+  node.querySelector('#workspace-diarization-qa-prev-btn')?.addEventListener('click', () => {
+    if (filteredCandidates.length === 0) return;
+    state.diarizationQaQueueIndex = (state.diarizationQaQueueIndex - 1 + filteredCandidates.length) % filteredCandidates.length;
+    const candidate = filteredCandidates[state.diarizationQaQueueIndex];
+    focusTranscriptSyncLink(candidate.linkId, { beginEdit: true });
+    renderDiarizationQaReview();
+  });
+  node.querySelector('#workspace-diarization-qa-next-btn')?.addEventListener('click', () => {
+    if (filteredCandidates.length === 0) return;
+    state.diarizationQaQueueIndex = (state.diarizationQaQueueIndex + 1) % filteredCandidates.length;
+    const candidate = filteredCandidates[state.diarizationQaQueueIndex];
+    focusTranscriptSyncLink(candidate.linkId, { beginEdit: true });
+    renderDiarizationQaReview();
+  });
+  node.querySelector('#workspace-diarization-qa-bulk-relabel-btn')?.addEventListener('click', async () => {
+    const targetSpeaker = String(node.querySelector('#workspace-diarization-qa-bulk-speaker')?.value ?? '').trim();
+    if (!targetSpeaker) {
+      window.alert('Enter a speaker label for relabeling.');
+      return;
+    }
+    const fromSpeaker = String(document.getElementById('workspace-diarization-from-label')?.value ?? '').trim();
+    await applyBatchDiarizationQaUpdate({
+      speakerLabel: targetSpeaker,
+      fromSpeakerLabel: fromSpeaker || undefined
+    });
+  });
+  node.querySelector('#workspace-diarization-qa-bulk-floor-btn')?.addEventListener('click', async () => {
+    const confidenceFloorRaw = String(node.querySelector('#workspace-diarization-qa-confidence-floor')?.value ?? '').trim();
+    const syncScoreFloorRaw = String(node.querySelector('#workspace-diarization-qa-sync-floor')?.value ?? '').trim();
+    const confidenceFloor = confidenceFloorRaw
+      ? parseBoundedInput(confidenceFloorRaw, 0.85, 0, 1, 2)
+      : null;
+    const syncScoreFloor = syncScoreFloorRaw
+      ? parseBoundedInput(syncScoreFloorRaw, 0.9, 0, 1, 2)
+      : null;
+    if (confidenceFloor === null && syncScoreFloor === null) {
+      window.alert('Set at least one score floor to apply.');
+      return;
+    }
+    await applyBatchDiarizationQaUpdate({
+      confidenceFloor,
+      syncScoreFloor
+    });
+  });
+}
+
 function getEditingTranscriptSyncLink() {
   if (!state.workspaceEditingSyncLinkId) return null;
   const link = state.selectedTranscriptSyncLinks.find((entry) => entry.id === state.workspaceEditingSyncLinkId) ?? null;
@@ -3816,10 +7585,22 @@ function beginTranscriptSyncEdit(linkId) {
   const endEl = document.getElementById('workspace-media-end');
   const textEl = document.getElementById('workspace-media-text');
   const transcriptSourceEl = document.getElementById('workspace-transcript-source-id');
+  const speakerLabelEl = document.getElementById('workspace-media-speaker-label');
+  const confidenceEl = document.getElementById('workspace-media-confidence');
+  const syncScoreEl = document.getElementById('workspace-media-sync-score');
+  state.workspaceFocusedSyncLinkId = link.id;
+  updateFocusedSyncLinkIndicator();
   if (startEl) startEl.value = (Math.max(0, link.startMs) / 1000).toFixed(1);
   if (endEl) endEl.value = (Math.max(0, link.endMs) / 1000).toFixed(1);
   if (textEl) textEl.value = link.transcriptText || '';
   if (transcriptSourceEl && link.transcriptSourceId) transcriptSourceEl.value = link.transcriptSourceId;
+  if (speakerLabelEl) speakerLabelEl.value = link.speakerLabel || '';
+  if (confidenceEl) confidenceEl.value = (typeof link.confidence === 'number' && Number.isFinite(link.confidence))
+    ? link.confidence.toFixed(2)
+    : '0.90';
+  if (syncScoreEl) syncScoreEl.value = (typeof link.syncScore === 'number' && Number.isFinite(link.syncScore))
+    ? link.syncScore.toFixed(2)
+    : '0.90';
   const statusEl = document.getElementById('workspace-status');
   if (statusEl) statusEl.textContent = `Editing transcript sync link ${link.id}.`;
   renderMediaTimeline();
@@ -3828,6 +7609,8 @@ function beginTranscriptSyncEdit(linkId) {
 function cancelTranscriptSyncEdit() {
   if (!state.workspaceEditingSyncLinkId) return;
   state.workspaceEditingSyncLinkId = null;
+  state.workspaceFocusedSyncLinkId = null;
+  updateFocusedSyncLinkIndicator();
   const statusEl = document.getElementById('workspace-status');
   if (statusEl) statusEl.textContent = 'Transcript sync edit cancelled.';
   renderMediaTimeline();
@@ -3840,6 +7623,10 @@ async function deleteTranscriptSyncLinkById(linkId) {
   await deleteJson(`${API_BASE}/transcript-sync-links/${encodeURIComponent(linkId)}?projectId=${encodeURIComponent(state.selectedProjectId)}`);
   if (state.workspaceEditingSyncLinkId === linkId) {
     state.workspaceEditingSyncLinkId = null;
+  }
+  if (state.workspaceFocusedSyncLinkId === linkId) {
+    state.workspaceFocusedSyncLinkId = null;
+    updateFocusedSyncLinkIndicator();
   }
   await loadSelectedProjectData();
   await loadMediaTimelineForActiveSource();
@@ -3873,10 +7660,328 @@ function renderMediaTimeline() {
       : 'Create coded media segments and optional transcript sync links.';
   }
 
+  {
+  const scopedJobs = state.activeSourceId
+    ? state.transcriptionJobs.filter((job) => job.mediaSourceId === state.activeSourceId)
+    : state.transcriptionJobs;
+
   if (jobsNode) {
-    jobsNode.innerHTML = state.transcriptionJobs.length === 0
+    jobsNode.innerHTML = scopedJobs.length === 0
       ? '<div class="small-muted">No transcription jobs yet.</div>'
-      : state.transcriptionJobs
+      : scopedJobs.map((job) => {
+        const progress = parseBoundedInput(job.progressPercent, 0, 0, 100);
+        const pipeline = parseTranscriptionJobPipeline(job);
+        const stageSummary = pipeline.stages.length === 0
+          ? 'No stages yet.'
+          : pipeline.stages.map((stage) => `${stage.stage} (${stage.status})`).join(' | ');
+        const isRunning = job.status === 'running';
+        const hasOutput = typeof job.outputSourceId === 'string' && job.outputSourceId.trim();
+        return `
+          <div class="interactive-list-item media-job-card">
+            <div class="source-row">
+              <div>
+                <span class="project-title">${escapeHtml(job.id)}</span>
+                <span class="source-meta">${escapeHtml(job.status)} | ${escapeHtml(job.mode)} | ${escapeHtml(progress.toFixed(0))}%</span>
+                <span class="source-meta">${escapeHtml(job.note || 'No note')}</span>
+                <span class="source-meta">${escapeHtml(stageSummary)}</span>
+                ${job.errorMessage ? `<span class="source-meta" style="color:#ff9f9f">${escapeHtml(job.errorMessage)}</span>` : ''}
+              </div>
+              <div class="inline-actions">
+                <button type="button" class="small transcription-run-btn" data-job-id="${escapeHtml(job.id)}"${isRunning ? ' disabled' : ''}>${isRunning ? 'Running...' : 'Run'}</button>
+                ${hasOutput ? `<button type="button" class="small transcription-use-output-btn" data-source-id="${escapeHtml(job.outputSourceId)}">Use transcript</button>` : ''}
+              </div>
+            </div>
+            <div class="media-job-progress"><span style="width:${escapeHtml(progress.toFixed(2))}%"></span></div>
+            <div class="source-meta">Started ${escapeHtml(pipeline.startedAt || 'n/a')} | Completed ${escapeHtml(pipeline.completedAt || 'n/a')}</div>
+          </div>
+        `;
+      }).join('');
+    jobsNode.querySelectorAll('.transcription-run-btn').forEach((button) => {
+      button.addEventListener('click', async () => {
+        await runTranscriptionJob(button.dataset.jobId);
+      });
+    });
+    jobsNode.querySelectorAll('.transcription-use-output-btn').forEach((button) => {
+      button.addEventListener('click', () => {
+        const transcriptInput = document.getElementById('workspace-transcript-source-id');
+        if (transcriptInput) transcriptInput.value = button.dataset.sourceId || '';
+      });
+    });
+  }
+
+  if (!node) return;
+  const timeline = state.mediaTimeline;
+  if (!timeline || !timeline.durationMs) {
+    node.innerHTML = '<div class="small-muted">No media timeline yet. Save time-range segments or run transcription first.</div>';
+    renderDiarizationSpeakerStatus(null);
+    updateFocusedSyncLinkIndicator();
+    return;
+  }
+  if (state.workspaceFocusedSyncLinkId && !(timeline.syncLinks ?? []).some((link) => link.id === state.workspaceFocusedSyncLinkId)) {
+    state.workspaceFocusedSyncLinkId = null;
+  }
+  updateFocusedSyncLinkIndicator();
+  renderDiarizationSpeakerStatus(timeline);
+
+  const durationMs = Math.max(1, timeline.durationMs);
+  const summary = timeline.summary ?? {};
+  const diagnostics = timeline.alignmentDiagnostics ?? {};
+  const coveragePercent = ((timeline.coverageRatio ?? 0) * 100).toFixed(1);
+  const codedCoveragePercent = ((timeline.codedCoverageRatio ?? 0) * 100).toFixed(1);
+
+  const renderTrackItems = (items, className, includeButtons = true) => {
+    return (items ?? []).map((item) => {
+      const startMs = Number(item.startMs || 0);
+      const endMs = Number(item.endMs || startMs);
+      const left = (startMs / durationMs) * 100;
+      const width = Math.max(0.8, ((endMs - startMs) / durationMs) * 100);
+      const segmentId = item.segmentId || '';
+      const linkId = item.linkId || '';
+      const title = item.label || item.transcriptText || segmentId;
+      if (!includeButtons) {
+        return `<div class="media-track-item ${className}" style="left:${left}%; width:${width}%;" title="${escapeHtml(String(title || ''))}"></div>`;
+      }
+      const activeClass = className === 'transcript' && linkId && linkId === state.workspaceFocusedSyncLinkId ? ' active' : '';
+      return `<button type="button" class="media-track-item ${className} timeline-track-focus-btn${activeClass}" data-segment-id="${escapeHtml(segmentId)}" data-link-id="${escapeHtml(linkId)}" data-start-ms="${escapeHtml(String(startMs))}" data-end-ms="${escapeHtml(String(endMs))}" style="left:${left}%; width:${width}%;" title="${escapeHtml(String(title || ''))}"></button>`;
+    }).join('');
+  };
+
+  node.innerHTML = `
+    <div class="small-muted media-timeline-summary">
+      Duration ${escapeHtml(formatMediaClock(timeline.durationMs))}
+      | Linked ${escapeHtml(formatMediaClock(timeline.linkedDurationMs || 0))}
+      | Coded ${escapeHtml(formatMediaClock(timeline.codedDurationMs || 0))}
+      | Transcript coverage ${escapeHtml(coveragePercent)}%
+      | Coded coverage ${escapeHtml(codedCoveragePercent)}%
+    </div>
+    <div class="code-chip-row" style="margin-top:8px; margin-bottom:8px">
+      <span class="badge">${escapeHtml(String(summary.timeSegmentCount ?? (timeline.timeSegments ?? []).length))} segments</span>
+      <span class="badge">${escapeHtml(String(summary.syncLinkCount ?? (timeline.syncLinks ?? []).length))} sync links</span>
+      <span class="badge">${escapeHtml(String(summary.syncedSegmentCount ?? 0))} synced</span>
+      <span class="badge">${escapeHtml(String(summary.unsyncedSegmentCount ?? 0))} unsynced</span>
+      <span class="badge">${escapeHtml(String(summary.orphanSyncLinkCount ?? 0))} orphan links</span>
+      <span class="badge">${escapeHtml(String(summary.transcriptWordCount ?? 0))} transcript words</span>
+      <span class="badge">${escapeHtml(String(summary.transcriptTokenCount ?? 0))} tokens</span>
+    </div>
+    <div class="media-waveform">
+      ${(timeline.waveformBins ?? []).map((bin) => `
+        <button
+          type="button"
+          class="media-wave-bin timeline-wave-bin-btn"
+          data-start-ms="${escapeHtml(String(bin.startMs))}"
+          data-end-ms="${escapeHtml(String(bin.endMs))}"
+          title="${escapeHtml(`${formatMediaClock(bin.startMs)}-${formatMediaClock(bin.endMs)} | segments ${bin.segmentCount} | sync ${bin.syncLinkCount}`)}"
+          style="--amp:${escapeHtml(String(Math.max(0.08, Math.min(1, Number(bin.amplitude) || 0))))}"
+        ></button>
+      `).join('')}
+    </div>
+    <div class="media-track-stack">
+      <div class="media-track-row">
+        <span class="media-track-label">Segments</span>
+        <div class="media-track-lane">
+          ${renderTrackItems(timeline.tracks?.segments ?? timeline.timeSegments ?? [], 'segment', true)}
+        </div>
+      </div>
+      <div class="media-track-row">
+        <span class="media-track-label">Transcript</span>
+        <div class="media-track-lane">
+          ${renderTrackItems(timeline.tracks?.transcript ?? [], 'transcript', true)}
+        </div>
+      </div>
+      <div class="media-track-row">
+        <span class="media-track-label">Coded</span>
+        <div class="media-track-lane">
+          ${renderTrackItems(timeline.tracks?.codedCoverage ?? [], 'coded', false)}
+        </div>
+      </div>
+    </div>
+    <div class="media-diagnostics-grid">
+      <div class="media-diagnostic-card"><span>Avg sync score</span><strong>${escapeHtml(formatStatValue(diagnostics.averageSyncScore, 2))}</strong></div>
+      <div class="media-diagnostic-card"><span>Avg confidence</span><strong>${escapeHtml(formatStatValue(diagnostics.averageConfidence, 2))}</strong></div>
+      <div class="media-diagnostic-card"><span>Avg drift (ms)</span><strong>${escapeHtml(formatStatValue(diagnostics.averageDriftMs, 0))}</strong></div>
+      <div class="media-diagnostic-card"><span>Max drift (ms)</span><strong>${escapeHtml(formatStatValue(diagnostics.maxDriftMs, 0))}</strong></div>
+      <div class="media-diagnostic-card"><span>Gaps</span><strong>${escapeHtml(String(diagnostics.gapCount ?? 0))}</strong></div>
+      <div class="media-diagnostic-card"><span>Large gaps</span><strong>${escapeHtml(String(diagnostics.largeGapCount ?? 0))}</strong></div>
+      <div class="media-diagnostic-card"><span>Overlaps</span><strong>${escapeHtml(String(diagnostics.overlapSyncLinkCount ?? 0))}</strong></div>
+      <div class="media-diagnostic-card"><span>Drift warnings</span><strong>${escapeHtml(String(diagnostics.driftWarningCount ?? 0))}</strong></div>
+      <div class="media-diagnostic-card"><span>Diarization flagged</span><strong>${escapeHtml(String(diagnostics.diarizationFlaggedCount ?? 0))}</strong></div>
+      <div class="media-diagnostic-card"><span>Rapid switches</span><strong>${escapeHtml(String(diagnostics.diarizationRapidSwitchCount ?? 0))}</strong></div>
+    </div>
+    <div class="media-marker-row">
+      ${(timeline.chapterMarkers ?? []).slice(0, 14).map((marker) => `
+        <button type="button" class="small timeline-marker-btn" data-segment-id="${escapeHtml(marker.segmentId || '')}" data-time-ms="${escapeHtml(String(marker.timeMs || 0))}">
+          ${escapeHtml(formatMediaClock(marker.timeMs || 0))} ${escapeHtml(summarizeText(marker.label, 38))}
+        </button>
+      `).join('')}
+    </div>
+    <div class="interactive-list" style="margin-top:12px">
+      ${(timeline.syncLinks ?? []).length === 0
+        ? '<div class="interactive-list-item empty">No transcript sync links yet.</div>'
+        : timeline.syncLinks.map((link) => `
+          <div class="interactive-list-item media-sync-row${link.id === state.workspaceFocusedSyncLinkId ? ' active' : ''}">
+            <div class="source-row">
+              <div>
+                <span class="project-title">${escapeHtml(formatMediaClock(link.startMs))} - ${escapeHtml(formatMediaClock(link.endMs))}</span>
+                <span class="source-meta">${escapeHtml(link.transcriptSourceTitle || link.transcriptSourceId || 'Transcript source')}</span>
+                <span class="source-meta">${escapeHtml(summarizeText(link.transcriptText, 140))}</span>
+                <div class="media-sync-row-meta">
+                  <span class="badge">${link.hasSegmentAnchor ? `Segment ${escapeHtml(link.segmentId || '')}` : 'No segment anchor'}</span>
+                  <span class="badge">Speaker ${escapeHtml(link.speakerLabel || 'n/a')}</span>
+                  <span class="badge">Tokens ${escapeHtml(String(link.tokenCount ?? 0))}</span>
+                  <span class="badge">Sync ${escapeHtml(formatStatValue(link.syncScore, 2))}</span>
+                  <span class="badge">Confidence ${escapeHtml(formatStatValue(link.confidence, 2))}</span>
+                  <span class="badge">Drift ${escapeHtml(formatStatValue(link.averageDriftMs, 0))}ms</span>
+                  ${Array.isArray(link.qaFlags) && link.qaFlags.length > 0
+        ? `<span class="badge">QA ${escapeHtml(link.qaFlags.join(', '))}</span>`
+        : ''}
+                </div>
+              </div>
+              <div class="inline-actions">
+                <button type="button" class="small timeline-sync-select-btn" data-link-id="${escapeHtml(link.id)}">Select</button>
+                <button type="button" class="small timeline-sync-code-btn" data-link-id="${escapeHtml(link.id)}">Code row</button>
+                <button type="button" class="small timeline-sync-code-context-btn" data-link-id="${escapeHtml(link.id)}">Code ±ctx</button>
+                <button type="button" class="small timeline-sync-nudge-btn" data-link-id="${escapeHtml(link.id)}" data-delta-ms="-250">-250ms</button>
+                <button type="button" class="small timeline-sync-nudge-btn" data-link-id="${escapeHtml(link.id)}" data-delta-ms="250">+250ms</button>
+                <button type="button" class="small timeline-sync-split-btn" data-link-id="${escapeHtml(link.id)}">Split</button>
+                <button type="button" class="small timeline-sync-merge-next-btn" data-link-id="${escapeHtml(link.id)}">Merge next</button>
+                <button type="button" class="small timeline-sync-focus-btn" data-segment-id="${escapeHtml(link.segmentId || '')}"${link.segmentId ? '' : ' disabled'}>Focus</button>
+                <button type="button" class="small timeline-sync-seek-btn" data-start-ms="${escapeHtml(String(link.startMs || 0))}" data-end-ms="${escapeHtml(String(link.endMs || 0))}">Seek</button>
+                <button type="button" class="small timeline-sync-use-speaker-btn" data-speaker-label="${escapeHtml(link.speakerLabel || '')}">Use speaker</button>
+                <button type="button" class="small timeline-sync-edit-btn" data-link-id="${escapeHtml(link.id)}">Edit</button>
+                <button type="button" class="small timeline-sync-delete-btn" data-link-id="${escapeHtml(link.id)}">Delete</button>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+    </div>
+  `;
+
+  node.querySelectorAll('.timeline-track-focus-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      const segmentId = button.dataset.segmentId || '';
+      const linkId = button.dataset.linkId || '';
+      const startMs = Number(button.dataset.startMs || 0);
+      const endMs = Number(button.dataset.endMs || startMs);
+      if (linkId) {
+        focusTranscriptSyncLink(linkId, { beginEdit: true });
+      }
+      if (segmentId) {
+        jumpToWorkspaceSegment(segmentId);
+      } else {
+        const startEl = document.getElementById('workspace-media-start');
+        const endEl = document.getElementById('workspace-media-end');
+        if (startEl) startEl.value = (Math.max(0, startMs) / 1000).toFixed(1);
+        if (endEl) endEl.value = (Math.max(startMs, endMs) / 1000).toFixed(1);
+      }
+      seekWorkspaceMedia(startMs);
+    });
+  });
+  node.querySelectorAll('.timeline-wave-bin-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      const startMs = Number(button.dataset.startMs || 0);
+      const endMs = Number(button.dataset.endMs || startMs);
+      const startEl = document.getElementById('workspace-media-start');
+      const endEl = document.getElementById('workspace-media-end');
+      if (startEl) startEl.value = (Math.max(0, startMs) / 1000).toFixed(1);
+      if (endEl) endEl.value = (Math.max(startMs, endMs) / 1000).toFixed(1);
+      seekWorkspaceMedia(startMs);
+    });
+  });
+  node.querySelectorAll('.timeline-marker-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      const segmentId = button.dataset.segmentId || '';
+      const timeMs = Number(button.dataset.timeMs || 0);
+      if (segmentId) {
+        jumpToWorkspaceSegment(segmentId);
+      } else {
+        seekWorkspaceMedia(timeMs);
+      }
+    });
+  });
+  node.querySelectorAll('.timeline-sync-focus-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (!button.dataset.segmentId) return;
+      jumpToWorkspaceSegment(button.dataset.segmentId);
+    });
+  });
+  node.querySelectorAll('.timeline-sync-seek-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      const startMs = Number(button.dataset.startMs || 0);
+      const endMs = Number(button.dataset.endMs || startMs);
+      const startEl = document.getElementById('workspace-media-start');
+      const endEl = document.getElementById('workspace-media-end');
+      if (startEl) startEl.value = (Math.max(0, startMs) / 1000).toFixed(1);
+      if (endEl) endEl.value = (Math.max(startMs, endMs) / 1000).toFixed(1);
+      seekWorkspaceMedia(startMs);
+    });
+  });
+  node.querySelectorAll('.timeline-sync-select-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      focusTranscriptSyncLink(button.dataset.linkId, { beginEdit: true });
+    });
+  });
+  node.querySelectorAll('.timeline-sync-code-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await codeTranscriptSyncLink(button.dataset.linkId, { contextSeconds: 0 });
+    });
+  });
+  node.querySelectorAll('.timeline-sync-code-context-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const contextSeconds = parseBoundedInput(document.getElementById('workspace-media-context-seconds')?.value, 5, 0, 120, 2);
+      await codeTranscriptSyncLink(button.dataset.linkId, { contextSeconds });
+    });
+  });
+  node.querySelectorAll('.timeline-sync-nudge-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      focusTranscriptSyncLink(button.dataset.linkId, { beginEdit: true });
+      const deltaMs = Number(button.dataset.deltaMs || 0);
+      await nudgeFocusedSyncLinkRange(deltaMs);
+    });
+  });
+  node.querySelectorAll('.timeline-sync-split-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      focusTranscriptSyncLink(button.dataset.linkId, { beginEdit: true });
+      await splitFocusedSyncLinkAtPlayhead();
+    });
+  });
+  node.querySelectorAll('.timeline-sync-merge-next-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      focusTranscriptSyncLink(button.dataset.linkId, { beginEdit: true });
+      await mergeFocusedSyncLinkWithNext();
+    });
+  });
+  node.querySelectorAll('.timeline-sync-use-speaker-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      const speakerLabel = button.dataset.speakerLabel ?? '';
+      const fromInput = document.getElementById('workspace-diarization-from-label');
+      if (fromInput) fromInput.value = speakerLabel;
+      const statusEl = document.getElementById('workspace-diarization-status');
+      if (statusEl) statusEl.textContent = speakerLabel
+        ? `Diarization source label set to "${speakerLabel}".`
+        : 'Diarization source label set to unlabeled rows.';
+    });
+  });
+  node.querySelectorAll('.timeline-sync-edit-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      beginTranscriptSyncEdit(button.dataset.linkId);
+    });
+  });
+  node.querySelectorAll('.timeline-sync-delete-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await deleteTranscriptSyncLinkById(button.dataset.linkId);
+    });
+  });
+  return;
+  }
+
+  /*
+  if (jobsNode) {
+    const scopedJobs = state.activeSourceId
+      ? state.transcriptionJobs.filter((job) => job.mediaSourceId === state.activeSourceId)
+      : state.transcriptionJobs;
+    jobsNode.innerHTML = scopedJobs.length === 0
+      ? '<div class="small-muted">No transcription jobs yet.</div>'
+      : scopedJobs
         .map((job) => `
           <div class="interactive-list-item">
             <div class="source-row">
@@ -3971,29 +8076,644 @@ function renderMediaTimeline() {
       await deleteTranscriptSyncLinkById(button.dataset.linkId);
     });
   });
+  */
+}
+
+function renderMergeReviewLegacy() {
+  const summaryEl = document.getElementById('merge-review-summary');
+  const resultEl = document.getElementById('merge-review-result');
+  const filterEl = document.getElementById('merge-review-status-filter');
+  if (!summaryEl || !resultEl) return;
+  if (filterEl) filterEl.value = state.mergeReviewStatusFilter || 'open';
+  if (!state.mergeReviewResult) {
+    summaryEl.textContent = 'Run merge review to identify coder overlap and high-spread coding that should be merged deliberately.';
+    resultEl.innerHTML = '<p>No merge review yet.</p>';
+    renderMergeReviewHistory();
+    return;
+  }
+  const review = state.mergeReviewResult;
+  const rows = review.rows ?? [];
+  const returnedCount = review.returnedCount ?? rows.length;
+  const filteredCount = review.filteredCount ?? returnedCount;
+  const statusFilter = review.statusFilter ?? state.mergeReviewStatusFilter ?? 'open';
+  const filters = review.filters ?? {};
+  summaryEl.textContent = `${review.candidateCount} merge candidate(s), filtered ${filteredCount}, showing ${returnedCount}. Status filter: ${statusFilter}. Thresholds: coder count >= ${filters.minCoderCount ?? 2}, confidence spread >= ${formatStatValue(filters.minConfidenceSpread ?? 0.2, 2)}.`;
+  if (rows.length === 0) {
+    resultEl.innerHTML = '<p>No merge candidates matched the current thresholds.</p>';
+    renderMergeReviewHistory();
+    return;
+  }
+  resultEl.innerHTML = `
+    <ul class="interactive-list">
+      ${rows.map((row) => `
+        <li class="interactive-list-item">
+          <div class="source-row">
+            <div>
+              <span class="project-title">${escapeHtml(row.codeName)}</span>
+              <span class="source-meta">${escapeHtml(row.sourceTitle ?? row.sourceId)} | ${escapeHtml(row.segmentId)}</span>
+              <span class="source-meta">Coders: ${escapeHtml((row.coderIds ?? []).join(', '))} | Applications: ${escapeHtml(String(row.applicationCount))} | Spread: ${escapeHtml(formatStatValue(row.confidenceSpread, 3))}</span>
+              <span class="source-meta">${escapeHtml(summarizeText(row.excerpt, 220))}</span>
+              <span class="source-meta">${escapeHtml((row.applications ?? []).map((application) => `${application.coderId} (${formatStatValue(application.confidence, 2)})`).join(', ') || 'No applications')}</span>
+              <span class="source-meta">Resolution: ${escapeHtml(row.resolution?.status ?? 'open')}${row.resolution?.actorUsername ? ` by ${escapeHtml(row.resolution.actorUsername)}` : ''}${row.resolution?.createdAt ? ` at ${escapeHtml(row.resolution.createdAt)}` : ''}${row.resolution?.note ? ` · ${escapeHtml(row.resolution.note)}` : ''}</span>
+            </div>
+            <div class="inline-actions">
+              <button type="button" class="small merge-open-workspace-btn" data-segment-id="${escapeHtml(row.segmentId)}" data-source-id="${escapeHtml(row.sourceId)}">Open</button>
+              <button type="button" class="small merge-resolve-btn" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}" data-keep-mode="highest_confidence">Keep highest</button>
+              ${(row.coderIds ?? []).slice(0, 4).map((coderId) => `
+                <button
+                  type="button"
+                  class="small merge-resolve-btn"
+                  data-segment-id="${escapeHtml(row.segmentId)}"
+                  data-code-id="${escapeHtml(row.codeId)}"
+                  data-keep-mode="coder"
+                  data-keep-coder-id="${escapeHtml(coderId)}"
+                >
+                  Keep ${escapeHtml(coderId)}
+                </button>
+              `).join('')}
+              <button type="button" class="small merge-defer-btn" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}">Defer</button>
+              <button type="button" class="small merge-reopen-btn" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}">Reopen</button>
+              ${row.resolution?.canRestore
+      ? `<button type="button" class="small merge-restore-btn" data-resolution-id="${escapeHtml(row.resolution.id)}" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}">Restore removed</button>`
+      : ''}
+              <button type="button" class="small merge-history-btn" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}">History</button>
+            </div>
+          </div>
+        </li>
+      `).join('')}
+    </ul>
+  `;
+  resultEl.querySelectorAll('.merge-open-workspace-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      jumpToWorkspaceSegment(button.dataset.segmentId, button.dataset.sourceId);
+    });
+  });
+  resultEl.querySelectorAll('.merge-resolve-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const segmentId = button.dataset.segmentId;
+      const codeId = button.dataset.codeId;
+      const keepMode = button.dataset.keepMode;
+      const keepCoderId = button.dataset.keepCoderId || '';
+      if (!segmentId || !codeId || !keepMode) return;
+      const resolutionNote = window.prompt('Resolution note (optional):', '') || '';
+      button.disabled = true;
+      try {
+        await resolveMergeReviewCandidate({ segmentId, codeId, keepMode, keepCoderId, resolutionNote });
+      } catch (err) {
+        summaryEl.textContent = `Merge resolve failed: ${err.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  resultEl.querySelectorAll('.merge-defer-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const segmentId = button.dataset.segmentId;
+      const codeId = button.dataset.codeId;
+      if (!segmentId || !codeId) return;
+      const resolutionNote = window.prompt('Why defer this conflict?', '') || '';
+      button.disabled = true;
+      try {
+        await deferMergeReviewCandidate({ segmentId, codeId, resolutionNote });
+      } catch (err) {
+        summaryEl.textContent = `Merge defer failed: ${err.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  resultEl.querySelectorAll('.merge-reopen-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const segmentId = button.dataset.segmentId;
+      const codeId = button.dataset.codeId;
+      if (!segmentId || !codeId) return;
+      const resolutionNote = window.prompt('Why reopen this conflict?', '') || '';
+      button.disabled = true;
+      try {
+        await reopenMergeReviewCandidate({ segmentId, codeId, resolutionNote });
+      } catch (err) {
+        summaryEl.textContent = `Merge reopen failed: ${err.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  resultEl.querySelectorAll('.merge-restore-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const resolutionId = button.dataset.resolutionId;
+      const segmentId = button.dataset.segmentId || '';
+      const codeId = button.dataset.codeId || '';
+      if (!resolutionId) return;
+      const confirmed = window.confirm('Restore all removed applications from this merge resolution?');
+      if (!confirmed) return;
+      const resolutionNote = window.prompt('Restore note (optional):', '') || '';
+      button.disabled = true;
+      try {
+        await restoreMergeReviewResolution(resolutionId, segmentId, codeId, resolutionNote);
+      } catch (err) {
+        summaryEl.textContent = `Merge restore failed: ${err.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  resultEl.querySelectorAll('.merge-history-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const segmentId = button.dataset.segmentId;
+      const codeId = button.dataset.codeId;
+      if (!segmentId || !codeId) return;
+      try {
+        await loadMergeReviewHistory(segmentId, codeId);
+      } catch (err) {
+        summaryEl.textContent = `Merge history failed: ${err.message}`;
+      }
+    });
+  });
+  renderMergeReviewHistory();
+}
+
+function renderMergeReviewHistory() {
+  const node = document.getElementById('merge-review-history');
+  if (!node) return;
+  if (!state.mergeReviewHistory || state.mergeReviewHistory.length === 0) {
+    node.innerHTML = '<div class="small-muted">Conflict history appears here after selecting a merge-review row.</div>';
+    return;
+  }
+  node.innerHTML = `
+    <ul class="interactive-list">
+      ${state.mergeReviewHistory.map((entry) => `
+        <li class="interactive-list-item">
+          <div class="source-row">
+            <div>
+              <span class="project-title">${escapeHtml(entry.status)} · ${escapeHtml(entry.segmentId)} · ${escapeHtml(entry.codeId)}</span>
+              <span class="source-meta">By ${escapeHtml(entry.actorUsername || 'system')} at ${escapeHtml(entry.createdAt)}</span>
+              <span class="source-meta">Removed: ${escapeHtml(String(entry.removedCount || 0))}${entry.keepMode ? ` | Keep mode: ${escapeHtml(entry.keepMode)}` : ''}</span>
+              ${entry.resolutionNote || entry.note ? `<span class="source-meta">${escapeHtml(entry.resolutionNote || entry.note)}</span>` : ''}
+            </div>
+          </div>
+        </li>
+      `).join('')}
+    </ul>
+  `;
+}
+
+function renderCodingAssignments() {
+  const summaryEl = document.getElementById('coding-assignment-summary');
+  const listEl = document.getElementById('coding-assignment-list');
+  const assigneeEl = document.getElementById('coding-assignment-assignee');
+  if (!summaryEl || !listEl) return;
+
+  if (assigneeEl) {
+    const current = assigneeEl.value;
+    assigneeEl.innerHTML = [
+      '<option value="">unassigned</option>',
+      ...state.selectedMembers.map((member) => `<option value="${escapeHtml(member.username)}">${escapeHtml(member.username)} (${escapeHtml(member.role)})</option>`)
+    ].join('');
+    if (current && state.selectedMembers.some((member) => member.username === current)) {
+      assigneeEl.value = current;
+    }
+  }
+
+  const items = state.codingAssignments ?? [];
+  summaryEl.textContent = `${items.length} assignment(s) in this project.`;
+  if (items.length === 0) {
+    listEl.innerHTML = '<li class="interactive-list-item empty">No coding assignments yet.</li>';
+    return;
+  }
+  listEl.innerHTML = items.map((item) => `
+    <li class="interactive-list-item">
+      <div class="source-row">
+        <div>
+          <span class="project-title">${escapeHtml(item.title)}</span>
+          <span class="source-meta">Status: ${escapeHtml(item.status)} | Priority: ${escapeHtml(item.priority)} | Assignee: ${escapeHtml(item.assigneeUsername || 'unassigned')}</span>
+          <span class="source-meta">Source: ${escapeHtml(item.sourceId || 'n/a')} | Code: ${escapeHtml(item.codeId || 'n/a')} | Case: ${escapeHtml(item.caseId || 'n/a')}</span>
+          <span class="source-meta">Due: ${escapeHtml(item.dueAt || 'none')} | Created by ${escapeHtml(item.createdByUsername || 'system')}</span>
+          ${item.description ? `<span class="source-meta">${escapeHtml(item.description)}</span>` : ''}
+        </div>
+        <div class="inline-actions">
+          <button type="button" class="small assignment-status-btn" data-task-id="${escapeHtml(item.id)}" data-status="todo">To do</button>
+          <button type="button" class="small assignment-status-btn" data-task-id="${escapeHtml(item.id)}" data-status="in_progress">In progress</button>
+          <button type="button" class="small assignment-status-btn" data-task-id="${escapeHtml(item.id)}" data-status="blocked">Blocked</button>
+          <button type="button" class="small assignment-status-btn" data-task-id="${escapeHtml(item.id)}" data-status="done">Done</button>
+          <button type="button" class="small danger assignment-delete-btn" data-task-id="${escapeHtml(item.id)}">Delete</button>
+        </div>
+      </div>
+    </li>
+  `).join('');
+
+  listEl.querySelectorAll('.assignment-status-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const taskId = button.dataset.taskId;
+      const status = button.dataset.status;
+      if (!taskId || !status) return;
+      button.disabled = true;
+      try {
+        await updateCodingAssignmentTask(taskId, { status });
+      } catch (err) {
+        summaryEl.textContent = `Assignment update failed: ${err.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  listEl.querySelectorAll('.assignment-delete-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const taskId = button.dataset.taskId;
+      if (!taskId) return;
+      if (!window.confirm('Delete this assignment?')) return;
+      button.disabled = true;
+      try {
+        await deleteCodingAssignmentTask(taskId);
+      } catch (err) {
+        summaryEl.textContent = `Assignment delete failed: ${err.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+}
+
+function toDatetimeLocalValue(iso) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const offsetMs = date.getTimezoneOffset() * 60 * 1000;
+  const local = new Date(date.getTime() - offsetMs);
+  return local.toISOString().slice(0, 16);
 }
 
 function renderMergeReview() {
   const summaryEl = document.getElementById('merge-review-summary');
   const resultEl = document.getElementById('merge-review-result');
+  const filterEl = document.getElementById('merge-review-status-filter');
   if (!summaryEl || !resultEl) return;
+  if (filterEl) filterEl.value = state.mergeReviewStatusFilter || 'open';
   if (!state.mergeReviewResult) {
     summaryEl.textContent = 'Run merge review to identify coder overlap and high-spread coding that should be merged deliberately.';
     resultEl.innerHTML = '<p>No merge review yet.</p>';
+    renderMergeReviewHistory();
     return;
   }
-  summaryEl.textContent = `${state.mergeReviewResult.candidateCount} merge review candidate(s).`;
-  resultEl.innerHTML = buildOutputTable(
-    ['Code', 'Source', 'Segment', 'Coders', 'Confidence spread', 'Excerpt'],
-    (state.mergeReviewResult.rows ?? []).map((row) => [
-      escapeHtml(row.codeName),
-      escapeHtml(row.sourceTitle ?? row.sourceId),
-      escapeHtml(row.segmentId),
-      escapeHtml((row.coderIds ?? []).join(', ')),
-      escapeHtml(formatStatValue(row.confidenceSpread, 2)),
-      escapeHtml(summarizeText(row.excerpt, 120))
-    ])
-  );
+  const review = state.mergeReviewResult;
+  const rows = review.rows ?? [];
+  const returnedCount = review.returnedCount ?? rows.length;
+  const filteredCount = review.filteredCount ?? returnedCount;
+  const statusFilter = review.statusFilter ?? state.mergeReviewStatusFilter ?? 'open';
+  const filters = review.filters ?? {};
+  const governance = review.governancePolicy ?? state.mergeGovernancePolicy ?? null;
+  summaryEl.textContent = `${review.candidateCount} merge candidate(s), filtered ${filteredCount}, showing ${returnedCount}. Status filter: ${statusFilter}. Thresholds: coder count >= ${filters.minCoderCount ?? 2}, confidence spread >= ${formatStatValue(filters.minConfidenceSpread ?? 0.2, 2)}.${governance ? ` Governance: note ${governance.requireResolutionNote ? 'required' : 'optional'}, second reviewer on high-risk ${governance.requireSecondReviewerForHighRisk ? 'on' : 'off'}, required approvals ${governance.requiredApprovalCountForHighRisk ?? 1}, expiry ${governance.approvalExpiryHours ?? 168}h.` : ''}`;
+  if (rows.length === 0) {
+    resultEl.innerHTML = '<p>No merge candidates matched the current thresholds.</p>';
+    renderMergeReviewHistory();
+    return;
+  }
+  resultEl.innerHTML = `
+    <ul class="interactive-list">
+      ${rows.map((row) => {
+        const triage = row.triage ?? null;
+        const risk = row.risk ?? {};
+        const blockResolve = Boolean(risk.blockedByMissingApproval);
+        const dueValue = toDatetimeLocalValue(triage?.dueAt);
+        const assigneeOptions = [
+          '<option value="">unassigned</option>',
+          ...state.selectedMembers.map((member) => `<option value="${escapeHtml(member.username)}"${triage?.assigneeUsername === member.username ? ' selected' : ''}>${escapeHtml(member.username)}</option>`)
+        ].join('');
+        const triageUpdatedAt = triage?.updatedAt || '';
+        const policyUpdatedAt = governance?.updatedAt || '';
+        return `
+          <li class="interactive-list-item">
+            <div class="source-row">
+              <div>
+                <span class="project-title">${escapeHtml(row.codeName)}</span>
+                <span class="source-meta">${escapeHtml(row.sourceTitle ?? row.sourceId)} | ${escapeHtml(row.segmentId)}</span>
+                <span class="source-meta">Coders: ${escapeHtml((row.coderIds ?? []).join(', '))} | Applications: ${escapeHtml(String(row.applicationCount))} | Spread: ${escapeHtml(formatStatValue(row.confidenceSpread, 3))} | Priority: ${escapeHtml(formatStatValue(row.triagePriorityScore ?? 0, 2))}</span>
+                <span class="source-meta">${escapeHtml(summarizeText(row.excerpt, 220))}</span>
+                <span class="source-meta">${escapeHtml((row.applications ?? []).map((application) => `${application.coderId} (${formatStatValue(application.confidence, 2)})`).join(', ') || 'No applications')}</span>
+                <span class="source-meta">Resolution: ${escapeHtml(row.resolution?.status ?? 'open')}${row.resolution?.actorUsername ? ` by ${escapeHtml(row.resolution.actorUsername)}` : ''}${row.resolution?.createdAt ? ` at ${escapeHtml(row.resolution.createdAt)}` : ''}${row.resolution?.note ? ` | ${escapeHtml(row.resolution.note)}` : ''}</span>
+                <span class="source-meta">Triage: ${escapeHtml(triage?.status ?? 'open')} | Severity: ${escapeHtml(triage?.severity ?? risk.defaultSeverity ?? 'medium')} | Assignee: ${escapeHtml(triage?.assigneeUsername || 'unassigned')} | Due: ${escapeHtml(triage?.dueAt || 'none')}</span>
+                <span class="source-meta">Risk: ${risk.isHighRisk ? 'high-risk' : 'standard'} | Approvals: ${escapeHtml(String(risk.activeApprovalCount ?? 0))}/${escapeHtml(String(risk.requiredApprovalCount ?? 0))}${risk.requiredApprovalCount ? ` (expiry ${escapeHtml(String(risk.approvalExpiryHours ?? governance?.approvalExpiryHours ?? 168))}h)` : ''}${risk.requiresSecondReviewer ? ' | second reviewer required' : ''}${blockResolve ? ' | merge currently blocked' : ''}</span>
+              </div>
+              <div class="inline-actions">
+                <button type="button" class="small merge-open-workspace-btn" data-segment-id="${escapeHtml(row.segmentId)}" data-source-id="${escapeHtml(row.sourceId)}">Open</button>
+                <button type="button" class="small merge-resolve-btn" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}" data-keep-mode="highest_confidence" data-triage-updated-at="${escapeHtml(triageUpdatedAt)}" data-policy-updated-at="${escapeHtml(policyUpdatedAt)}"${blockResolve ? ' disabled title="Needs required approvals before resolve."' : ''}>Keep highest</button>
+                ${(row.coderIds ?? []).slice(0, 4).map((coderId) => `
+                  <button type="button" class="small merge-resolve-btn" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}" data-keep-mode="coder" data-keep-coder-id="${escapeHtml(coderId)}" data-triage-updated-at="${escapeHtml(triageUpdatedAt)}" data-policy-updated-at="${escapeHtml(policyUpdatedAt)}"${blockResolve ? ' disabled title="Needs required approvals before resolve."' : ''}>Keep ${escapeHtml(coderId)}</button>
+                `).join('')}
+                <button type="button" class="small merge-approve-btn" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}">Approve conflict</button>
+                <button type="button" class="small merge-defer-btn" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}" data-triage-updated-at="${escapeHtml(triageUpdatedAt)}" data-policy-updated-at="${escapeHtml(policyUpdatedAt)}">Defer</button>
+                <button type="button" class="small merge-reopen-btn" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}" data-triage-updated-at="${escapeHtml(triageUpdatedAt)}" data-policy-updated-at="${escapeHtml(policyUpdatedAt)}">Reopen</button>
+                ${row.resolution?.canRestore
+                  ? `<button type="button" class="small merge-restore-btn" data-resolution-id="${escapeHtml(row.resolution.id)}" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}" data-triage-updated-at="${escapeHtml(triageUpdatedAt)}">Restore removed</button>`
+                  : ''}
+                <button type="button" class="small merge-history-btn" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}">History</button>
+              </div>
+            </div>
+            <div class="grid grid-4 compact-grid merge-triage-controls" style="margin-top:10px">
+              <label class="field">
+                <span>Triage status</span>
+                <select class="merge-triage-status-select" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}">
+                  <option value="open"${(triage?.status ?? 'open') === 'open' ? ' selected' : ''}>open</option>
+                  <option value="in_review"${triage?.status === 'in_review' ? ' selected' : ''}>in_review</option>
+                  <option value="ready_to_merge"${triage?.status === 'ready_to_merge' ? ' selected' : ''}>ready_to_merge</option>
+                  <option value="deferred"${triage?.status === 'deferred' ? ' selected' : ''}>deferred</option>
+                  <option value="escalated"${triage?.status === 'escalated' ? ' selected' : ''}>escalated</option>
+                  <option value="resolved"${triage?.status === 'resolved' ? ' selected' : ''}>resolved</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Severity</span>
+                <select class="merge-triage-severity-select" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}">
+                  <option value="low"${(triage?.severity ?? risk.defaultSeverity) === 'low' ? ' selected' : ''}>low</option>
+                  <option value="medium"${(triage?.severity ?? risk.defaultSeverity) === 'medium' ? ' selected' : ''}>medium</option>
+                  <option value="high"${(triage?.severity ?? risk.defaultSeverity) === 'high' ? ' selected' : ''}>high</option>
+                  <option value="critical"${(triage?.severity ?? risk.defaultSeverity) === 'critical' ? ' selected' : ''}>critical</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Assignee</span>
+                <select class="merge-triage-assignee-select" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}">${assigneeOptions}</select>
+              </label>
+              <label class="field">
+                <span>Due</span>
+                <input class="merge-triage-due-input" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}" type="datetime-local" value="${escapeHtml(dueValue)}" />
+              </label>
+            </div>
+            <div class="inline-actions" style="margin-top:8px">
+              <button type="button" class="small merge-triage-save-btn" data-segment-id="${escapeHtml(row.segmentId)}" data-code-id="${escapeHtml(row.codeId)}" data-updated-at="${escapeHtml(triageUpdatedAt)}">Save triage</button>
+            </div>
+          </li>
+        `;
+      }).join('')}
+    </ul>
+  `;
+  resultEl.querySelectorAll('.merge-open-workspace-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      jumpToWorkspaceSegment(button.dataset.segmentId, button.dataset.sourceId);
+    });
+  });
+  resultEl.querySelectorAll('.merge-resolve-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const segmentId = button.dataset.segmentId;
+      const codeId = button.dataset.codeId;
+      const keepMode = button.dataset.keepMode;
+      const keepCoderId = button.dataset.keepCoderId || '';
+      const expectedTriageUpdatedAt = button.dataset.triageUpdatedAt || '';
+      const expectedPolicyUpdatedAt = button.dataset.policyUpdatedAt || '';
+      if (!segmentId || !codeId || !keepMode) return;
+      const resolutionNote = window.prompt('Resolution note:', '') || '';
+      button.disabled = true;
+      try {
+        await resolveMergeReviewCandidate({ segmentId, codeId, keepMode, keepCoderId, resolutionNote, expectedTriageUpdatedAt, expectedPolicyUpdatedAt });
+      } catch (err) {
+        summaryEl.textContent = `Merge resolve failed: ${err.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  resultEl.querySelectorAll('.merge-approve-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const segmentId = button.dataset.segmentId;
+      const codeId = button.dataset.codeId;
+      if (!segmentId || !codeId) return;
+      const note = window.prompt('Approval note (optional):', '') || '';
+      button.disabled = true;
+      try {
+        await approveMergeReviewConflict({ segmentId, codeId, note });
+      } catch (err) {
+        summaryEl.textContent = `Merge approval failed: ${err.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  resultEl.querySelectorAll('.merge-triage-save-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const segmentId = button.dataset.segmentId;
+      const codeId = button.dataset.codeId;
+      if (!segmentId || !codeId) return;
+      const card = button.closest('.interactive-list-item');
+      const statusInput = card?.querySelector('.merge-triage-status-select');
+      const severityInput = card?.querySelector('.merge-triage-severity-select');
+      const assigneeInput = card?.querySelector('.merge-triage-assignee-select');
+      const dueInput = card?.querySelector('.merge-triage-due-input');
+      const triageNote = window.prompt('Triage note (optional):', '') || '';
+      const expectedUpdatedAt = button.dataset.updatedAt || '';
+      button.disabled = true;
+      try {
+        await saveMergeReviewTriage({
+          segmentId,
+          codeId,
+          status: statusInput?.value || 'open',
+          severity: severityInput?.value || 'medium',
+          assigneeUsername: assigneeInput?.value || '',
+          dueAt: dueInput?.value ? new Date(dueInput.value).toISOString() : null,
+          triageNote,
+          expectedUpdatedAt
+        });
+      } catch (err) {
+        summaryEl.textContent = `Merge triage save failed: ${err.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  resultEl.querySelectorAll('.merge-defer-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const segmentId = button.dataset.segmentId;
+      const codeId = button.dataset.codeId;
+      const expectedTriageUpdatedAt = button.dataset.triageUpdatedAt || '';
+      const expectedPolicyUpdatedAt = button.dataset.policyUpdatedAt || '';
+      if (!segmentId || !codeId) return;
+      const resolutionNote = window.prompt('Why defer this conflict?', '') || '';
+      button.disabled = true;
+      try {
+        await deferMergeReviewCandidate({ segmentId, codeId, resolutionNote, expectedTriageUpdatedAt, expectedPolicyUpdatedAt });
+      } catch (err) {
+        summaryEl.textContent = `Merge defer failed: ${err.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  resultEl.querySelectorAll('.merge-reopen-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const segmentId = button.dataset.segmentId;
+      const codeId = button.dataset.codeId;
+      const expectedTriageUpdatedAt = button.dataset.triageUpdatedAt || '';
+      const expectedPolicyUpdatedAt = button.dataset.policyUpdatedAt || '';
+      if (!segmentId || !codeId) return;
+      const resolutionNote = window.prompt('Why reopen this conflict?', '') || '';
+      button.disabled = true;
+      try {
+        await reopenMergeReviewCandidate({ segmentId, codeId, resolutionNote, expectedTriageUpdatedAt, expectedPolicyUpdatedAt });
+      } catch (err) {
+        summaryEl.textContent = `Merge reopen failed: ${err.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  resultEl.querySelectorAll('.merge-restore-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const resolutionId = button.dataset.resolutionId;
+      const segmentId = button.dataset.segmentId || '';
+      const codeId = button.dataset.codeId || '';
+      const expectedTriageUpdatedAt = button.dataset.triageUpdatedAt || '';
+      if (!resolutionId) return;
+      const confirmed = window.confirm('Restore all removed applications from this merge resolution?');
+      if (!confirmed) return;
+      const resolutionNote = window.prompt('Restore note (optional):', '') || '';
+      button.disabled = true;
+      try {
+        await restoreMergeReviewResolution(resolutionId, segmentId, codeId, resolutionNote, expectedTriageUpdatedAt);
+      } catch (err) {
+        summaryEl.textContent = `Merge restore failed: ${err.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  resultEl.querySelectorAll('.merge-history-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const segmentId = button.dataset.segmentId;
+      const codeId = button.dataset.codeId;
+      if (!segmentId || !codeId) return;
+      try {
+        await loadMergeReviewHistory(segmentId, codeId);
+      } catch (err) {
+        summaryEl.textContent = `Merge history failed: ${err.message}`;
+      }
+    });
+  });
+  renderMergeReviewHistory();
+}
+
+function renderMergeGovernancePolicy() {
+  const summaryEl = document.getElementById('merge-governance-summary');
+  const requireNoteEl = document.getElementById('merge-governance-require-note');
+  const restrictResolveEl = document.getElementById('merge-governance-restrict-resolve');
+  const requireSecondEl = document.getElementById('merge-governance-require-second-reviewer');
+  const highRiskCoderEl = document.getElementById('merge-governance-high-risk-coder-count');
+  const highRiskSpreadEl = document.getElementById('merge-governance-high-risk-spread');
+  const requiredApprovalCountEl = document.getElementById('merge-governance-required-approval-count');
+  const approvalExpiryHoursEl = document.getElementById('merge-governance-approval-expiry-hours');
+  const defaultSlaEl = document.getElementById('merge-governance-default-sla-hours');
+  if (!summaryEl) return;
+  const policy = state.mergeGovernancePolicy;
+  if (!policy) {
+    summaryEl.textContent = 'Merge governance policy is not loaded yet.';
+    return;
+  }
+  summaryEl.textContent = `Policy active: note ${policy.requireResolutionNote ? 'required' : 'optional'}, role gate ${policy.restrictResolutionToOwnerOrProfessor ? 'enabled' : 'disabled'}, second reviewer for high-risk ${policy.requireSecondReviewerForHighRisk ? 'enabled' : 'disabled'}, approvals required ${policy.requiredApprovalCountForHighRisk ?? 1}, approval expiry ${policy.approvalExpiryHours ?? 168}h.`;
+  if (requireNoteEl) requireNoteEl.value = policy.requireResolutionNote ? 'true' : 'false';
+  if (restrictResolveEl) restrictResolveEl.value = policy.restrictResolutionToOwnerOrProfessor ? 'true' : 'false';
+  if (requireSecondEl) requireSecondEl.value = policy.requireSecondReviewerForHighRisk ? 'true' : 'false';
+  if (highRiskCoderEl) highRiskCoderEl.value = String(policy.highRiskMinCoderCount ?? 3);
+  if (highRiskSpreadEl) highRiskSpreadEl.value = String(policy.highRiskMinConfidenceSpread ?? 0.35);
+  if (requiredApprovalCountEl) requiredApprovalCountEl.value = String(policy.requiredApprovalCountForHighRisk ?? 1);
+  if (approvalExpiryHoursEl) approvalExpiryHoursEl.value = String(policy.approvalExpiryHours ?? 168);
+  if (defaultSlaEl) defaultSlaEl.value = String(policy.defaultTriageSlaHours ?? 72);
+}
+
+function renderCodingCalibrationSessions() {
+  const summaryEl = document.getElementById('coding-calibration-summary');
+  const listEl = document.getElementById('coding-calibration-list');
+  const resultEl = document.getElementById('coding-calibration-result');
+  const coderAEl = document.getElementById('coding-calibration-coder-a');
+  const coderBEl = document.getElementById('coding-calibration-coder-b');
+  if (!summaryEl || !listEl || !resultEl) return;
+
+  if (coderAEl && coderBEl) {
+    const options = [
+      '<option value="">auto</option>',
+      ...state.selectedMembers.map((member) => `<option value="${escapeHtml(member.username)}">${escapeHtml(member.username)}</option>`)
+    ].join('');
+    const currentA = coderAEl.value;
+    const currentB = coderBEl.value;
+    coderAEl.innerHTML = options;
+    coderBEl.innerHTML = options;
+    if (currentA) coderAEl.value = currentA;
+    if (currentB) coderBEl.value = currentB;
+  }
+
+  const sessions = state.codingCalibrationSessions ?? [];
+  summaryEl.textContent = `${sessions.length} calibration session(s).`;
+  if (sessions.length === 0) {
+    listEl.innerHTML = '<li class="interactive-list-item empty">No calibration sessions yet.</li>';
+    resultEl.innerHTML = '<p>No calibration results yet.</p>';
+    return;
+  }
+  listEl.innerHTML = sessions.map((session) => {
+    const latestResult = session.latestResult ?? {};
+    const checks = latestResult.checks ?? {};
+    const sampledCount = latestResult.sampledSegmentCount ?? (session.sampleSegmentIds?.length ?? 0);
+    return `
+      <li class="interactive-list-item">
+        <div class="source-row">
+          <div>
+            <span class="project-title">${escapeHtml(session.label)}</span>
+            <span class="source-meta">Status: ${escapeHtml(session.status)} | Code: ${escapeHtml(session.targetCodeId || 'auto')} | Coders: ${escapeHtml(session.coderAId || 'auto')} vs ${escapeHtml(session.coderBId || 'auto')}</span>
+            <span class="source-meta">Targets: agreement >= ${escapeHtml(formatStatValue(session.targetAgreement, 2))}, kappa >= ${escapeHtml(formatStatValue(session.targetKappa, 2))}, min samples ${escapeHtml(String(session.minSamples))}</span>
+            <span class="source-meta">Sampled segments: ${escapeHtml(String(sampledCount))} | Overall pass: ${checks.overallPass === true ? 'yes' : checks.overallPass === false ? 'no' : 'n/a'}</span>
+          </div>
+          <div class="inline-actions">
+            <button type="button" class="small coding-calibration-run-btn" data-session-id="${escapeHtml(session.id)}">Run</button>
+            <button type="button" class="small coding-calibration-open-btn" data-session-id="${escapeHtml(session.id)}">Open result</button>
+            <button type="button" class="small coding-calibration-archive-btn" data-session-id="${escapeHtml(session.id)}">Archive</button>
+          </div>
+        </div>
+      </li>
+    `;
+  }).join('');
+
+  listEl.querySelectorAll('.coding-calibration-run-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const sessionId = button.dataset.sessionId;
+      if (!sessionId) return;
+      button.disabled = true;
+      try {
+        await runCodingCalibrationSession(sessionId);
+      } catch (err) {
+        summaryEl.textContent = `Calibration run failed: ${err.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  listEl.querySelectorAll('.coding-calibration-open-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      const sessionId = button.dataset.sessionId;
+      if (!sessionId) return;
+      const session = sessions.find((entry) => entry.id === sessionId);
+      if (!session) return;
+      const result = session.latestResult ?? {};
+      const checks = result.checks ?? {};
+      const recs = Array.isArray(result.recommendations) ? result.recommendations : [];
+      resultEl.innerHTML = `
+        <div class="panel">
+          <h4 style="margin-top:0">${escapeHtml(session.label)}</h4>
+          <p class="small-muted">Sampled segments: ${escapeHtml(String(result.sampledSegmentCount ?? 0))} | Overall pass: ${checks.overallPass === true ? 'yes' : checks.overallPass === false ? 'no' : 'n/a'}</p>
+          <p class="small-muted">Agreement pass: ${checks.agreementPass === true ? 'yes' : checks.agreementPass === false ? 'no' : 'n/a'} | Kappa pass: ${checks.kappaPass === true ? 'yes' : checks.kappaPass === false ? 'no' : 'n/a'} | Sample pass: ${checks.samplePass === true ? 'yes' : checks.samplePass === false ? 'no' : 'n/a'}</p>
+          <p class="small-muted">Recommendations: ${escapeHtml(recs.join(' | ') || 'none')}</p>
+        </div>
+      `;
+    });
+  });
+  listEl.querySelectorAll('.coding-calibration-archive-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const sessionId = button.dataset.sessionId;
+      if (!sessionId) return;
+      button.disabled = true;
+      try {
+        await patchCodingCalibrationSession(sessionId, { status: 'archived' });
+      } catch (err) {
+        summaryEl.textContent = `Calibration archive failed: ${err.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
 }
 
 function renderAttributes() {
@@ -4077,16 +8797,339 @@ function renderTraceLinks() {
   }
 }
 
+function hasDescriptiveDataForPopup() {
+  const report = state.selectedDescriptives?.report;
+  if (!report) return false;
+  const visibleSummaries = report.summaries?.filter((summary) => summary.source !== 'system') ?? [];
+  return Boolean(report.caseCount > 0 || report.fieldCount > 0 || visibleSummaries.length > 0);
+}
+
+function getDescriptiveAutoOpenSignature() {
+  const report = state.selectedDescriptives?.report;
+  if (!report || !state.selectedProjectId) return '';
+  const visibleCount = report.summaries?.filter((summary) => summary.source !== 'system').length ?? 0;
+  return `${state.selectedProjectId}:${report.caseCount}:${report.fieldCount}:${visibleCount}`;
+}
+
+function buildDescriptivePopupHtml(projectName) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Descriptive output | muStatistics</title>
+    <style>
+      :root { color-scheme: dark; --bg:#0b111a; --panel:#121a26; --line:#2a3548; --text:#e7edf7; --muted:#9fb0c8; }
+      * { box-sizing: border-box; }
+      body { margin:0; background:linear-gradient(180deg,#0b111a,#111a27); color:var(--text); font-family:"Segoe UI", Arial, sans-serif; }
+      .shell { min-height:100vh; display:grid; grid-template-rows:auto auto 1fr; gap:0; }
+      .head { padding:16px 18px 14px; border-bottom:1px solid var(--line); background:rgba(18,26,38,0.95); }
+      .head h1 { margin:0 0 4px; font-size:20px; }
+      .meta { color:var(--muted); font-size:13px; display:flex; flex-wrap:wrap; gap:10px; }
+      .content { padding:16px; display:grid; gap:14px; }
+      .panel { border:1px solid var(--line); border-radius:14px; background:rgba(8,12,18,0.55); padding:14px; }
+      .list { margin:0; padding:0; list-style:none; display:grid; gap:10px; }
+      .muted { color:var(--muted); }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="head">
+        <h1>Descriptive Output</h1>
+        <div class="meta">
+          <span id="popup-descriptive-project">${escapeHtml(projectName)}</span>
+          <span id="popup-descriptive-case-count">0 cases</span>
+          <span id="popup-descriptive-field-count">0 fields</span>
+          <span id="popup-descriptive-updated">Waiting for data</span>
+        </div>
+      </header>
+      <main class="content">
+        <section id="popup-descriptive-overview" class="panel muted">Select a project to build a case-level dataset.</section>
+        <section class="panel">
+          <ul id="popup-descriptives-list" class="list">
+            <li class="muted">No dataset available yet.</li>
+          </ul>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>`;
+}
+
+function syncDescriptivePopup() {
+  if (!descriptivePopupWindow || descriptivePopupWindow.closed) return;
+  const popupDoc = descriptivePopupWindow.document;
+  const popupOverview = popupDoc.getElementById('popup-descriptive-overview');
+  const popupList = popupDoc.getElementById('popup-descriptives-list');
+  if (!popupOverview || !popupList) return;
+
+  const project = state.selectedSummary?.project
+    ?? state.projects.find((item) => item.id === state.selectedProjectId)
+    ?? null;
+  const caseCount = document.getElementById('descriptive-case-count')?.textContent ?? '0 cases';
+  const fieldCount = document.getElementById('descriptive-field-count')?.textContent ?? '0 fields';
+  const sourceOverview = document.getElementById('descriptive-overview');
+  const sourceList = document.getElementById('descriptives-list');
+
+  const projectEl = popupDoc.getElementById('popup-descriptive-project');
+  if (projectEl) projectEl.textContent = project ? `${project.name} (${project.id})` : 'No project selected';
+  const caseCountEl = popupDoc.getElementById('popup-descriptive-case-count');
+  if (caseCountEl) caseCountEl.textContent = caseCount;
+  const fieldCountEl = popupDoc.getElementById('popup-descriptive-field-count');
+  if (fieldCountEl) fieldCountEl.textContent = fieldCount;
+  const updatedEl = popupDoc.getElementById('popup-descriptive-updated');
+  if (updatedEl) updatedEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+
+  popupOverview.innerHTML = sourceOverview?.innerHTML ?? '<p>Select a project to build a case-level dataset.</p>';
+  popupList.innerHTML = sourceList?.innerHTML ?? '<li class="muted">No dataset available yet.</li>';
+}
+
+function ensureDescriptivePopupOpen({ auto = false } = {}) {
+  const project = state.selectedSummary?.project
+    ?? state.projects.find((item) => item.id === state.selectedProjectId)
+    ?? null;
+  if (!project && !auto) {
+    window.alert('Select a project first.');
+    return null;
+  }
+
+  let popup = descriptivePopupWindow;
+  if (!popup || popup.closed) {
+    popup = window.open('', DESCRIPTIVE_POPUP_WINDOW_NAME, 'width=1240,height=860,resizable=yes,scrollbars=yes');
+    descriptivePopupWindow = popup;
+  }
+  if (!popup) {
+    if (!auto) {
+      window.alert('Popup blocked. Please allow popups for localhost.');
+    } else if (!descriptivePopupBlockedAutoNoticeShown) {
+      setText('descriptive-popup-status', 'Popup blocked: click Open descriptive popup');
+      descriptivePopupBlockedAutoNoticeShown = true;
+    }
+    return null;
+  }
+
+  const needsBootstrap = !popup.document.getElementById('popup-descriptive-overview');
+  if (needsBootstrap) {
+    popup.document.open();
+    popup.document.write(buildDescriptivePopupHtml(project?.name ?? 'No project selected'));
+    popup.document.close();
+  }
+
+  descriptivePopupBlockedAutoNoticeShown = false;
+  setText('descriptive-popup-status', 'Popup open');
+  syncDescriptivePopup();
+  popup.focus();
+  return popup;
+}
+
+function maybeAutoOpenDescriptivePopup() {
+  return;
+}
+
+function updateQuantOutputPopupStatus() {
+  setText(
+    'quant-output-popup-status',
+    quantOutputPopupWindow && !quantOutputPopupWindow.closed
+      ? 'Output window open'
+      : 'Output window closed'
+  );
+}
+
+function buildQuantOutputPopupHtml(projectLabel) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Quantitative Output | muStatistics</title>
+    <style id="quant-popup-base-style">
+      body {
+        margin: 0;
+        background: #0b0f16;
+        color: #e8edf7;
+        font-family: "Segoe UI", Arial, sans-serif;
+      }
+      .quant-popup-shell {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+      .quant-popup-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 14px 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(18, 23, 32, 0.95);
+      }
+      .quant-popup-head h1 {
+        margin: 0 0 4px;
+        font-size: 18px;
+      }
+      .quant-popup-head p {
+        margin: 0;
+        color: rgba(224, 232, 246, 0.75);
+        font-size: 12px;
+      }
+      .quant-popup-updated {
+        color: rgba(224, 232, 246, 0.75);
+        font-size: 12px;
+      }
+      .quant-popup-body {
+        display: grid;
+        grid-template-columns: minmax(250px, 330px) minmax(0, 1fr);
+        gap: 14px;
+        padding: 14px;
+      }
+      .quant-popup-pane {
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 12px;
+        background: rgba(15, 20, 28, 0.9);
+        padding: 12px;
+        min-height: 0;
+      }
+      .quant-popup-nav {
+        display: grid;
+        gap: 8px;
+        align-content: start;
+        max-height: calc(100vh - 120px);
+        overflow: auto;
+      }
+      .quant-popup-nav-btn {
+        width: 100%;
+        text-align: left;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 10px;
+        background: rgba(11, 15, 22, 0.76);
+        color: inherit;
+        padding: 10px 12px;
+        cursor: pointer;
+      }
+      .quant-popup-nav-btn.active {
+        border-color: rgba(210, 178, 122, 0.54);
+        background: rgba(210, 178, 122, 0.16);
+      }
+      #popup-quant-output-stage {
+        max-height: calc(100vh - 120px);
+        overflow: auto;
+      }
+      #popup-quant-output-stage [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="quant-popup-shell">
+      <header class="quant-popup-head">
+        <div>
+          <h1>Quantitative Output</h1>
+          <p id="popup-quant-output-project">${escapeHtml(projectLabel)}</p>
+        </div>
+        <span id="popup-quant-output-updated" class="quant-popup-updated">Waiting for output</span>
+      </header>
+      <div class="quant-popup-body">
+        <aside class="quant-popup-pane">
+          <div id="popup-quant-output-nav" class="quant-popup-nav"></div>
+        </aside>
+        <main class="quant-popup-pane" id="popup-quant-output-stage"></main>
+      </div>
+    </div>
+  </body>
+</html>`;
+}
+
+function syncQuantOutputPopup() {
+  if (!quantOutputPopupWindow || quantOutputPopupWindow.closed) {
+    quantOutputPopupWindow = null;
+    updateQuantOutputPopupStatus();
+    return;
+  }
+  const popupDoc = quantOutputPopupWindow.document;
+  const navHost = popupDoc.getElementById('popup-quant-output-nav');
+  const stageHost = popupDoc.getElementById('popup-quant-output-stage');
+  if (!navHost || !stageHost) return;
+
+  const project = state.selectedSummary?.project
+    ?? state.projects.find((item) => item.id === state.selectedProjectId)
+    ?? null;
+  const projectEl = popupDoc.getElementById('popup-quant-output-project');
+  if (projectEl) projectEl.textContent = project ? `${project.name} (${project.id})` : 'No project selected';
+  const updatedEl = popupDoc.getElementById('popup-quant-output-updated');
+  if (updatedEl) updatedEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+
+  const sourceNavButtons = Array.from(document.querySelectorAll('.quant-output-nav-list [data-quant-output-nav]'));
+  navHost.innerHTML = '';
+  for (const sourceButton of sourceNavButtons) {
+    const button = popupDoc.createElement('button');
+    button.type = 'button';
+    button.className = 'quant-popup-nav-btn';
+    const view = sourceButton.dataset.quantOutputNav ?? '';
+    button.textContent = sourceButton.textContent ?? view;
+    button.classList.toggle('active', view === state.quantOutputView);
+    button.addEventListener('click', () => {
+      state.quantOutputView = view;
+      state.quantOutputTreeSelection = `live:${state.quantOutputView}`;
+      syncWorkspaceMenus();
+      syncQuantOutputPopup();
+    });
+    navHost.appendChild(button);
+  }
+
+  const sourceStage = document.querySelector('.quant-output-stage');
+  stageHost.innerHTML = sourceStage?.innerHTML ?? '<p>No output stage available yet.</p>';
+  stageHost.querySelectorAll('[data-quant-output]').forEach((panel) => {
+    panel.hidden = panel.dataset.quantOutput !== state.quantOutputView;
+  });
+  updateQuantOutputPopupStatus();
+}
+
+function ensureQuantOutputPopupOpen() {
+  if (!state.selectedProjectId) {
+    window.alert('Select a project first.');
+    return null;
+  }
+
+  let popup = quantOutputPopupWindow;
+  if (!popup || popup.closed) {
+    popup = window.open('', QUANT_OUTPUT_POPUP_WINDOW_NAME, 'width=1480,height=920,resizable=yes,scrollbars=yes');
+    quantOutputPopupWindow = popup;
+  }
+  if (!popup) {
+    window.alert('Popup blocked. Please allow popups for localhost.');
+    updateQuantOutputPopupStatus();
+    return null;
+  }
+
+  const project = state.selectedSummary?.project
+    ?? state.projects.find((item) => item.id === state.selectedProjectId)
+    ?? null;
+  const needsBootstrap = !popup.document.getElementById('popup-quant-output-stage');
+  if (needsBootstrap) {
+    popup.document.open();
+    popup.document.write(buildQuantOutputPopupHtml(project ? `${project.name} (${project.id})` : 'No project selected'));
+    popup.document.close();
+    for (const node of document.head.querySelectorAll('style, link[rel="stylesheet"]')) {
+      popup.document.head.appendChild(node.cloneNode(true));
+    }
+  }
+
+  syncQuantOutputPopup();
+  popup.focus();
+  return popup;
+}
+
 function renderDescriptives() {
   const overview = document.getElementById('descriptive-overview');
   const list = document.getElementById('descriptives-list');
   if (!overview || !list) return;
 
   if (!state.selectedDescriptives) {
+    descriptivePopupAutoOpenSignature = '';
     setText('descriptive-case-count', '0 cases');
     setText('descriptive-field-count', '0 fields');
+    setText('descriptive-popup-status', descriptivePopupWindow && !descriptivePopupWindow.closed ? 'Popup open' : 'Popup ready');
     overview.innerHTML = '<p>Select a project to build a case-level dataset.</p>';
     list.innerHTML = '<li class="interactive-list-item empty">No dataset available yet.</li>';
+    syncDescriptivePopup();
     return;
   }
 
@@ -4094,6 +9137,7 @@ function renderDescriptives() {
     const { dataset, report } = state.selectedDescriptives;
     setText('descriptive-case-count', `${report.caseCount} cases`);
     setText('descriptive-field-count', `${report.fieldCount} fields`);
+    setText('descriptive-popup-status', descriptivePopupWindow && !descriptivePopupWindow.closed ? 'Popup open' : 'Popup ready');
 
       const notes = dataset.notes ?? [];
       const completenessItems = report.summaries
@@ -4140,6 +9184,8 @@ function renderDescriptives() {
     const visibleSummaries = report.summaries.filter((summary) => summary.source !== 'system');
     if (visibleSummaries.length === 0) {
       list.innerHTML = '<li class="interactive-list-item empty">No analyzable fields yet. Add case attributes or derive a binary variable from coded evidence.</li>';
+      syncDescriptivePopup();
+      maybeAutoOpenDescriptivePopup();
       return;
     }
 
@@ -4174,6 +9220,8 @@ function renderDescriptives() {
       `;
       list.appendChild(li);
     }
+    syncDescriptivePopup();
+    maybeAutoOpenDescriptivePopup();
     return;
   }
 
@@ -4365,6 +9413,8 @@ function renderFrequencyTable() {
 function renderGovernanceStatus() {
   const node = document.getElementById('governance-status-list');
   const deploymentNode = document.getElementById('deployment-issues-list');
+  const cutoverNode = document.getElementById('cutover-check-list');
+  const cutoverSummaryEl = document.getElementById('cutover-summary');
   if (!node) return;
   node.innerHTML = '';
   setText('governance-ready', state.governanceStatus ? 'configured' : 'unavailable');
@@ -4374,14 +9424,26 @@ function renderGovernanceStatus() {
     if (deploymentNode) {
       deploymentNode.innerHTML = '<li class="interactive-list-item empty">Deployment validation is not available.</li>';
     }
+    if (cutoverNode) {
+      cutoverNode.innerHTML = '<li class="interactive-list-item empty">Cutover check is not available.</li>';
+    }
+    if (cutoverSummaryEl) {
+      cutoverSummaryEl.textContent = 'Run cutover check after MU OIDC values are supplied.';
+    }
     return;
   }
 
   const items = [
     ['Audit trail', state.governanceStatus.auditTrailEnabled ? 'enabled' : 'disabled'],
     ['OIDC / SSO', state.governanceStatus.oidcEnabled ? 'configured' : 'waiting for MU config'],
+    ['OIDC readiness', state.governanceStatus.oidcReadiness?.missingFields?.length ? `missing ${state.governanceStatus.oidcReadiness.missingFields.join(', ')}` : 'core fields configured'],
+    ['OIDC redirect alignment', state.governanceStatus.oidcReadiness?.redirectUriCheck?.message ?? 'not yet evaluated'],
+    ['OIDC audience mode', state.governanceStatus.oidcReadiness?.audienceCheck?.message ?? 'not yet evaluated'],
     ['Idle session timeout', `${state.governanceStatus.sessionIdleTimeoutMinutes} minutes`],
+    ['Absolute session timeout', `${state.governanceStatus.sessionAbsoluteTimeoutMinutes ?? 720} minutes`],
     ['Login throttling', `${state.governanceStatus.loginThrottle.maxFailures} failures / ${state.governanceStatus.loginThrottle.windowMinutes} minutes`],
+    ['Local auth', state.governanceStatus.localAuthEnabled === false ? 'disabled (SSO only)' : 'enabled'],
+    ['Password policy', `min ${state.governanceStatus.passwordPolicy?.minLength ?? 10}, uppercase ${state.governanceStatus.passwordPolicy?.requireUppercase ? 'required' : 'optional'}, number ${state.governanceStatus.passwordPolicy?.requireNumber ? 'required' : 'optional'}, symbol ${state.governanceStatus.passwordPolicy?.requireSymbol ? 'required' : 'optional'}`],
     ['Audit export limit', `${state.governanceStatus.auditExportMaxRows} rows`],
     ['Backup retention', `${state.governanceStatus.backupRetentionDays} days`],
     ['Export storage', state.governanceStatus.exportStorageEnabled ? 'enabled' : 'disabled'],
@@ -4405,13 +9467,31 @@ function renderGovernanceStatus() {
 
   if (state.governancePolicy) {
     document.getElementById('policy-idle-timeout').value = String(state.governancePolicy.idleTimeoutMinutes);
+    document.getElementById('policy-session-absolute-timeout').value = String(state.governancePolicy.sessionAbsoluteTimeoutMinutes ?? 720);
     document.getElementById('policy-login-window').value = String(state.governancePolicy.loginThrottleWindowMinutes);
     document.getElementById('policy-login-failures').value = String(state.governancePolicy.loginThrottleMaxFailures);
+    document.getElementById('policy-local-auth-enabled').value = state.governancePolicy.localAuthEnabled === false ? 'false' : 'true';
+    document.getElementById('policy-password-min-length').value = String(state.governancePolicy.passwordMinLength ?? 10);
+    document.getElementById('policy-password-require-uppercase').value = state.governancePolicy.passwordRequireUppercase ? 'true' : 'false';
+    document.getElementById('policy-password-require-number').value = state.governancePolicy.passwordRequireNumber ? 'true' : 'false';
+    document.getElementById('policy-password-require-symbol').value = state.governancePolicy.passwordRequireSymbol ? 'true' : 'false';
     document.getElementById('policy-audit-max-rows').value = String(state.governancePolicy.auditExportMaxRows);
     document.getElementById('policy-backup-retention').value = String(state.governancePolicy.backupRetentionDays);
   }
   const canManagePolicy = state.currentUser?.role === 'professor';
-  ['policy-idle-timeout', 'policy-login-window', 'policy-login-failures', 'policy-audit-max-rows', 'policy-backup-retention']
+  [
+    'policy-idle-timeout',
+    'policy-session-absolute-timeout',
+    'policy-login-window',
+    'policy-login-failures',
+    'policy-local-auth-enabled',
+    'policy-password-min-length',
+    'policy-password-require-uppercase',
+    'policy-password-require-number',
+    'policy-password-require-symbol',
+    'policy-audit-max-rows',
+    'policy-backup-retention'
+  ]
     .forEach((id) => {
       const input = document.getElementById(id);
       if (input) input.disabled = !canManagePolicy;
@@ -4442,6 +9522,41 @@ function renderGovernanceStatus() {
           </div>
         `;
         deploymentNode.appendChild(li);
+      }
+    }
+  }
+
+  if (cutoverNode) {
+    cutoverNode.innerHTML = '';
+    const checks = state.cutoverValidation?.checks ?? [];
+    if (checks.length === 0) {
+      cutoverNode.innerHTML = '<li class="interactive-list-item empty">No cutover check has been run in this session.</li>';
+      if (cutoverSummaryEl) {
+        cutoverSummaryEl.textContent = 'Run cutover check after MU OIDC values are supplied.';
+      }
+    } else {
+      for (const check of checks) {
+        const li = document.createElement('li');
+        li.className = 'interactive-list-item';
+        li.innerHTML = `
+          <div class="source-row">
+            <div>
+              <span class="project-title">${escapeHtml(check.label)}</span>
+              <span class="source-meta">${escapeHtml(check.message)}</span>
+            </div>
+            <span class="badge">${escapeHtml(check.status)}</span>
+          </div>
+        `;
+        cutoverNode.appendChild(li);
+      }
+      if (cutoverSummaryEl) {
+        const blockerCount = Number(state.cutoverValidation?.blockerCount ?? 0);
+        const warningCount = Number(state.cutoverValidation?.warningCount ?? 0);
+        const ready = Boolean(state.cutoverValidation?.readyForCutover);
+        const firstBlocker = state.cutoverValidation?.summary?.blockers?.[0];
+        cutoverSummaryEl.textContent = ready
+          ? `Cutover ready. ${warningCount} warning(s) remain for review.`
+          : `Cutover blocked. ${blockerCount} blocker(s) and ${warningCount} warning(s) detected.${firstBlocker ? ` First blocker: ${firstBlocker.label}.` : ''}`;
       }
     }
   }
@@ -4850,34 +9965,231 @@ function renderCustomTable() {
   });
 }
 
+function parseExactInputValue(rawValue) {
+  const text = String(rawValue ?? '').trim();
+  if (!text) return undefined;
+  if (text.toLowerCase() === 'true') return true;
+  if (text.toLowerCase() === 'false') return false;
+  if (/^-?\d+(\.\d+)?$/.test(text)) return Number(text);
+  return text;
+}
+
 function renderExactTest() {
+  const testTypeEl = document.getElementById('exact-test-type');
+  const fisherFieldsEl = document.getElementById('exact-fisher-fields');
+  const binomialFieldsEl = document.getElementById('exact-binomial-fields');
+  const mcnemarFieldsEl = document.getElementById('exact-mcnemar-fields');
+  const signFieldsEl = document.getElementById('exact-sign-fields');
   const rowFieldEl = document.getElementById('exact-row-field');
   const columnFieldEl = document.getElementById('exact-column-field');
+  const binaryFieldEl = document.getElementById('exact-binary-field');
+  const beforeFieldEl = document.getElementById('exact-before-field');
+  const afterFieldEl = document.getElementById('exact-after-field');
+  const signBeforeFieldEl = document.getElementById('exact-sign-before-field');
+  const signAfterFieldEl = document.getElementById('exact-sign-after-field');
   const runBtn = document.getElementById('run-exact-test-btn');
   const resultEl = document.getElementById('exact-test-result');
-  if (!rowFieldEl || !columnFieldEl || !runBtn || !resultEl) return;
+  if (
+    !testTypeEl || !fisherFieldsEl || !binomialFieldsEl || !mcnemarFieldsEl || !signFieldsEl
+    || !rowFieldEl || !columnFieldEl || !binaryFieldEl || !beforeFieldEl || !afterFieldEl
+    || !signBeforeFieldEl || !signAfterFieldEl || !runBtn || !resultEl
+  ) return;
 
-  const options = getCrosstabFieldOptions();
+  const testType = ['binomial', 'mcnemar', 'sign'].includes(testTypeEl.value) ? testTypeEl.value : 'fisher_2x2';
+  const categoricalOptions = getCrosstabFieldOptions();
+  const numericOptions = getDatasetAnalysisFieldOptions().filter((option) => option.valueType === 'number');
   const previousRow = rowFieldEl.value || state.selectedCrosstabRowField;
   const previousColumn = columnFieldEl.value || state.selectedCrosstabColumnField;
-  rowFieldEl.innerHTML = options.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${option.validCount} valid)</option>`).join('');
-  columnFieldEl.innerHTML = options.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${option.validCount} valid)</option>`).join('');
-  rowFieldEl.value = options.some((option) => option.key === previousRow) ? previousRow : options[0]?.key ?? '';
-  columnFieldEl.value = options.some((option) => option.key === previousColumn && option.key !== rowFieldEl.value)
+  const previousBinary = binaryFieldEl.value;
+  const previousBefore = beforeFieldEl.value;
+  const previousAfter = afterFieldEl.value;
+  const previousSignBefore = signBeforeFieldEl.value;
+  const previousSignAfter = signAfterFieldEl.value;
+
+  const categoricalMarkup = categoricalOptions
+    .map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${option.validCount} valid)</option>`)
+    .join('');
+  rowFieldEl.innerHTML = categoricalMarkup;
+  columnFieldEl.innerHTML = categoricalMarkup;
+  binaryFieldEl.innerHTML = categoricalMarkup;
+  beforeFieldEl.innerHTML = categoricalMarkup;
+  afterFieldEl.innerHTML = categoricalMarkup;
+  const numericMarkup = numericOptions
+    .map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`)
+    .join('');
+  signBeforeFieldEl.innerHTML = numericMarkup;
+  signAfterFieldEl.innerHTML = numericMarkup;
+
+  rowFieldEl.value = categoricalOptions.some((option) => option.key === previousRow) ? previousRow : categoricalOptions[0]?.key ?? '';
+  columnFieldEl.value = categoricalOptions.some((option) => option.key === previousColumn && option.key !== rowFieldEl.value)
     ? previousColumn
-    : options.find((option) => option.key !== rowFieldEl.value)?.key ?? '';
-  runBtn.disabled = options.length < 2;
+    : categoricalOptions.find((option) => option.key !== rowFieldEl.value)?.key ?? '';
+  binaryFieldEl.value = categoricalOptions.some((option) => option.key === previousBinary) ? previousBinary : categoricalOptions[0]?.key ?? '';
+  beforeFieldEl.value = categoricalOptions.some((option) => option.key === previousBefore) ? previousBefore : categoricalOptions[0]?.key ?? '';
+  afterFieldEl.value = categoricalOptions.some((option) => option.key === previousAfter && option.key !== beforeFieldEl.value)
+    ? previousAfter
+    : categoricalOptions.find((option) => option.key !== beforeFieldEl.value)?.key ?? '';
+  signBeforeFieldEl.value = numericOptions.some((option) => option.key === previousSignBefore) ? previousSignBefore : numericOptions[0]?.key ?? '';
+  signAfterFieldEl.value = numericOptions.some((option) => option.key === previousSignAfter && option.key !== signBeforeFieldEl.value)
+    ? previousSignAfter
+    : numericOptions.find((option) => option.key !== signBeforeFieldEl.value)?.key ?? '';
+
+  fisherFieldsEl.hidden = testType !== 'fisher_2x2';
+  binomialFieldsEl.hidden = testType !== 'binomial';
+  mcnemarFieldsEl.hidden = testType !== 'mcnemar';
+  signFieldsEl.hidden = testType !== 'sign';
+
+  const canRun = testType === 'fisher_2x2'
+    ? categoricalOptions.length >= 2 && rowFieldEl.value && columnFieldEl.value && rowFieldEl.value !== columnFieldEl.value
+    : testType === 'binomial'
+      ? categoricalOptions.length >= 1 && binaryFieldEl.value
+      : testType === 'mcnemar'
+        ? categoricalOptions.length >= 2 && beforeFieldEl.value && afterFieldEl.value && beforeFieldEl.value !== afterFieldEl.value
+        : numericOptions.length >= 2 && signBeforeFieldEl.value && signAfterFieldEl.value && signBeforeFieldEl.value !== signAfterFieldEl.value;
+  runBtn.disabled = !canRun;
 
   if (!state.exactTestResult) {
-    resultEl.innerHTML = '<p>Choose two categorical fields. Fisher exact is produced for 2x2 integer-like tables.</p>';
+    resultEl.innerHTML = testType === 'fisher_2x2'
+      ? '<p>Choose two categorical fields. Fisher exact is produced for 2x2 integer-like tables.</p>'
+      : testType === 'binomial'
+        ? '<p>Choose one binary field and success/null settings, then run binomial exact.</p>'
+        : testType === 'mcnemar'
+          ? '<p>Choose paired binary before/after fields, then run McNemar exact.</p>'
+          : '<p>Choose paired numeric before/after fields, then run a sign test.</p>';
     return;
   }
 
   const result = state.exactTestResult;
+  if (result.testType === 'binomial' && result.binomialExact) {
+    const binomial = result.binomialExact;
+    resultEl.innerHTML = buildOutputViewer({
+      eyebrow: 'Exact test',
+      title: `Binomial exact: ${binomial.label}`,
+      summary: `Two-sided p ${formatStatValue(binomial.pValueTwoSided, 5)} against null proportion ${formatDecimal(binomial.nullProportion, 3)}.`,
+      metrics: [
+        { label: 'Successes', value: binomial.successCount },
+        { label: 'Failures', value: binomial.failureCount },
+        { label: 'Observed p', value: formatStatValue(binomial.observedProportion, 4) },
+        { label: 'Two-sided p', value: formatStatValue(binomial.pValueTwoSided, 5) }
+      ],
+      sections: [
+        buildOutputSection(
+          'Binomial exact',
+          buildOutputTable(
+            ['Field', 'Success value', 'Null proportion', 'Observed proportion', '95% CI', 'Left p', 'Right p', 'Two-sided p'],
+            [[
+              escapeHtml(binomial.label),
+              escapeHtml(String(binomial.successValue)),
+              formatStatValue(binomial.nullProportion, 4),
+              formatStatValue(binomial.observedProportion, 4),
+              formatConfidenceInterval(binomial.confidenceInterval, 4),
+              formatStatValue(binomial.pValueLeft, 5),
+              formatStatValue(binomial.pValueRight, 5),
+              formatStatValue(binomial.pValueTwoSided, 5)
+            ]]
+          )
+        ),
+        result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
+      ].filter(Boolean)
+    });
+    return;
+  }
+
+  if (result.testType === 'mcnemar' && result.mcnemarExact) {
+    const mcnemar = result.mcnemarExact;
+    resultEl.innerHTML = buildOutputViewer({
+      eyebrow: 'Exact test',
+      title: `McNemar exact: ${mcnemar.beforeLabel} vs ${mcnemar.afterLabel}`,
+      summary: `Discordant exact two-sided p ${formatStatValue(mcnemar.pValueTwoSided, 5)}.`,
+      metrics: [
+        { label: 'Discordant +->-', value: mcnemar.discordantPositiveToNegative },
+        { label: 'Discordant -->+', value: mcnemar.discordantNegativeToPositive },
+        { label: 'Exact two-sided p', value: formatStatValue(mcnemar.pValueTwoSided, 5) },
+        { label: 'Continuity χ²', value: formatStatValue(mcnemar.statistic, 4) }
+      ],
+      sections: [
+        buildOutputSection(
+          'Paired transition counts',
+          buildOutputTable(
+            ['Positive value', '++', '--', '+->-', '-->+'],
+            [[
+              escapeHtml(mcnemar.positiveValue),
+              String(mcnemar.concordantPositive),
+              String(mcnemar.concordantNegative),
+              String(mcnemar.discordantPositiveToNegative),
+              String(mcnemar.discordantNegativeToPositive)
+            ]]
+          )
+        ),
+        buildOutputSection(
+          'Exact inference',
+          buildOutputTable(
+            ['Two-sided p', 'Left p', 'Right p', 'Odds ratio'],
+            [[
+              formatStatValue(mcnemar.pValueTwoSided, 5),
+              formatStatValue(mcnemar.pValueLeft, 5),
+              formatStatValue(mcnemar.pValueRight, 5),
+              formatStatValue(mcnemar.oddsRatio, 5)
+            ]]
+          )
+        ),
+        result.chiSquare
+          ? buildOutputSection(
+            'Continuity-corrected chi-square',
+            buildOutputTable(
+              ['Statistic', 'df', 'p'],
+              [[
+                formatStatValue(result.chiSquare.statistic, 4),
+                String(result.chiSquare.degreesOfFreedom),
+                formatStatValue(result.chiSquare.pValue, 5)
+              ]]
+            )
+          )
+          : '',
+        result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
+      ].filter(Boolean)
+    });
+    return;
+  }
+
+  if (result.testType === 'sign' && result.signTest) {
+    const sign = result.signTest;
+    resultEl.innerHTML = buildOutputViewer({
+      eyebrow: 'Exact test',
+      title: `Sign test: ${sign.beforeLabel} vs ${sign.afterLabel}`,
+      summary: `Two-sided p ${formatStatValue(sign.pValueTwoSided, 5)} with ${sign.tieCount} ties excluded from exact tails.`,
+      metrics: [
+        { label: 'Positive diffs', value: sign.positiveCount },
+        { label: 'Negative diffs', value: sign.negativeCount },
+        { label: 'Ties', value: sign.tieCount },
+        { label: 'Median diff', value: formatStatValue(sign.medianDifference, 4) }
+      ],
+      sections: [
+        buildOutputSection(
+          'Sign test summary',
+          buildOutputTable(
+            ['Positive', 'Negative', 'Ties', 'Median difference', 'Left p', 'Right p', 'Two-sided p'],
+            [[
+              String(sign.positiveCount),
+              String(sign.negativeCount),
+              String(sign.tieCount),
+              formatStatValue(sign.medianDifference, 4),
+              formatStatValue(sign.pValueLeft, 5),
+              formatStatValue(sign.pValueRight, 5),
+              formatStatValue(sign.pValueTwoSided, 5)
+            ]]
+          )
+        ),
+        result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
+      ].filter(Boolean)
+    });
+    return;
+  }
+
   const cellLookup = new Map(result.table.cells.map((cell) => [`${cell.rowValue}::${cell.columnValue}`, cell.count]));
   resultEl.innerHTML = buildOutputViewer({
     eyebrow: 'Exact test',
-    title: `${result.rowLabel} by ${result.columnLabel}`,
+    title: `${result.rowLabel ?? 'Row'} by ${result.columnLabel ?? 'Column'}`,
     summary: result.method === 'fisher_exact_2x2'
       ? `Fisher two-sided p ${formatStatValue(result.fisherExact?.pValueTwoSided, 4)}.`
       : 'Exact output unavailable for this table shape; chi-square output is shown.',
@@ -4891,7 +10203,7 @@ function renderExactTest() {
       buildOutputSection(
         'Contingency table',
         buildOutputTable(
-          [`${escapeHtml(result.rowLabel)} \\ ${escapeHtml(result.columnLabel)}`, ...result.table.columnValues.map(escapeHtml)],
+          [`${escapeHtml(result.rowLabel ?? 'Row')} \\ ${escapeHtml(result.columnLabel ?? 'Column')}`, ...result.table.columnValues.map(escapeHtml)],
           result.table.rowValues.map((rowValue) => [
             escapeHtml(rowValue),
             ...result.table.columnValues.map((columnValue) => formatStatValue(cellLookup.get(`${rowValue}::${columnValue}`) ?? 0, 3))
@@ -5089,6 +10401,23 @@ function renderMissingValues() {
   });
 }
 
+function renderSelectedProjectHeaderCard() {
+  if (!state.selectedSummary) {
+    setText('project-selection-status', 'None');
+    setHtml('project-hub-card', '<p>Select a project.</p>');
+    return;
+  }
+  const project = state.selectedSummary.project;
+  setText('project-selection-status', project.name);
+  setHtml('project-hub-card', `
+    <p><strong>${escapeHtml(project.name)}</strong></p>
+    <p>Mode: <strong>${escapeHtml(project.workspaceMode ?? 'solo')}</strong></p>
+    <p>Members: <strong>${state.selectedMembers.length}</strong></p>
+    <p>Active users: <strong>${state.selectedPresence.length}</strong></p>
+    <p>Recent chat messages: <strong>${state.selectedMessages.length}</strong></p>
+  `);
+}
+
 function renderSummary() {
   if (!state.selectedSummary) {
     setText('shell-project-name', 'No project selected');
@@ -5098,10 +10427,9 @@ function renderSummary() {
     setText('shell-code-count', '0');
     setText('shell-case-count', '0');
     setText('shell-variable-count', '0');
-    setText('project-selection-status', 'None');
+    renderSelectedProjectHeaderCard();
     setText('qual-library-source-count', '0');
     setText('qual-library-code-count', '0');
-    setHtml('project-hub-card', '<p>Select a project.</p>');
     setHtml('project-card', '<p>Select a project.</p>');
     setHtml('qual-card', '<p>Select a project.</p>');
     setHtml('quant-card', '<p>Select a project.</p>');
@@ -5109,6 +10437,7 @@ function renderSummary() {
     setText('dataset-output', 'No project selected.');
     document.getElementById('trace-list').innerHTML = '<li>No project selected.</li>';
     renderProjectActions();
+    renderWorkspacePermissionStates();
     return;
   }
 
@@ -5123,7 +10452,7 @@ function renderSummary() {
   setText('shell-code-count', `${s.counts.projectCodes}`);
   setText('shell-case-count', `${s.counts.projectCases}`);
   setText('shell-variable-count', `${s.counts.projectVariables}`);
-  setText('project-selection-status', s.project.name);
+  renderSelectedProjectHeaderCard();
   setText('qual-library-source-count', `${s.counts.projectSources}`);
   setText('qual-library-code-count', `${s.counts.projectCodes}`);
 
@@ -5135,14 +10464,8 @@ function renderSummary() {
     <p>Total projects: <strong>${s.counts.projects}</strong></p>
   `);
 
-  setHtml('project-hub-card', `
-    <p><strong>${escapeHtml(s.project.name)}</strong></p>
-    <p>Mode: <strong>${escapeHtml(s.project.workspaceMode ?? 'solo')}</strong></p>
-    <p>Members: <strong>${state.selectedMembers.length}</strong></p>
-    <p>Active users: <strong>${state.selectedPresence.length}</strong></p>
-    <p>Recent chat messages: <strong>${state.selectedMessages.length}</strong></p>
-  `);
   renderProjectActions();
+  renderWorkspacePermissionStates();
 
   setHtml('qual-card', `
     <p>Latest source: <strong>${escapeHtml(s.source?.title ?? 'None yet')}</strong></p>
@@ -5198,6 +10521,11 @@ function renderSummary() {
 function formatImportResult(item) {
   if (item.importedAs === 'error') {
     return `Could not import ${item.filename}: ${item.message}`;
+  }
+  if (item.importedAs === 'media_source') {
+    const sourceKind = item.sourceKind ? `${item.sourceKind} ` : 'media ';
+    const artifactSummary = item.artifactPath ? ` Stored as ${item.artifactPath}.` : '';
+    return `Imported ${sourceKind}source "${item.title}" (${item.filename}).${artifactSummary}`;
   }
   if (item.importedAs === 'source') {
     const sourceKind = item.sourceKind ? `${item.sourceKind} ` : '';
@@ -5324,7 +10652,13 @@ function renderOfficeLaunchStatus() {
     office?.wordLaunchAvailable ? `Word ready${recentWord ? ` (${recentWord.filename})` : ''}` : 'Word not found',
     office?.excelLaunchAvailable ? `Excel ready${recentExcel ? ` (${recentExcel.filename})` : ''}` : 'Excel not found'
   ].join(' ');
-  statusEl.textContent = `${sqlText} ${officeText}`;
+  const sem = state.integrationStatus?.sem ?? null;
+  const semText = sem
+    ? sem.strategy === 'integration_boundary'
+      ? `SEM boundary ${sem.executionReady ? 'ready' : 'needs provider configuration'}.`
+      : `SEM native ${sem.nativeSemImplemented ? 'ready' : 'not implemented'}.`
+    : 'SEM status unavailable.';
+  statusEl.textContent = `${sqlText} ${officeText}. ${semText}`;
 }
 
 async function openRecentOfficeArtifact(app) {
@@ -5419,6 +10753,74 @@ async function loadExternalSqlImportJobs() {
     state.externalSqlImportJobs = env.data?.items ?? [];
   } catch {
     state.externalSqlImportJobs = [];
+  }
+}
+
+async function loadOfficeConnectorProfiles() {
+  if (!state.selectedProjectId || !state.currentUser || !getProjectPermissionState().canExportProject) {
+    state.officeConnectorProfiles = [];
+    state.officeConnectorDiscovery = [];
+    state.selectedOfficeConnectorProfileId = null;
+    return;
+  }
+  try {
+    const env = await getJson(`${API_BASE}/office-connectors/profiles?projectId=${encodeURIComponent(state.selectedProjectId)}`);
+    state.officeConnectorProfiles = env.data?.items ?? [];
+    if (!state.officeConnectorProfiles.some((item) => item.id === state.selectedOfficeConnectorProfileId)) {
+      state.selectedOfficeConnectorProfileId = state.officeConnectorProfiles[0]?.id ?? null;
+      state.officeConnectorDiscovery = [];
+    }
+  } catch {
+    state.officeConnectorProfiles = [];
+    state.officeConnectorDiscovery = [];
+    state.selectedOfficeConnectorProfileId = null;
+  }
+}
+
+async function loadOfficeConnectorJobs() {
+  if (!state.selectedProjectId || !state.currentUser || !getProjectPermissionState().canExportProject) {
+    state.officeConnectorJobs = [];
+    return;
+  }
+  try {
+    const env = await getJson(`${API_BASE}/office-connectors/jobs?projectId=${encodeURIComponent(state.selectedProjectId)}`);
+    state.officeConnectorJobs = env.data?.items ?? [];
+  } catch {
+    state.officeConnectorJobs = [];
+  }
+}
+
+async function loadReferenceConnectorProfiles() {
+  if (!state.selectedProjectId || !state.currentUser || !getProjectPermissionState().canExportProject) {
+    state.referenceConnectorProfiles = [];
+    state.referenceConnectorSearchResults = [];
+    state.selectedReferenceConnectorProfileId = null;
+    return;
+  }
+  try {
+    const env = await getJson(`${API_BASE}/reference-connectors/profiles?projectId=${encodeURIComponent(state.selectedProjectId)}`);
+    state.referenceConnectorProfiles = env.data?.items ?? [];
+    if (!state.referenceConnectorProfiles.some((item) => item.id === state.selectedReferenceConnectorProfileId)) {
+      state.selectedReferenceConnectorProfileId = state.referenceConnectorProfiles[0]?.id ?? null;
+      state.referenceConnectorSearchResults = [];
+    }
+  } catch {
+    state.referenceConnectorProfiles = [];
+    state.referenceConnectorSearchResults = [];
+    state.selectedReferenceConnectorProfileId = null;
+  }
+}
+
+async function loadReferenceConnectorJobs() {
+  if (!state.selectedProjectId || !state.currentUser || !getProjectPermissionState().canExportProject) {
+    state.referenceConnectorJobs = [];
+    return;
+  }
+  try {
+    const env = await getJson(`${API_BASE}/reference-connectors/jobs?projectId=${encodeURIComponent(state.selectedProjectId)}`);
+    state.referenceConnectorJobs = env.data?.items ?? [];
+  } catch {
+    state.referenceConnectorJobs = [];
   }
 }
 
@@ -5697,6 +11099,210 @@ function renderExternalSqlPanel() {
   }
 }
 
+function renderOfficeConnectorPanel() {
+  const profileSelect = document.getElementById('office-connector-profile-select');
+  const discoveryEl = document.getElementById('office-connector-discovery-list');
+  const jobsEl = document.getElementById('office-connector-jobs');
+  const statusEl = document.getElementById('office-connector-status');
+  if (!profileSelect || !statusEl) return;
+  const permissions = getProjectPermissionState();
+  const disabled = !permissions.canExportProject;
+  const formatRunStamp = (value) => {
+    if (!value) return 'Never';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? 'Never' : date.toLocaleString();
+  };
+
+  profileSelect.innerHTML = [
+    '<option value="">Select an Office connector profile</option>',
+    ...state.officeConnectorProfiles.map((profile) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.label)} (${escapeHtml(profile.rootPath)})</option>`)
+  ].join('');
+  profileSelect.value = state.selectedOfficeConnectorProfileId ?? '';
+  const selectedProfile = state.officeConnectorProfiles.find((item) => item.id === state.selectedOfficeConnectorProfileId) ?? null;
+  const fieldAssignments = [
+    ['office-connector-profile-label', selectedProfile?.label ?? ''],
+    ['office-connector-root-path', selectedProfile?.rootPath ?? ''],
+    ['office-connector-allowed-extensions', (selectedProfile?.allowedExtensions ?? ['.docx', '.xlsx', '.xls', '.csv', '.pdf', '.txt', '.md', '.sav', '.zsav']).join(',')]
+  ];
+  for (const [id, value] of fieldAssignments) {
+    const el = document.getElementById(id);
+    if (el && document.activeElement !== el) el.value = String(value ?? '');
+  }
+  const includeSubdirsEl = document.getElementById('office-connector-include-subdirs');
+  if (includeSubdirsEl && document.activeElement !== includeSubdirsEl) {
+    includeSubdirsEl.checked = selectedProfile ? selectedProfile.includeSubdirectories !== false : true;
+  }
+
+  if (discoveryEl) {
+    discoveryEl.innerHTML = state.officeConnectorDiscovery.length === 0
+      ? '<li class="interactive-list-item empty">Run "Discover files" to preview files from the selected connector root.</li>'
+      : state.officeConnectorDiscovery.map((item) => `
+          <li class="interactive-list-item">
+            <div>
+              <strong>${escapeHtml(item.relativePath || item.filename || 'file')}</strong>
+              <div class="small-muted">${escapeHtml(item.modifiedAt || '')} · ${escapeHtml(String(item.size ?? 0))} bytes</div>
+            </div>
+          </li>
+        `).join('');
+  }
+
+  if (jobsEl) {
+    jobsEl.innerHTML = state.officeConnectorJobs.length === 0
+      ? '<li class="interactive-list-item empty">No saved Office connector jobs yet.</li>'
+      : state.officeConnectorJobs.map((job) => `
+          <li class="interactive-list-item">
+            <div>
+              <strong>${escapeHtml(job.label)}</strong>
+              <div class="small-muted">Max files ${escapeHtml(String(job.syncOptions?.maxFiles ?? 500))} · ${job.syncOptions?.forceResync ? 'Force resync on' : 'Incremental sync'}</div>
+              <div class="small-muted">${job.scheduleEnabled ? `Every ${escapeHtml(String(job.scheduleIntervalMinutes ?? 60))} min · Next ${escapeHtml(formatRunStamp(job.scheduleNextRunAt))}` : 'Manual refresh only'}</div>
+              <div class="small-muted">Last run ${escapeHtml(formatRunStamp(job.lastRunAt))}${job.lastRunStatus ? ` · ${escapeHtml(job.lastRunStatus)}` : ''}${job.lastRunMessage ? ` · ${escapeHtml(job.lastRunMessage)}` : ''}</div>
+            </div>
+            <div class="button-row">
+              <button type="button" class="small office-connector-job-run-btn" data-job-id="${escapeHtml(job.id)}">Run</button>
+              <button type="button" class="small ${job.scheduleEnabled ? 'office-connector-job-reschedule-btn' : 'office-connector-job-enable-schedule-btn'}" data-job-id="${escapeHtml(job.id)}" data-current-interval="${escapeHtml(String(job.scheduleIntervalMinutes ?? 60))}">${job.scheduleEnabled ? 'Reschedule' : 'Enable schedule'}</button>
+              ${job.scheduleEnabled ? `<button type="button" class="small office-connector-job-pause-schedule-btn" data-job-id="${escapeHtml(job.id)}">Pause</button>` : ''}
+              <button type="button" class="small office-connector-job-delete-btn" data-job-id="${escapeHtml(job.id)}">Delete</button>
+            </div>
+          </li>
+        `).join('');
+  }
+
+  for (const id of [
+    'office-connector-profile-label',
+    'office-connector-root-path',
+    'office-connector-allowed-extensions',
+    'office-connector-include-subdirs',
+    'office-connector-job-max-files',
+    'office-connector-job-force-resync',
+    'office-connector-job-schedule-enabled',
+    'office-connector-job-schedule-interval',
+    'save-office-connector-profile-btn',
+    'delete-office-connector-profile-btn',
+    'scan-office-connector-btn',
+    'save-office-connector-job-btn',
+    'office-connector-profile-select'
+  ]) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  }
+
+  if (!state.selectedProjectId) {
+    statusEl.textContent = 'Select a project to use Office folder connectors.';
+  } else if (!permissions.canExportProject) {
+    statusEl.textContent = 'Only project owners and Professor accounts can manage Office connectors.';
+  } else if (state.officeConnectorProfiles.length === 0) {
+    statusEl.textContent = 'Save an Office connector profile to begin folder-based sync.';
+  } else {
+    statusEl.textContent = `Office connector ready with ${state.officeConnectorProfiles.length} profile${state.officeConnectorProfiles.length === 1 ? '' : 's'} and ${state.officeConnectorJobs.length} saved job${state.officeConnectorJobs.length === 1 ? '' : 's'}.`;
+  }
+}
+
+function renderReferenceConnectorPanel() {
+  const profileSelect = document.getElementById('reference-connector-profile-select');
+  const resultEl = document.getElementById('reference-connector-search-results');
+  const jobsEl = document.getElementById('reference-connector-jobs');
+  const statusEl = document.getElementById('reference-connector-status');
+  if (!profileSelect || !statusEl) return;
+  const permissions = getProjectPermissionState();
+  const disabled = !permissions.canExportProject;
+  const formatRunStamp = (value) => {
+    if (!value) return 'Never';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? 'Never' : date.toLocaleString();
+  };
+
+  profileSelect.innerHTML = [
+    '<option value="">Select a reference connector profile</option>',
+    ...state.referenceConnectorProfiles.map((profile) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.label)} (${escapeHtml(profile.provider)})</option>`)
+  ].join('');
+  profileSelect.value = state.selectedReferenceConnectorProfileId ?? '';
+  const selectedProfile = state.referenceConnectorProfiles.find((item) => item.id === state.selectedReferenceConnectorProfileId) ?? null;
+  const profileFieldAssignments = [
+    ['reference-connector-profile-label', selectedProfile?.label ?? ''],
+    ['reference-connector-mailto', selectedProfile?.settings?.mailto ?? '']
+  ];
+  for (const [id, value] of profileFieldAssignments) {
+    const el = document.getElementById(id);
+    if (el && document.activeElement !== el) el.value = String(value ?? '');
+  }
+  const providerEl = document.getElementById('reference-connector-provider');
+  if (providerEl && document.activeElement !== providerEl) {
+    providerEl.value = selectedProfile?.provider ?? 'crossref';
+  }
+
+  if (resultEl) {
+    resultEl.innerHTML = state.referenceConnectorSearchResults.length === 0
+      ? 'Run a search to preview live references.'
+      : `
+          <div class="small-muted" style="margin-bottom:8px">${state.referenceConnectorSearchResults.length} result(s).</div>
+          <ul class="interactive-list">
+            ${state.referenceConnectorSearchResults.slice(0, 40).map((item) => `
+              <li class="interactive-list-item">
+                <div>
+                  <strong>${escapeHtml(item.title || 'Untitled reference')}</strong>
+                  <div class="small-muted">${escapeHtml((item.authors ?? []).join(', ') || 'No authors')} · ${escapeHtml(String(item.year ?? 'n/a'))}</div>
+                  <div class="small-muted">${escapeHtml(item.doi || item.url || item.externalId || '')}</div>
+                </div>
+              </li>
+            `).join('')}
+          </ul>
+        `;
+  }
+
+  if (jobsEl) {
+    jobsEl.innerHTML = state.referenceConnectorJobs.length === 0
+      ? '<li class="interactive-list-item empty">No saved reference connector jobs yet.</li>'
+      : state.referenceConnectorJobs.map((job) => `
+          <li class="interactive-list-item">
+            <div>
+              <strong>${escapeHtml(job.label)}</strong>
+              <div class="small-muted">${escapeHtml(job.query?.text || '')}</div>
+              <div class="small-muted">Rows ${escapeHtml(String(job.query?.maxRows ?? 50))} · ${job.query?.skipDuplicates !== false ? 'Skip duplicates' : 'Allow duplicates'}</div>
+              <div class="small-muted">${job.scheduleEnabled ? `Every ${escapeHtml(String(job.scheduleIntervalMinutes ?? 60))} min · Next ${escapeHtml(formatRunStamp(job.scheduleNextRunAt))}` : 'Manual refresh only'}</div>
+              <div class="small-muted">Last run ${escapeHtml(formatRunStamp(job.lastRunAt))}${job.lastRunStatus ? ` · ${escapeHtml(job.lastRunStatus)}` : ''}${job.lastRunMessage ? ` · ${escapeHtml(job.lastRunMessage)}` : ''}</div>
+            </div>
+            <div class="button-row">
+              <button type="button" class="small reference-connector-job-run-btn" data-job-id="${escapeHtml(job.id)}">Run</button>
+              <button type="button" class="small ${job.scheduleEnabled ? 'reference-connector-job-reschedule-btn' : 'reference-connector-job-enable-schedule-btn'}" data-job-id="${escapeHtml(job.id)}" data-current-interval="${escapeHtml(String(job.scheduleIntervalMinutes ?? 60))}">${job.scheduleEnabled ? 'Reschedule' : 'Enable schedule'}</button>
+              ${job.scheduleEnabled ? `<button type="button" class="small reference-connector-job-pause-schedule-btn" data-job-id="${escapeHtml(job.id)}">Pause</button>` : ''}
+              <button type="button" class="small reference-connector-job-delete-btn" data-job-id="${escapeHtml(job.id)}">Delete</button>
+            </div>
+          </li>
+        `).join('');
+  }
+
+  for (const id of [
+    'reference-connector-profile-label',
+    'reference-connector-provider',
+    'reference-connector-mailto',
+    'reference-connector-api-key',
+    'reference-connector-profile-select',
+    'save-reference-connector-profile-btn',
+    'delete-reference-connector-profile-btn',
+    'reference-connector-query-text',
+    'reference-connector-max-rows',
+    'reference-connector-skip-duplicates',
+    'reference-connector-job-schedule-enabled',
+    'reference-connector-job-schedule-interval',
+    'search-reference-connector-btn',
+    'import-reference-connector-btn',
+    'save-reference-connector-job-btn'
+  ]) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  }
+
+  if (!state.selectedProjectId) {
+    statusEl.textContent = 'Select a project to use reference connectors.';
+  } else if (!permissions.canExportProject) {
+    statusEl.textContent = 'Only project owners and Professor accounts can manage reference connectors.';
+  } else if (state.referenceConnectorProfiles.length === 0) {
+    statusEl.textContent = 'Save a reference connector profile to begin live API retrieval.';
+  } else {
+    statusEl.textContent = `Reference connector ready with ${state.referenceConnectorProfiles.length} profile${state.referenceConnectorProfiles.length === 1 ? '' : 's'} and ${state.referenceConnectorJobs.length} saved job${state.referenceConnectorJobs.length === 1 ? '' : 's'}.`;
+  }
+}
+
 async function downloadProjectDataset(format) {
   requireProjectExportPermission();
 
@@ -5742,6 +11348,49 @@ function buildEvidenceQueryParams(format = null) {
   return params;
 }
 
+function buildMapVisualizationParams() {
+  const params = buildEvidenceQueryParams();
+  const locationField = document.getElementById('map-location-field')?.value?.trim() || '';
+  const metric = document.getElementById('map-metric')?.value || 'evidence_count';
+  const normalization = document.getElementById('map-normalization')?.value || 'raw';
+  const minCount = parseBoundedInput(document.getElementById('map-min-count')?.value, 1, 1, 100000);
+  const maxPoints = parseBoundedInput(document.getElementById('map-max-points')?.value, 150, 1, 500);
+  if (locationField) params.set('mapLocationField', locationField);
+  params.set('mapMetric', metric);
+  params.set('mapNormalization', normalization);
+  params.set('mapMinCount', String(Math.floor(minCount)));
+  params.set('mapMaxPoints', String(Math.floor(maxPoints)));
+  return params;
+}
+
+function buildConceptMapParams() {
+  const params = buildEvidenceQueryParams();
+  const minLinkWeight = parseBoundedInput(document.getElementById('concept-min-link-weight')?.value, 1, 0, 100000, 2);
+  const maxLinks = parseBoundedInput(document.getElementById('concept-max-links')?.value, 250, 1, 1000);
+  const minNodeSize = parseBoundedInput(document.getElementById('concept-min-node-size')?.value, 0, 0, 100000, 2);
+  const includeCooccurrence = document.getElementById('concept-include-cooccurrence')?.value ?? 'true';
+  const includeRelationships = document.getElementById('concept-include-relationships')?.value ?? 'true';
+  const nodeSizeMode = document.getElementById('concept-node-size-mode')?.value || 'applications';
+  params.set('conceptMinLinkWeight', String(minLinkWeight));
+  params.set('conceptMaxLinks', String(Math.floor(maxLinks)));
+  params.set('conceptMinNodeSize', String(minNodeSize));
+  params.set('conceptIncludeCooccurrence', includeCooccurrence);
+  params.set('conceptIncludeRelationships', includeRelationships);
+  params.set('conceptNodeSizeMode', nodeSizeMode);
+  return params;
+}
+
+function getMergeReviewSettings() {
+  const minCoderCountRaw = Number(document.getElementById('merge-min-coder-count')?.value || 2);
+  const minConfidenceSpreadRaw = Number(document.getElementById('merge-min-confidence-spread')?.value || 0.2);
+  const maxRowsRaw = Number(document.getElementById('merge-max-rows')?.value || 100);
+  return {
+    minCoderCount: Number.isFinite(minCoderCountRaw) ? Math.min(20, Math.max(1, Math.floor(minCoderCountRaw))) : 2,
+    minConfidenceSpread: Number.isFinite(minConfidenceSpreadRaw) ? Math.min(1, Math.max(0, minConfidenceSpreadRaw)) : 0.2,
+    maxRows: Number.isFinite(maxRowsRaw) ? Math.min(500, Math.max(1, Math.floor(maxRowsRaw))) : 100
+  };
+}
+
 function buildAuditQueryParams(format = null) {
   const params = new URLSearchParams({ projectId: state.selectedProjectId });
   if (format) params.set('format', format);
@@ -5757,6 +11406,226 @@ function buildAuditQueryParams(format = null) {
   return params;
 }
 
+function defaultCompoundClauseGroup(clauseIndex = 0) {
+  if (clauseIndex <= 1) return 'group_1';
+  if (clauseIndex <= 3) return 'group_2';
+  return 'group_3';
+}
+
+function syncCompoundClauseOperatorSelects() {
+  for (let index = 1; index <= COMPOUND_QUERY_CLAUSE_COUNT; index += 1) {
+    const selectEl = document.getElementById(`compound-clause-${index}-operator`);
+    if (!selectEl) continue;
+    const selectedValue = selectEl.value;
+    selectEl.innerHTML = COMPOUND_QUERY_CLAUSE_OPERATOR_OPTIONS
+      .map((operator) => `<option value="${operator}">${operator}</option>`)
+      .join('');
+    selectEl.value = COMPOUND_QUERY_ALLOWED_CLAUSE_OPERATORS.has(selectedValue) ? selectedValue : 'contains';
+  }
+}
+
+function normalizeCompoundGroupOperator(value, fallback = 'any') {
+  return typeof value === 'string' && COMPOUND_QUERY_ALLOWED_OPERATORS.has(value)
+    ? value
+    : fallback;
+}
+
+function normalizeOptionalWorkbenchCount(value, { min = 1, max = 25 } = {}) {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.min(max, Math.max(min, Math.floor(numeric)));
+}
+
+function normalizeCompoundClause(clause = {}, clauseIndex = 0) {
+  const field = typeof clause.field === 'string' && COMPOUND_QUERY_ALLOWED_FIELDS.has(clause.field)
+    ? clause.field
+    : 'text';
+  const operator = typeof clause.operator === 'string' && COMPOUND_QUERY_ALLOWED_CLAUSE_OPERATORS.has(clause.operator)
+    ? clause.operator
+    : 'contains';
+  const fallbackGroupId = defaultCompoundClauseGroup(clauseIndex);
+  const groupId = typeof clause.groupId === 'string' && COMPOUND_QUERY_GROUP_IDS.includes(clause.groupId)
+    ? clause.groupId
+    : fallbackGroupId;
+  return {
+    enabled: clause.enabled !== false,
+    groupId,
+    field,
+    operator,
+    value: typeof clause.value === 'string' ? clause.value.trim() : '',
+    negate: clause.negate === true,
+    linguisticMode: clause.linguisticMode === 'stem' || clause.linguisticMode === 'lemma' ? clause.linguisticMode : 'none',
+    fuzzyDistance: Number.isFinite(Number(clause.fuzzyDistance))
+      ? Math.min(3, Math.max(1, Math.floor(Number(clause.fuzzyDistance))))
+      : 1,
+    proximityWithin: Number.isFinite(Number(clause.proximityWithin))
+      ? Math.min(60, Math.max(0, Math.floor(Number(clause.proximityWithin))))
+      : 6,
+    proximityOrdered: clause.proximityOrdered === true
+  };
+}
+
+function normalizeCompoundClauses(clauses) {
+  const normalized = [];
+  for (let index = 0; index < COMPOUND_QUERY_CLAUSE_COUNT; index += 1) {
+    const candidate = Array.isArray(clauses) ? clauses[index] : null;
+    if (candidate && typeof candidate === 'object') {
+      normalized.push(normalizeCompoundClause(candidate, index));
+    } else {
+      normalized.push(normalizeCompoundClause({
+        enabled: false,
+        groupId: defaultCompoundClauseGroup(index),
+        field: 'text',
+        operator: 'contains',
+        value: '',
+        negate: false
+      }, index));
+    }
+  }
+  return normalized;
+}
+
+function normalizeCompoundGroupSettings(query = {}) {
+  const groupOperator = normalizeCompoundGroupOperator(query.compoundWorkbenchGroupOperator, COMPOUND_QUERY_GROUP_DEFAULTS.groupOperator);
+  const groupOperators = {};
+  const groupMinClauses = {};
+  for (const groupId of COMPOUND_QUERY_GROUP_IDS) {
+    groupOperators[groupId] = normalizeCompoundGroupOperator(
+      query.compoundWorkbenchGroupOperators?.[groupId],
+      COMPOUND_QUERY_GROUP_DEFAULTS[groupId] ?? 'all'
+    );
+    groupMinClauses[groupId] = normalizeOptionalWorkbenchCount(query.compoundWorkbenchGroupMinClauses?.[groupId]);
+  }
+  const minGroupsMatched = groupOperator === 'none'
+    ? null
+    : normalizeOptionalWorkbenchCount(query.compoundWorkbenchMinGroupsMatched);
+  return { groupOperator, groupOperators, minGroupsMatched, groupMinClauses };
+}
+
+function normalizeCompoundQueryConfig(query = {}) {
+  const operator = typeof query.compoundQueryOperator === 'string' && COMPOUND_QUERY_ALLOWED_OPERATORS.has(query.compoundQueryOperator)
+    ? query.compoundQueryOperator
+    : 'all';
+  const maxRowsRaw = Number(query.compoundMaxRows ?? 200);
+  const maxRows = Number.isFinite(maxRowsRaw) ? Math.min(500, Math.max(1, Math.floor(maxRowsRaw))) : 200;
+  const defaultClauseLinguisticMode = query.compoundDefaultLinguisticMode === 'stem' || query.compoundDefaultLinguisticMode === 'lemma'
+    ? query.compoundDefaultLinguisticMode
+    : 'none';
+  const defaultClauseFuzzyDistanceRaw = Number(query.compoundDefaultFuzzyDistance ?? 1);
+  const defaultClauseFuzzyDistance = Number.isFinite(defaultClauseFuzzyDistanceRaw)
+    ? Math.min(3, Math.max(1, Math.floor(defaultClauseFuzzyDistanceRaw)))
+    : 1;
+  const defaultClauseProximityWithinRaw = Number(query.compoundDefaultProximityWithin ?? 6);
+  const defaultClauseProximityWithin = Number.isFinite(defaultClauseProximityWithinRaw)
+    ? Math.min(60, Math.max(0, Math.floor(defaultClauseProximityWithinRaw)))
+    : 6;
+  const defaultClauseProximityOrdered = query.compoundDefaultProximityOrdered === true;
+  const groupSettings = normalizeCompoundGroupSettings(query);
+  const clauses = normalizeCompoundClauses(query.compoundClauses).map((clause) => ({
+    ...clause,
+    linguisticMode: clause.linguisticMode ?? defaultClauseLinguisticMode,
+    fuzzyDistance: Number.isFinite(Number(clause.fuzzyDistance))
+      ? Math.min(3, Math.max(1, Math.floor(Number(clause.fuzzyDistance))))
+      : defaultClauseFuzzyDistance,
+    proximityWithin: Number.isFinite(Number(clause.proximityWithin))
+      ? Math.min(60, Math.max(0, Math.floor(Number(clause.proximityWithin))))
+      : defaultClauseProximityWithin,
+    proximityOrdered: clause.proximityOrdered === true
+      ? true
+      : clause.proximityOrdered === false
+        ? false
+        : defaultClauseProximityOrdered
+  }));
+  return {
+    compoundQueryOperator: operator,
+    compoundCaseSensitive: query.compoundCaseSensitive === true,
+    compoundMaxRows: maxRows,
+    compoundClauses: clauses,
+    compoundDefaultLinguisticMode: defaultClauseLinguisticMode,
+    compoundDefaultFuzzyDistance: defaultClauseFuzzyDistance,
+    compoundDefaultProximityWithin: defaultClauseProximityWithin,
+    compoundDefaultProximityOrdered: defaultClauseProximityOrdered,
+    compoundWorkbenchGroupOperator: groupSettings.groupOperator,
+    compoundWorkbenchGroupOperators: groupSettings.groupOperators,
+    compoundWorkbenchMinGroupsMatched: groupSettings.minGroupsMatched,
+    compoundWorkbenchGroupMinClauses: groupSettings.groupMinClauses
+  };
+}
+
+function normalizeQualitativeReportProfile(query = {}) {
+  const topSourcesRaw = Number(query.queryReportTopSources ?? 20);
+  const topCasesRaw = Number(query.queryReportTopCases ?? 20);
+  const topCodesRaw = Number(query.queryReportTopCodes ?? 5);
+  const excerptLimitRaw = Number(query.queryReportExcerptLimit ?? 60);
+  return {
+    queryReportTopSources: Number.isFinite(topSourcesRaw) ? Math.min(500, Math.max(1, Math.floor(topSourcesRaw))) : 20,
+    queryReportTopCases: Number.isFinite(topCasesRaw) ? Math.min(500, Math.max(1, Math.floor(topCasesRaw))) : 20,
+    queryReportTopCodes: Number.isFinite(topCodesRaw) ? Math.min(25, Math.max(1, Math.floor(topCodesRaw))) : 5,
+    queryReportExcerptLimit: Number.isFinite(excerptLimitRaw) ? Math.min(500, Math.max(1, Math.floor(excerptLimitRaw))) : 60,
+    queryReportIncludeSources: query.queryReportIncludeSources !== false,
+    queryReportIncludeCases: query.queryReportIncludeCases !== false,
+    queryReportIncludeExcerpts: query.queryReportIncludeExcerpts !== false,
+    queryReportSortBy: query.queryReportSortBy === 'memo_count' ? 'memo_count' : 'match_count'
+  };
+}
+
+function normalizeSavedQualQueryControls(query = {}) {
+  return {
+    qualQueryPinned: query.qualQueryPinned === true,
+    qualQueryRunProfile: query.qualQueryRunProfile === 'run_and_report' ? 'run_and_report' : 'run_only'
+  };
+}
+
+function applyCompoundQueryConfig(query = {}) {
+  const current = readQualitativeQueryInputs();
+  const normalized = normalizeCompoundQueryConfig(query);
+  applyQualitativeQueryInputs({
+    ...current,
+    ...normalized
+  });
+}
+
+function buildCompoundWorkbenchPayload(query) {
+  const normalized = normalizeCompoundQueryConfig(query);
+  const groups = COMPOUND_QUERY_GROUP_IDS.map((groupId) => {
+    const clauses = normalized.compoundClauses.filter((clause) => clause.groupId === groupId);
+    return {
+      id: groupId,
+      label: groupId.replace('group_', 'Group '),
+      enabled: clauses.some((clause) => clause.enabled !== false),
+      operator: normalized.compoundWorkbenchGroupOperators?.[groupId] ?? COMPOUND_QUERY_GROUP_DEFAULTS[groupId] ?? 'all',
+      minClausesMatched: normalized.compoundWorkbenchGroupMinClauses?.[groupId] ?? null,
+      clauses
+    };
+  }).filter((group) => group.clauses.length > 0);
+  return {
+    groupOperator: normalized.compoundWorkbenchGroupOperator ?? COMPOUND_QUERY_GROUP_DEFAULTS.groupOperator,
+    minGroupsMatched: normalized.compoundWorkbenchMinGroupsMatched ?? null,
+    groups
+  };
+}
+
+function getCompoundPresetQueries() {
+  return state.savedQualitativeQueries.filter((item) => item.mode === 'compound_query_preset');
+}
+
+function getCompoundPresetById(presetId) {
+  if (!presetId) return null;
+  return getCompoundPresetQueries().find((item) => item.id === presetId) ?? null;
+}
+
+function getCompoundTemplateById(templateId) {
+  if (!templateId) return null;
+  const template = COMPOUND_QUERY_TEMPLATE_DEFINITIONS[templateId];
+  if (!template) return null;
+  return {
+    id: templateId,
+    label: template.label,
+    query: normalizeCompoundQueryConfig(template.query)
+  };
+}
+
 function readQualitativeQueryInputs() {
   return {
     sourceId: document.getElementById('retrieval-source-id')?.value?.trim() || '',
@@ -5769,19 +11638,63 @@ function readQualitativeQueryInputs() {
     searchText: document.getElementById('retrieval-search-text')?.value?.trim() || '',
     memoOnly: document.getElementById('retrieval-memo-only')?.value === 'true',
     textSearchMode: document.getElementById('text-search-mode')?.value || 'contains',
+    textSearchLinguisticMode: document.getElementById('text-search-linguistic-mode')?.value || 'none',
+    textSearchFuzzyDistance: Number(document.getElementById('text-search-fuzzy-distance')?.value || 1),
     textSearchCaseSensitive: document.getElementById('text-search-case-sensitive')?.value === 'true',
     textSearchContextWindow: Number(document.getElementById('text-search-context-window')?.value || 40),
+    textSearchCodingScope: document.getElementById('text-search-coding-scope')?.value || 'all',
+    textSearchMinHitCount: Number(document.getElementById('text-search-min-hit-count')?.value || 1),
+    textSearchSnippetLimit: Number(document.getElementById('text-search-snippet-limit')?.value || 5),
+    textSearchMaxRows: Number(document.getElementById('text-search-max-rows')?.value || 200),
+    textSearchSortBy: document.getElementById('text-search-sort-by')?.value || 'hits_desc',
     wordFrequencyTopN: Number(document.getElementById('word-frequency-top-n')?.value || 30),
     wordFrequencyMinLength: Number(document.getElementById('word-frequency-min-length')?.value || 4),
     wordFrequencyExcludeStopWords: document.getElementById('word-frequency-exclude-stop-words')?.value !== 'false',
     compoundQueryOperator: document.getElementById('compound-query-operator')?.value || 'all',
-    compoundClauses: [
-      1, 2, 3
-    ].map((index) => ({
+    compoundCaseSensitive: document.getElementById('compound-query-case-sensitive')?.value === 'true',
+    compoundMaxRows: Number(document.getElementById('compound-query-max-rows')?.value || 200),
+    compoundDefaultLinguisticMode: document.getElementById('compound-default-linguistic-mode')?.value || 'none',
+    compoundDefaultFuzzyDistance: Number(document.getElementById('compound-default-fuzzy-distance')?.value || 1),
+    compoundDefaultProximityWithin: Number(document.getElementById('compound-default-proximity-within')?.value || 6),
+    compoundDefaultProximityOrdered: document.getElementById('compound-default-proximity-ordered')?.value === 'true',
+    compoundWorkbenchGroupOperator: document.getElementById('compound-workbench-group-operator')?.value || COMPOUND_QUERY_GROUP_DEFAULTS.groupOperator,
+    compoundWorkbenchGroupOperators: Object.fromEntries(
+      COMPOUND_QUERY_GROUP_IDS.map((groupId) => [
+        groupId,
+        document.getElementById(`compound-workbench-${groupId.replace('_', '-')}-operator`)?.value
+          || COMPOUND_QUERY_GROUP_DEFAULTS[groupId]
+          || 'all'
+      ])
+    ),
+    compoundWorkbenchMinGroupsMatched: normalizeOptionalWorkbenchCount(document.getElementById('compound-workbench-min-groups-matched')?.value),
+    compoundWorkbenchGroupMinClauses: Object.fromEntries(
+      COMPOUND_QUERY_GROUP_IDS.map((groupId) => [
+        groupId,
+        normalizeOptionalWorkbenchCount(document.getElementById(`compound-workbench-${groupId.replace('_', '-')}-min-clauses`)?.value)
+      ])
+    ),
+    compoundClauses: Array.from({ length: COMPOUND_QUERY_CLAUSE_COUNT }, (_, offset) => offset + 1).map((index) => ({
+      groupId: document.getElementById(`compound-clause-${index}-group`)?.value || defaultCompoundClauseGroup(index - 1),
       field: document.getElementById(`compound-clause-${index}-field`)?.value || 'text',
       operator: document.getElementById(`compound-clause-${index}-operator`)?.value || 'contains',
-      value: document.getElementById(`compound-clause-${index}-value`)?.value?.trim() || ''
+      value: document.getElementById(`compound-clause-${index}-value`)?.value?.trim() || '',
+      enabled: document.getElementById(`compound-clause-${index}-enabled`)?.value !== 'false',
+      negate: document.getElementById(`compound-clause-${index}-negate`)?.value === 'true',
+      linguisticMode: document.getElementById(`compound-clause-${index}-linguistic-mode`)?.value || document.getElementById('compound-default-linguistic-mode')?.value || 'none',
+      fuzzyDistance: Number(document.getElementById(`compound-clause-${index}-fuzzy-distance`)?.value || document.getElementById('compound-default-fuzzy-distance')?.value || 1),
+      proximityWithin: Number(document.getElementById(`compound-clause-${index}-proximity-within`)?.value || document.getElementById('compound-default-proximity-within')?.value || 6),
+      proximityOrdered: (document.getElementById(`compound-clause-${index}-proximity-ordered`)?.value || document.getElementById('compound-default-proximity-ordered')?.value || 'false') === 'true'
     })),
+    queryReportTopSources: Number(document.getElementById('query-report-top-sources')?.value || 20),
+    queryReportTopCases: Number(document.getElementById('query-report-top-cases')?.value || 20),
+    queryReportTopCodes: Number(document.getElementById('query-report-top-codes')?.value || 5),
+    queryReportExcerptLimit: Number(document.getElementById('query-report-excerpt-limit')?.value || 60),
+    queryReportIncludeSources: document.getElementById('query-report-include-sources')?.value !== 'false',
+    queryReportIncludeCases: document.getElementById('query-report-include-cases')?.value !== 'false',
+    queryReportIncludeExcerpts: document.getElementById('query-report-include-excerpts')?.value !== 'false',
+    queryReportSortBy: document.getElementById('query-report-sort-by')?.value || 'match_count',
+    qualQueryPinned: document.getElementById('qual-query-pinned')?.value === 'true',
+    qualQueryRunProfile: document.getElementById('qual-query-run-profile')?.value || 'run_only',
     comparisonCodeId: document.getElementById('comparison-code-id')?.value?.trim() || '',
     comparisonCoderA: document.getElementById('comparison-coder-a')?.value?.trim() || '',
     comparisonCoderB: document.getElementById('comparison-coder-b')?.value?.trim() || '',
@@ -5789,6 +11702,9 @@ function readQualitativeQueryInputs() {
     comparisonDisagreementLimit: Number(document.getElementById('comparison-disagreement-limit')?.value || 100),
     interRaterMaxRows: Number(document.getElementById('inter-rater-max-rows')?.value || 0),
     interRaterMinKappa: document.getElementById('inter-rater-min-kappa')?.value?.trim() || '',
+    mergeMinCoderCount: Number(document.getElementById('merge-min-coder-count')?.value || 2),
+    mergeMinConfidenceSpread: Number(document.getElementById('merge-min-confidence-spread')?.value || 0.2),
+    mergeMaxRows: Number(document.getElementById('merge-max-rows')?.value || 100),
     autocodeKeywords: document.getElementById('autocode-keywords')?.value?.trim() || '',
     autocodePatterns: document.getElementById('autocode-patterns')?.value?.trim() || '',
     autocodeExpandSynonyms: document.getElementById('autocode-expand-synonyms')?.value !== 'false',
@@ -5798,6 +11714,7 @@ function readQualitativeQueryInputs() {
 }
 
 function applyQualitativeQueryInputs(query = {}) {
+  syncCompoundClauseOperatorSelects();
   const assignments = [
     ['retrieval-source-id', query.sourceId ?? ''],
     ['retrieval-source-kind', query.sourceKind ?? ''],
@@ -5809,12 +11726,33 @@ function applyQualitativeQueryInputs(query = {}) {
     ['retrieval-search-text', query.searchText ?? ''],
     ['retrieval-memo-only', query.memoOnly ? 'true' : 'false'],
     ['text-search-mode', query.textSearchMode ?? 'contains'],
+    ['text-search-linguistic-mode', query.textSearchLinguisticMode ?? 'none'],
+    ['text-search-fuzzy-distance', query.textSearchFuzzyDistance ?? 1],
     ['text-search-case-sensitive', query.textSearchCaseSensitive ? 'true' : 'false'],
     ['text-search-context-window', query.textSearchContextWindow ?? 40],
+    ['text-search-coding-scope', query.textSearchCodingScope ?? 'all'],
+    ['text-search-min-hit-count', query.textSearchMinHitCount ?? 1],
+    ['text-search-snippet-limit', query.textSearchSnippetLimit ?? 5],
+    ['text-search-max-rows', query.textSearchMaxRows ?? 200],
+    ['text-search-sort-by', query.textSearchSortBy ?? 'hits_desc'],
     ['word-frequency-top-n', query.wordFrequencyTopN ?? 30],
     ['word-frequency-min-length', query.wordFrequencyMinLength ?? 4],
     ['word-frequency-exclude-stop-words', query.wordFrequencyExcludeStopWords === false ? 'false' : 'true'],
     ['compound-query-operator', query.compoundQueryOperator ?? 'all'],
+    ['compound-query-case-sensitive', query.compoundCaseSensitive ? 'true' : 'false'],
+    ['compound-query-max-rows', query.compoundMaxRows ?? 200],
+    ['compound-default-linguistic-mode', query.compoundDefaultLinguisticMode ?? 'none'],
+    ['compound-default-fuzzy-distance', query.compoundDefaultFuzzyDistance ?? 1],
+    ['compound-default-proximity-within', query.compoundDefaultProximityWithin ?? 6],
+    ['compound-default-proximity-ordered', query.compoundDefaultProximityOrdered ? 'true' : 'false'],
+    ['compound-workbench-group-operator', query.compoundWorkbenchGroupOperator ?? COMPOUND_QUERY_GROUP_DEFAULTS.groupOperator],
+    ['compound-workbench-min-groups-matched', query.compoundWorkbenchMinGroupsMatched ?? ''],
+    ['compound-workbench-group-1-operator', query.compoundWorkbenchGroupOperators?.group_1 ?? COMPOUND_QUERY_GROUP_DEFAULTS.group_1],
+    ['compound-workbench-group-1-min-clauses', query.compoundWorkbenchGroupMinClauses?.group_1 ?? ''],
+    ['compound-workbench-group-2-operator', query.compoundWorkbenchGroupOperators?.group_2 ?? COMPOUND_QUERY_GROUP_DEFAULTS.group_2],
+    ['compound-workbench-group-2-min-clauses', query.compoundWorkbenchGroupMinClauses?.group_2 ?? ''],
+    ['compound-workbench-group-3-operator', query.compoundWorkbenchGroupOperators?.group_3 ?? COMPOUND_QUERY_GROUP_DEFAULTS.group_3],
+    ['compound-workbench-group-3-min-clauses', query.compoundWorkbenchGroupMinClauses?.group_3 ?? ''],
     ['comparison-code-id', query.comparisonCodeId ?? ''],
     ['comparison-coder-a', query.comparisonCoderA ?? ''],
     ['comparison-coder-b', query.comparisonCoderB ?? ''],
@@ -5822,25 +11760,52 @@ function applyQualitativeQueryInputs(query = {}) {
     ['comparison-disagreement-limit', query.comparisonDisagreementLimit ?? 100],
     ['inter-rater-max-rows', query.interRaterMaxRows || ''],
     ['inter-rater-min-kappa', query.interRaterMinKappa ?? ''],
+    ['merge-min-coder-count', query.mergeMinCoderCount ?? 2],
+    ['merge-min-confidence-spread', query.mergeMinConfidenceSpread ?? 0.2],
+    ['merge-max-rows', query.mergeMaxRows ?? 100],
     ['autocode-keywords', query.autocodeKeywords ?? ''],
     ['autocode-patterns', query.autocodePatterns ?? ''],
     ['autocode-expand-synonyms', query.autocodeExpandSynonyms === false ? 'false' : 'true'],
     ['autocode-match-mode', query.autocodeMatchMode ?? 'phrase'],
-    ['autocode-dry-run', query.autocodeDryRun ? 'true' : 'false']
+    ['autocode-dry-run', query.autocodeDryRun ? 'true' : 'false'],
+    ['query-report-top-sources', query.queryReportTopSources ?? 20],
+    ['query-report-top-cases', query.queryReportTopCases ?? 20],
+    ['query-report-top-codes', query.queryReportTopCodes ?? 5],
+    ['query-report-excerpt-limit', query.queryReportExcerptLimit ?? 60],
+    ['query-report-include-sources', query.queryReportIncludeSources === false ? 'false' : 'true'],
+    ['query-report-include-cases', query.queryReportIncludeCases === false ? 'false' : 'true'],
+    ['query-report-include-excerpts', query.queryReportIncludeExcerpts === false ? 'false' : 'true'],
+    ['query-report-sort-by', query.queryReportSortBy ?? 'match_count'],
+    ['qual-query-pinned', query.qualQueryPinned ? 'true' : 'false'],
+    ['qual-query-run-profile', query.qualQueryRunProfile ?? 'run_only']
   ];
   for (const [id, value] of assignments) {
     const el = document.getElementById(id);
     if (el) el.value = value;
   }
-  const compoundClauses = Array.isArray(query.compoundClauses) ? query.compoundClauses : [];
-  for (const clauseIndex of [1, 2, 3]) {
+  const compoundClauses = normalizeCompoundClauses(query.compoundClauses);
+  for (const clauseIndex of Array.from({ length: COMPOUND_QUERY_CLAUSE_COUNT }, (_, offset) => offset + 1)) {
+    const enabledEl = document.getElementById(`compound-clause-${clauseIndex}-enabled`);
+    const groupEl = document.getElementById(`compound-clause-${clauseIndex}-group`);
     const fieldEl = document.getElementById(`compound-clause-${clauseIndex}-field`);
     const operatorEl = document.getElementById(`compound-clause-${clauseIndex}-operator`);
+    const negateEl = document.getElementById(`compound-clause-${clauseIndex}-negate`);
     const valueEl = document.getElementById(`compound-clause-${clauseIndex}-value`);
+    const linguisticModeEl = document.getElementById(`compound-clause-${clauseIndex}-linguistic-mode`);
+    const fuzzyDistanceEl = document.getElementById(`compound-clause-${clauseIndex}-fuzzy-distance`);
+    const proximityWithinEl = document.getElementById(`compound-clause-${clauseIndex}-proximity-within`);
+    const proximityOrderedEl = document.getElementById(`compound-clause-${clauseIndex}-proximity-ordered`);
     const clause = compoundClauses[clauseIndex - 1] ?? {};
+    if (enabledEl) enabledEl.value = clause.enabled === false ? 'false' : 'true';
+    if (groupEl) groupEl.value = clause.groupId ?? defaultCompoundClauseGroup(clauseIndex - 1);
     if (fieldEl) fieldEl.value = clause.field ?? 'text';
     if (operatorEl) operatorEl.value = clause.operator ?? 'contains';
+    if (negateEl) negateEl.value = clause.negate ? 'true' : 'false';
     if (valueEl) valueEl.value = clause.value ?? '';
+    if (linguisticModeEl) linguisticModeEl.value = clause.linguisticMode ?? query.compoundDefaultLinguisticMode ?? 'none';
+    if (fuzzyDistanceEl) fuzzyDistanceEl.value = String(clause.fuzzyDistance ?? query.compoundDefaultFuzzyDistance ?? 1);
+    if (proximityWithinEl) proximityWithinEl.value = String(clause.proximityWithin ?? query.compoundDefaultProximityWithin ?? 6);
+    if (proximityOrderedEl) proximityOrderedEl.value = clause.proximityOrdered ? 'true' : 'false';
   }
 }
 
@@ -5898,6 +11863,10 @@ async function downloadReportPackage(kind, format = 'json', extraParams = {}) {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+  if (format === 'docx' || format === 'xlsx') {
+    await loadRecentOfficeArtifacts();
+    renderOfficeLaunchStatus();
+  }
 }
 
 async function loadAuditEvents() {
@@ -5996,8 +11965,15 @@ async function runTextSearch() {
   }
   const params = buildEvidenceQueryParams();
   params.set('matchMode', document.getElementById('text-search-mode')?.value || 'contains');
+  params.set('linguisticMode', document.getElementById('text-search-linguistic-mode')?.value || 'none');
+  params.set('fuzzyDistance', document.getElementById('text-search-fuzzy-distance')?.value || '1');
   params.set('caseSensitive', document.getElementById('text-search-case-sensitive')?.value || 'false');
   params.set('contextWindow', document.getElementById('text-search-context-window')?.value || '40');
+  params.set('codingScope', document.getElementById('text-search-coding-scope')?.value || 'all');
+  params.set('minHitCount', document.getElementById('text-search-min-hit-count')?.value || '1');
+  params.set('snippetLimit', document.getElementById('text-search-snippet-limit')?.value || '5');
+  params.set('maxRows', document.getElementById('text-search-max-rows')?.value || '200');
+  params.set('sortBy', document.getElementById('text-search-sort-by')?.value || 'hits_desc');
   const env = await getJson(`${API_BASE}/text-search?${params.toString()}`);
   state.textSearchResult = env.data.textSearch ?? null;
   renderTextSearch();
@@ -6037,6 +12013,7 @@ async function runCompoundQuery() {
     return;
   }
   const query = readQualitativeQueryInputs();
+  const workbench = buildCompoundWorkbenchPayload(query);
   const env = await postJson(`${API_BASE}/compound-query`, {
     projectId: state.selectedProjectId,
     scope: {
@@ -6050,10 +12027,273 @@ async function runCompoundQuery() {
       memoOnly: query.memoOnly ? 'true' : 'false'
     },
     operator: query.compoundQueryOperator,
-    clauses: query.compoundClauses
+    caseSensitive: query.compoundCaseSensitive,
+    maxRows: query.compoundMaxRows,
+    clauses: query.compoundClauses,
+    workbench
   });
   state.compoundQueryResult = env.data.compoundQuery ?? null;
   renderCompoundQuery();
+}
+
+function buildCompoundWorkbenchExportParams(query = readQualitativeQueryInputs()) {
+  const normalized = normalizeCompoundQueryConfig(query);
+  return {
+    compoundWorkbench: JSON.stringify(buildCompoundWorkbenchPayload(normalized)),
+    compoundCaseSensitive: normalized.compoundCaseSensitive ? 'true' : 'false',
+    compoundMaxRows: String(normalized.compoundMaxRows ?? 200)
+  };
+}
+
+function buildQueryReportParams(query = readQualitativeQueryInputs()) {
+  const normalized = normalizeQualitativeReportProfile(query);
+  return {
+    reportTopSources: String(normalized.queryReportTopSources),
+    reportTopCases: String(normalized.queryReportTopCases),
+    reportTopCodes: String(normalized.queryReportTopCodes),
+    reportExcerptLimit: String(normalized.queryReportExcerptLimit),
+    reportIncludeSources: normalized.queryReportIncludeSources ? 'true' : 'false',
+    reportIncludeCases: normalized.queryReportIncludeCases ? 'true' : 'false',
+    reportIncludeExcerpts: normalized.queryReportIncludeExcerpts ? 'true' : 'false',
+    reportSortBy: normalized.queryReportSortBy
+  };
+}
+
+function buildCommitteePackParams() {
+  return {
+    bundleLabel: document.getElementById('committee-pack-label')?.value?.trim() || '',
+    bundleStyleTemplate: document.getElementById('committee-pack-style-template')?.value || 'committee',
+    bundleAppendixMode: document.getElementById('committee-pack-appendix-mode')?.value || 'standard',
+    bundleQueryIds: document.getElementById('committee-pack-query-ids')?.value?.trim() || '',
+    bundleAppendixRowLimit: document.getElementById('committee-pack-appendix-row-limit')?.value?.trim() || '300'
+  };
+}
+
+function renderCommitteePackSummary() {
+  const node = document.getElementById('committee-pack-summary');
+  if (!node) return;
+  if (!state.selectedProjectId) {
+    node.textContent = 'Select a project to build committee/review report packages.';
+    return;
+  }
+  const rawIds = document.getElementById('committee-pack-query-ids')?.value?.trim() || '';
+  const requestedIds = rawIds
+    ? rawIds.split(/[;,]/).map((item) => item.trim()).filter(Boolean)
+    : [];
+  const pinned = state.savedQualitativeQueries.filter((item) => item.query?.qualQueryPinned === true);
+  const selectedCount = requestedIds.length > 0
+    ? requestedIds.filter((id, index) => requestedIds.indexOf(id) === index).length
+    : (pinned.length > 0 ? pinned.length : Math.min(state.savedQualitativeQueries.length, 10));
+  const style = document.getElementById('committee-pack-style-template')?.value || 'committee';
+  const mode = document.getElementById('committee-pack-appendix-mode')?.value || 'standard';
+  const rowLimit = document.getElementById('committee-pack-appendix-row-limit')?.value?.trim() || '300';
+  node.textContent = requestedIds.length > 0
+    ? `${selectedCount} requested saved query ID(s). Style ${style}, appendix ${mode}, row limit ${rowLimit}.`
+    : `${selectedCount} saved query preset(s) will be used (${pinned.length > 0 ? 'pinned defaults' : 'first available'}). Style ${style}, appendix ${mode}, row limit ${rowLimit}.`;
+}
+
+function applySelectedCompoundTemplate() {
+  const summaryEl = document.getElementById('compound-template-summary');
+  const selectEl = document.getElementById('compound-template-select');
+  const templateId = selectEl?.value ?? '';
+  const template = getCompoundTemplateById(templateId);
+  if (!template) {
+    if (summaryEl) summaryEl.textContent = 'Choose a template before applying.';
+    return false;
+  }
+  applyCompoundQueryConfig(template.query);
+  if (summaryEl) summaryEl.textContent = `Applied template: ${template.label}.`;
+  return true;
+}
+
+function applySelectedCompoundPreset() {
+  const summaryEl = document.getElementById('compound-preset-summary');
+  const selectEl = document.getElementById('compound-preset-select');
+  const presetId = selectEl?.value ?? '';
+  const preset = getCompoundPresetById(presetId);
+  if (!preset) {
+    if (summaryEl) summaryEl.textContent = 'Choose a saved preset before applying.';
+    return false;
+  }
+  applyCompoundQueryConfig(preset.query ?? {});
+  if (summaryEl) summaryEl.textContent = `Applied preset: ${preset.label}.`;
+  return true;
+}
+
+async function saveCompoundClausePreset() {
+  const summaryEl = document.getElementById('compound-preset-summary');
+  if (!state.selectedProjectId) {
+    if (summaryEl) summaryEl.textContent = 'Select a project before saving a clause preset.';
+    return;
+  }
+  const labelEl = document.getElementById('compound-preset-label');
+  const label = labelEl?.value?.trim() ?? '';
+  if (!label) {
+    if (summaryEl) summaryEl.textContent = 'Enter a preset label before saving.';
+    return;
+  }
+
+  await postJson(`${API_BASE}/saved-qualitative-queries`, {
+    projectId: state.selectedProjectId,
+    label,
+    mode: 'compound_query_preset',
+    query: normalizeCompoundQueryConfig(readQualitativeQueryInputs())
+  });
+  if (labelEl) labelEl.value = '';
+  await loadSelectedProjectData();
+  renderAll();
+  if (summaryEl) summaryEl.textContent = `Saved preset: ${label}.`;
+}
+
+async function deleteSelectedCompoundPreset() {
+  const summaryEl = document.getElementById('compound-preset-summary');
+  if (!state.selectedProjectId) {
+    if (summaryEl) summaryEl.textContent = 'Select a project before deleting a clause preset.';
+    return;
+  }
+  const selectEl = document.getElementById('compound-preset-select');
+  const presetId = selectEl?.value ?? '';
+  const preset = getCompoundPresetById(presetId);
+  if (!preset) {
+    if (summaryEl) summaryEl.textContent = 'Choose a saved preset to delete.';
+    return;
+  }
+  if (!window.confirm(`Delete preset "${preset.label}"?`)) {
+    return;
+  }
+
+  await getJson(`${API_BASE}/saved-qualitative-queries/${encodeURIComponent(preset.id)}?projectId=${encodeURIComponent(state.selectedProjectId)}`, {
+    method: 'DELETE'
+  });
+  await loadSelectedProjectData();
+  renderAll();
+  if (summaryEl) summaryEl.textContent = `Deleted preset: ${preset.label}.`;
+}
+
+function resolveCompoundFamilyOperator(clause, family) {
+  const preset = COMPOUND_OPERATOR_FAMILY_PRESETS[family] ?? COMPOUND_OPERATOR_FAMILY_PRESETS.lexical;
+  const field = clause?.field ?? 'text';
+  if (typeof preset[field] === 'string') return preset[field];
+  if (field === 'text' && typeof preset.text === 'string') return preset.text;
+  if (field !== 'text' && family === 'proximity') return 'contains';
+  return preset.defaultOperator ?? 'contains';
+}
+
+function applyCompoundOperatorFamilyPreset() {
+  const summaryEl = document.getElementById('compound-workbench-status');
+  const family = document.getElementById('compound-operator-family')?.value || 'lexical';
+  const currentInputs = readQualitativeQueryInputs();
+  const normalized = normalizeCompoundQueryConfig(currentInputs);
+  normalized.compoundClauses = normalized.compoundClauses.map((clause) => {
+    if (clause.enabled === false) return clause;
+    const nextOperator = resolveCompoundFamilyOperator(clause, family);
+    return {
+      ...clause,
+      operator: nextOperator
+    };
+  });
+  applyCompoundQueryConfig(normalized);
+  renderCompoundWorkbenchStatus();
+  if (summaryEl) {
+    const enabledCount = normalized.compoundClauses.filter((clause) => clause.enabled !== false).length;
+    summaryEl.textContent = `Applied "${family.replace('_', ' ')}" operator family to ${enabledCount} enabled clause(s).`;
+  }
+}
+
+function applyCompoundReportProfilePreset() {
+  const profile = document.getElementById('compound-report-profile-select')?.value || 'balanced';
+  const summaryEl = document.getElementById('query-report-summary');
+  const preset = COMPOUND_REPORT_PROFILE_PRESETS[profile] ?? COMPOUND_REPORT_PROFILE_PRESETS.balanced;
+  const setValue = (id, value) => {
+    const element = document.getElementById(id);
+    if (!element) return;
+    element.value = String(value);
+  };
+  setValue('query-report-top-sources', preset.queryReportTopSources);
+  setValue('query-report-top-cases', preset.queryReportTopCases);
+  setValue('query-report-top-codes', preset.queryReportTopCodes);
+  setValue('query-report-excerpt-limit', preset.queryReportExcerptLimit);
+  setValue('query-report-include-sources', preset.queryReportIncludeSources ? 'true' : 'false');
+  setValue('query-report-include-cases', preset.queryReportIncludeCases ? 'true' : 'false');
+  setValue('query-report-include-excerpts', preset.queryReportIncludeExcerpts ? 'true' : 'false');
+  setValue('query-report-sort-by', preset.queryReportSortBy);
+  if (summaryEl) {
+    summaryEl.textContent = `Applied "${profile.replace('_', ' ')}" report profile. Run query report to refresh output.`;
+  }
+  renderCompoundWorkbenchStatus();
+}
+
+function renderCompoundOperatorGuide() {
+  const node = document.getElementById('compound-operator-guide');
+  if (!node) return;
+  node.innerHTML = `
+    <div class="matrix-table-wrap">
+      <table class="compound-operator-guide-table">
+        <thead>
+          <tr>
+            <th>Operator</th>
+            <th>Best use</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${COMPOUND_OPERATOR_GUIDE.map((entry) => `
+            <tr>
+              <td><code>${escapeHtml(entry.operator)}</code></td>
+              <td>${escapeHtml(entry.bestFor)}</td>
+              <td>${escapeHtml(entry.note)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderCompoundWorkbenchStatus() {
+  const node = document.getElementById('compound-workbench-status');
+  if (!node) return;
+  if (!state.selectedProjectId) {
+    node.textContent = 'Select a project to configure the compound workbench.';
+    return;
+  }
+  const normalized = normalizeCompoundQueryConfig(readQualitativeQueryInputs());
+  const enabledClauses = normalized.compoundClauses.filter((clause) => clause.enabled !== false);
+  const enabledCount = enabledClauses.length;
+  if (enabledCount === 0) {
+    node.textContent = 'Enable at least one clause to run a compound query.';
+    return;
+  }
+  const operatorCounts = enabledClauses.reduce((acc, clause) => {
+    acc[clause.operator] = (acc[clause.operator] ?? 0) + 1;
+    return acc;
+  }, {});
+  const groupSummary = COMPOUND_QUERY_GROUP_IDS.map((groupId) => {
+    const count = enabledClauses.filter((clause) => clause.groupId === groupId).length;
+    const operator = normalized.compoundWorkbenchGroupOperators?.[groupId] ?? COMPOUND_QUERY_GROUP_DEFAULTS[groupId];
+    const threshold = normalized.compoundWorkbenchGroupMinClauses?.[groupId];
+    return `${groupId.replace('_', ' ')}: ${count} clause(s), ${operator}${threshold ? `, min ${threshold}` : ''}`;
+  });
+  const operatorSummary = Object.entries(operatorCounts)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([operator, count]) => `${operator} (${count})`);
+  const minGroups = normalized.compoundWorkbenchMinGroupsMatched;
+  node.innerHTML = `
+    <ul class="compound-workbench-status-list">
+      <li>${enabledCount} enabled clause(s). Clause operator mode: <strong>${escapeHtml(normalized.compoundQueryOperator)}</strong>. Group operator mode: <strong>${escapeHtml(normalized.compoundWorkbenchGroupOperator)}</strong>${minGroups ? `, min groups matched ${minGroups}` : ''}.</li>
+      <li>Operator mix: ${escapeHtml(operatorSummary.join(', ') || 'n/a')}.</li>
+      <li>Group coverage: ${escapeHtml(groupSummary.join(' | '))}.</li>
+    </ul>
+  `;
+}
+
+async function runCompoundQueryAndReport() {
+  await runCompoundQuery();
+  await runQualitativeQueryReport();
+  const summaryEl = document.getElementById('query-report-summary');
+  if (summaryEl && state.compoundQueryResult) {
+    summaryEl.textContent = `Compound query + report complete. ${state.compoundQueryResult.matchCount} match(es) carried into report output.`;
+  }
 }
 
 async function runMatrixCoding() {
@@ -6101,7 +12341,12 @@ async function runQualitativeQueryReport() {
     window.alert('Select a project first.');
     return;
   }
-  const env = await getJson(`${API_BASE}/query-report?${buildEvidenceQueryParams().toString()}`);
+  const params = buildEvidenceQueryParams();
+  const reportParams = buildQueryReportParams();
+  for (const [key, value] of Object.entries(reportParams)) {
+    params.set(key, value);
+  }
+  const env = await getJson(`${API_BASE}/query-report?${params.toString()}`);
   state.qualitativeQueryReport = env.data.report ?? null;
   renderQualitativeQueryReport();
 }
@@ -6121,7 +12366,7 @@ async function runMapVisualization() {
     window.alert('Select a project first.');
     return;
   }
-  const env = await getJson(`${API_BASE}/map-visualization?${buildEvidenceQueryParams().toString()}`);
+  const env = await getJson(`${API_BASE}/map-visualization?${buildMapVisualizationParams().toString()}`);
   state.mapVisualizationResult = env.data.mapVisualization ?? null;
   renderMapVisualization();
 }
@@ -6141,11 +12386,91 @@ async function runConceptMap() {
     window.alert('Select a project first.');
     return;
   }
-  const env = await getJson(`${API_BASE}/concept-map?${buildEvidenceQueryParams().toString()}`);
+  const env = await getJson(`${API_BASE}/concept-map?${buildConceptMapParams().toString()}`);
   state.conceptMapResult = env.data.conceptMap ?? null;
   state.codeClusterResult = env.data.codeClusters ?? null;
   renderConceptMap();
   renderCodeClusters();
+}
+
+function parseDelimitedList(value) {
+  return String(value ?? '')
+    .split(/[;,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function setReferenceEditorFromRecord(reference) {
+  state.editingReferenceId = reference?.id ?? null;
+  const setValue = (id, value) => {
+    const element = document.getElementById(id);
+    if (element) element.value = value ?? '';
+  };
+  setValue('reference-editor-title', reference?.title ?? '');
+  setValue('reference-editor-type', reference?.referenceType ?? 'article');
+  setValue('reference-editor-year', reference?.year ?? '');
+  setValue('reference-editor-authors', (reference?.authors ?? []).join('; '));
+  setValue('reference-editor-container', reference?.containerTitle ?? '');
+  setValue('reference-editor-publisher', reference?.publisher ?? '');
+  setValue('reference-editor-doi', reference?.doi ?? '');
+  setValue('reference-editor-url', reference?.url ?? '');
+  setValue('reference-editor-keywords', (reference?.keywords ?? []).join('; '));
+  setValue('reference-editor-source', reference?.relatedSourceId ?? '');
+  setValue('reference-editor-abstract', reference?.abstractText ?? '');
+  setValue('reference-editor-raw', reference?.rawText ?? '');
+}
+
+function clearReferenceEditor() {
+  setReferenceEditorFromRecord(null);
+  const status = document.getElementById('reference-editor-status');
+  if (status) status.textContent = 'Create or edit reference metadata here.';
+}
+
+function collectReferenceEditorPayload() {
+  return {
+    sourceFormat: 'manual',
+    referenceType: document.getElementById('reference-editor-type')?.value?.trim() || 'article',
+    title: document.getElementById('reference-editor-title')?.value?.trim() || '',
+    authors: parseDelimitedList(document.getElementById('reference-editor-authors')?.value || ''),
+    year: document.getElementById('reference-editor-year')?.value?.trim() || null,
+    containerTitle: document.getElementById('reference-editor-container')?.value?.trim() || '',
+    publisher: document.getElementById('reference-editor-publisher')?.value?.trim() || '',
+    doi: document.getElementById('reference-editor-doi')?.value?.trim() || '',
+    url: document.getElementById('reference-editor-url')?.value?.trim() || '',
+    keywords: parseDelimitedList(document.getElementById('reference-editor-keywords')?.value || ''),
+    relatedSourceId: document.getElementById('reference-editor-source')?.value?.trim() || null,
+    abstractText: document.getElementById('reference-editor-abstract')?.value || '',
+    rawText: document.getElementById('reference-editor-raw')?.value || ''
+  };
+}
+
+async function saveReferenceEditor() {
+  if (!state.selectedProjectId) {
+    window.alert('Select a project first.');
+    return;
+  }
+  const payload = collectReferenceEditorPayload();
+  if (!payload.title) {
+    throw new Error('Reference title is required.');
+  }
+  if (state.editingReferenceId) {
+    await patchJson(`${API_BASE}/references/${encodeURIComponent(state.editingReferenceId)}`, {
+      projectId: state.selectedProjectId,
+      ...payload
+    });
+  } else {
+    await postJson(`${API_BASE}/references`, {
+      projectId: state.selectedProjectId,
+      ...payload
+    });
+  }
+  const editorStatus = document.getElementById('reference-editor-status');
+  if (editorStatus) {
+    editorStatus.textContent = state.editingReferenceId ? 'Reference updated.' : 'Reference created.';
+  }
+  clearReferenceEditor();
+  await loadSelectedProjectData();
+  renderReferenceLibrary();
 }
 
 async function importReferences() {
@@ -6156,16 +12481,57 @@ async function importReferences() {
   const format = document.getElementById('reference-import-format')?.value || 'ris';
   const text = document.getElementById('reference-import-text')?.value || '';
   const relatedSourceId = document.getElementById('reference-related-source-id')?.value?.trim() || '';
+  const skipDuplicates = document.getElementById('reference-import-skip-duplicates')?.checked !== false;
   const env = await postJson(`${API_BASE}/references/import`, {
     projectId: state.selectedProjectId,
     format,
     text,
-    relatedSourceId: relatedSourceId || undefined
+    relatedSourceId: relatedSourceId || undefined,
+    skipDuplicates
   });
   state.referenceImportResult = env.data ?? null;
   document.getElementById('reference-import-text').value = '';
   await loadSelectedProjectData();
-  renderReferences();
+  renderReferenceLibrary();
+}
+
+async function exportReferences() {
+  if (!state.selectedProjectId) {
+    window.alert('Select a project first.');
+    return;
+  }
+  const params = new URLSearchParams({ projectId: state.selectedProjectId });
+  const format = document.getElementById('reference-export-format')?.value || 'json';
+  const searchText = document.getElementById('reference-search-text')?.value?.trim() || '';
+  const sourceFormat = document.getElementById('reference-filter-format')?.value || 'all';
+  const collectionId = document.getElementById('reference-filter-collection-id')?.value?.trim() || '';
+  if (format) params.set('format', format);
+  if (searchText) params.set('q', searchText);
+  if (sourceFormat && sourceFormat !== 'all') params.set('sourceFormat', sourceFormat);
+  if (collectionId) params.set('collectionId', collectionId);
+  const response = await fetch(`${API_BASE}/references/export?${params.toString()}`, {
+    method: 'GET',
+    headers: authHeaders(),
+    credentials: 'include'
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Reference export failed (${response.status}).`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  const extension = format === 'bibtex'
+    ? 'bib'
+    : format === 'csljson'
+      ? 'csl.json'
+      : format;
+  anchor.download = `${state.selectedProjectId}-references.${extension}`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 async function deleteReference(referenceId) {
@@ -6173,8 +12539,141 @@ async function deleteReference(referenceId) {
   await getJson(`${API_BASE}/references/${encodeURIComponent(referenceId)}?projectId=${encodeURIComponent(state.selectedProjectId)}`, {
     method: 'DELETE'
   });
+  if (state.editingReferenceId === referenceId) {
+    clearReferenceEditor();
+  }
   await loadSelectedProjectData();
-  renderReferences();
+  renderReferenceLibrary();
+}
+
+async function createReferenceCollection() {
+  if (!state.selectedProjectId) return;
+  const name = document.getElementById('reference-collection-name')?.value?.trim() || '';
+  if (!name) {
+    throw new Error('Collection name is required.');
+  }
+  await postJson(`${API_BASE}/reference-collections`, {
+    projectId: state.selectedProjectId,
+    name,
+    description: document.getElementById('reference-collection-description')?.value?.trim() || '',
+    colorToken: document.getElementById('reference-collection-color')?.value || 'blue'
+  });
+  const nameInput = document.getElementById('reference-collection-name');
+  if (nameInput) nameInput.value = '';
+  const descriptionInput = document.getElementById('reference-collection-description');
+  if (descriptionInput) descriptionInput.value = '';
+  await loadSelectedProjectData();
+  renderReferenceLibrary();
+}
+
+async function deleteReferenceCollection(collectionId) {
+  if (!state.selectedProjectId) return;
+  await getJson(`${API_BASE}/reference-collections/${encodeURIComponent(collectionId)}?projectId=${encodeURIComponent(state.selectedProjectId)}`, {
+    method: 'DELETE'
+  });
+  await loadSelectedProjectData();
+  renderReferenceLibrary();
+}
+
+async function addReferenceToCollection() {
+  if (!state.selectedProjectId) return;
+  const collectionId = document.getElementById('reference-collection-target')?.value?.trim() || '';
+  const referenceId = document.getElementById('reference-collection-reference-id')?.value?.trim() || '';
+  if (!collectionId || !referenceId) {
+    throw new Error('Select both a collection and reference.');
+  }
+  await postJson(`${API_BASE}/reference-collections/${encodeURIComponent(collectionId)}/items`, {
+    projectId: state.selectedProjectId,
+    referenceId
+  });
+  await loadSelectedProjectData();
+  renderReferenceLibrary();
+}
+
+async function removeReferenceCollectionItem(collectionId, itemId) {
+  if (!state.selectedProjectId) return;
+  await getJson(`${API_BASE}/reference-collections/${encodeURIComponent(collectionId)}/items/${encodeURIComponent(itemId)}?projectId=${encodeURIComponent(state.selectedProjectId)}`, {
+    method: 'DELETE'
+  });
+  await loadSelectedProjectData();
+  renderReferenceLibrary();
+}
+
+async function addReferenceLink() {
+  if (!state.selectedProjectId) return;
+  const referenceId = document.getElementById('reference-link-reference-id')?.value?.trim() || '';
+  const targetType = document.getElementById('reference-link-target-type')?.value || 'source';
+  const targetId = document.getElementById('reference-link-target-id')?.value?.trim() || '';
+  const note = document.getElementById('reference-link-note')?.value?.trim() || '';
+  if (!referenceId || !targetId) {
+    throw new Error('Select a reference and target item.');
+  }
+  await postJson(`${API_BASE}/reference-links`, {
+    projectId: state.selectedProjectId,
+    referenceId,
+    targetType,
+    targetId,
+    note
+  });
+  const noteInput = document.getElementById('reference-link-note');
+  if (noteInput) noteInput.value = '';
+  await loadSelectedProjectData();
+  renderReferenceLibrary();
+}
+
+async function deleteReferenceLink(linkId) {
+  if (!state.selectedProjectId) return;
+  await getJson(`${API_BASE}/reference-links/${encodeURIComponent(linkId)}?projectId=${encodeURIComponent(state.selectedProjectId)}`, {
+    method: 'DELETE'
+  });
+  await loadSelectedProjectData();
+  renderReferenceLibrary();
+}
+
+async function mergeReferences(primaryReferenceId, mergedReferenceId) {
+  if (!state.selectedProjectId) return;
+  const reason = window.prompt('Merge note (optional):', 'Duplicate reference merge') || '';
+  await postJson(`${API_BASE}/references/merge`, {
+    projectId: state.selectedProjectId,
+    primaryReferenceId,
+    mergedReferenceId,
+    reason
+  });
+  await loadSelectedProjectData();
+  renderReferenceLibrary();
+}
+
+async function runReferenceFilters() {
+  renderReferenceLibrary();
+}
+
+async function refreshReferenceDuplicates() {
+  if (!state.selectedProjectId) return;
+  const pid = encodeURIComponent(state.selectedProjectId);
+  const env = await getJson(`${API_BASE}/references/duplicates?projectId=${pid}`);
+  state.referenceDuplicateCandidates = env.data.items ?? [];
+  renderReferenceLibrary();
+}
+
+function editReferenceById(referenceId) {
+  const reference = state.selectedReferences.find((item) => item.id === referenceId);
+  if (!reference) return;
+  setReferenceEditorFromRecord(reference);
+  const status = document.getElementById('reference-editor-status');
+  if (status) status.textContent = `Editing ${reference.id}. Save to apply changes.`;
+}
+
+async function deleteReferenceById(referenceId) {
+  await deleteReference(referenceId);
+}
+
+async function removeReferenceFromCollectionByIds(collectionId, referenceId) {
+  if (!state.selectedProjectId) return;
+  await getJson(`${API_BASE}/reference-collections/${encodeURIComponent(collectionId)}/references/${encodeURIComponent(referenceId)}?projectId=${encodeURIComponent(state.selectedProjectId)}`, {
+    method: 'DELETE'
+  });
+  await loadSelectedProjectData();
+  renderReferenceLibrary();
 }
 
 async function runCodingComparison() {
@@ -6310,13 +12809,19 @@ async function runPatternAutocode() {
 async function loadMediaTimelineForActiveSource() {
   if (!state.selectedProjectId || !state.activeSourceId) {
     state.mediaTimeline = null;
+    resetDiarizationQaWorkspaceState();
     state.workspaceEditingSyncLinkId = null;
+    state.workspaceFocusedSyncLinkId = null;
+    updateFocusedSyncLinkIndicator();
     return;
   }
   const source = getActiveSource();
   if (!source || (source.kind !== 'audio' && source.kind !== 'video')) {
     state.mediaTimeline = null;
+    resetDiarizationQaWorkspaceState();
     state.workspaceEditingSyncLinkId = null;
+    state.workspaceFocusedSyncLinkId = null;
+    updateFocusedSyncLinkIndicator();
     return;
   }
   const env = await getJson(`${API_BASE}/media-timeline?projectId=${encodeURIComponent(state.selectedProjectId)}&sourceId=${encodeURIComponent(source.id)}`);
@@ -6324,6 +12829,10 @@ async function loadMediaTimelineForActiveSource() {
   if (state.workspaceEditingSyncLinkId && !state.selectedTranscriptSyncLinks.some((link) => link.id === state.workspaceEditingSyncLinkId && link.mediaSourceId === source.id)) {
     state.workspaceEditingSyncLinkId = null;
   }
+  if (state.workspaceFocusedSyncLinkId && !state.selectedTranscriptSyncLinks.some((link) => link.id === state.workspaceFocusedSyncLinkId && link.mediaSourceId === source.id)) {
+    state.workspaceFocusedSyncLinkId = null;
+  }
+  updateFocusedSyncLinkIndicator();
 }
 
 async function queueTranscriptionJob() {
@@ -6337,11 +12846,16 @@ async function queueTranscriptionJob() {
     return;
   }
   const note = document.getElementById('workspace-transcription-note')?.value?.trim() || '';
+  const { mode, pipelineConfig } = readTranscriptionPipelineInputs();
   await postJson(`${API_BASE}/transcription-jobs`, {
     projectId: state.selectedProjectId,
     mediaSourceId: source.id,
-    note
+    note,
+    mode,
+    pipelineConfig
   });
+  const statusEl = document.getElementById('workspace-status');
+  if (statusEl) statusEl.textContent = `Queued ${mode.replace('_', ' ')} transcription job.`;
   await loadSelectedProjectData();
   renderAll();
 }
@@ -6361,15 +12875,293 @@ async function runTranscriptionJob(jobId) {
   renderAll();
 }
 
+async function autoAlignTranscriptSyncLinks() {
+  if (!state.selectedProjectId || !state.activeSourceId) return;
+  const source = getActiveSource();
+  if (!source || (source.kind !== 'audio' && source.kind !== 'video')) {
+    window.alert('Choose an audio or video source first.');
+    return;
+  }
+  const modeEl = document.getElementById('workspace-sync-align-mode');
+  const maxDriftEl = document.getElementById('workspace-sync-max-drift-ms');
+  const statusEl = document.getElementById('workspace-sync-align-status');
+  const maxDriftMs = parseBoundedInput(maxDriftEl?.value, 1200, 100, 120000);
+  const mode = modeEl?.value === 'fit_to_segment' ? 'fit_to_segment' : 'snap_to_segment';
+  if (statusEl) statusEl.textContent = 'Running transcript auto-align...';
+  const env = await postJson(`${API_BASE}/transcript-sync-links/auto-align`, {
+    projectId: state.selectedProjectId,
+    mediaSourceId: source.id,
+    maxDriftMs,
+    mode
+  });
+  const alignment = env.data.alignment ?? null;
+  await loadSelectedProjectData();
+  await loadMediaTimelineForActiveSource();
+  renderAll();
+  if (statusEl && alignment) {
+    const before = alignment.avgDriftBeforeMs === null || alignment.avgDriftBeforeMs === undefined
+      ? 'n/a'
+      : `${Math.round(alignment.avgDriftBeforeMs)}ms`;
+    const after = alignment.avgDriftAfterMs === null || alignment.avgDriftAfterMs === undefined
+      ? 'n/a'
+      : `${Math.round(alignment.avgDriftAfterMs)}ms`;
+    statusEl.textContent = `Auto-align updated ${alignment.updatedCount} link(s), skipped ${alignment.skippedCount}. Avg drift ${before} -> ${after}.`;
+  }
+}
+
 async function runMergeReview() {
   if (!state.selectedProjectId) {
     window.alert('Select a project first.');
     return;
   }
   const params = buildEvidenceQueryParams();
+  const settings = getMergeReviewSettings();
+  params.set('minCoderCount', String(settings.minCoderCount));
+  params.set('minConfidenceSpread', String(settings.minConfidenceSpread));
+  params.set('maxRows', String(settings.maxRows));
+  params.set('status', state.mergeReviewStatusFilter || 'open');
   const env = await getJson(`${API_BASE}/merge-review?${params.toString()}`);
   state.mergeReviewResult = env.data.review ?? null;
+  if (!state.mergeReviewResult?.rows?.length) {
+    state.mergeReviewHistory = [];
+  }
   renderMergeReview();
+}
+
+async function loadMergeReviewHistory(segmentId, codeId) {
+  if (!state.selectedProjectId || !segmentId || !codeId) return;
+  const params = new URLSearchParams({
+    projectId: state.selectedProjectId,
+    segmentId,
+    codeId,
+    limit: '200'
+  });
+  const env = await getJson(`${API_BASE}/merge-review/history?${params.toString()}`);
+  state.mergeReviewHistory = env.data.items ?? [];
+  renderMergeReviewHistory();
+}
+
+async function saveMergeReviewTriage({ segmentId, codeId, status, severity, assigneeUsername, dueAt, triageNote, expectedUpdatedAt }) {
+  if (!state.selectedProjectId) return;
+  await postJson(`${API_BASE}/merge-review/triage`, {
+    projectId: state.selectedProjectId,
+    segmentId,
+    codeId,
+    status,
+    severity,
+    assigneeUsername: assigneeUsername || null,
+    dueAt: dueAt || null,
+    triageNote: triageNote || '',
+    expectedUpdatedAt: expectedUpdatedAt || undefined
+  });
+  await loadSelectedProjectData();
+  await runMergeReview();
+}
+
+async function approveMergeReviewConflict({ segmentId, codeId, note }) {
+  if (!state.selectedProjectId) return;
+  await postJson(`${API_BASE}/merge-review/approve`, {
+    projectId: state.selectedProjectId,
+    segmentId,
+    codeId,
+    note: note || ''
+  });
+  await runMergeReview();
+  await loadMergeReviewHistory(segmentId, codeId);
+}
+
+async function resolveMergeReviewCandidate({ segmentId, codeId, keepMode, keepCoderId = '', keepApplicationId = '', resolutionNote = '', expectedTriageUpdatedAt = '', expectedPolicyUpdatedAt = '' }) {
+  if (!state.selectedProjectId) return;
+  await postJson(`${API_BASE}/merge-review/resolve`, {
+    projectId: state.selectedProjectId,
+    segmentId,
+    codeId,
+    keepMode,
+    keepCoderId,
+    keepApplicationId,
+    resolutionNote,
+    expectedTriageUpdatedAt: expectedTriageUpdatedAt || undefined,
+    expectedPolicyUpdatedAt: expectedPolicyUpdatedAt || undefined
+  });
+  await loadSelectedProjectData();
+  await runMergeReview();
+  await loadMergeReviewHistory(segmentId, codeId);
+  renderAll();
+}
+
+async function deferMergeReviewCandidate({ segmentId, codeId, resolutionNote = '', expectedTriageUpdatedAt = '', expectedPolicyUpdatedAt = '' }) {
+  if (!state.selectedProjectId) return;
+  await postJson(`${API_BASE}/merge-review/defer`, {
+    projectId: state.selectedProjectId,
+    segmentId,
+    codeId,
+    resolutionNote,
+    expectedTriageUpdatedAt: expectedTriageUpdatedAt || undefined,
+    expectedPolicyUpdatedAt: expectedPolicyUpdatedAt || undefined
+  });
+  await loadSelectedProjectData();
+  await runMergeReview();
+  await loadMergeReviewHistory(segmentId, codeId);
+  renderAll();
+}
+
+async function reopenMergeReviewCandidate({ segmentId, codeId, resolutionNote = '', expectedTriageUpdatedAt = '', expectedPolicyUpdatedAt = '' }) {
+  if (!state.selectedProjectId) return;
+  await postJson(`${API_BASE}/merge-review/reopen`, {
+    projectId: state.selectedProjectId,
+    segmentId,
+    codeId,
+    resolutionNote,
+    expectedTriageUpdatedAt: expectedTriageUpdatedAt || undefined,
+    expectedPolicyUpdatedAt: expectedPolicyUpdatedAt || undefined
+  });
+  await loadSelectedProjectData();
+  await runMergeReview();
+  await loadMergeReviewHistory(segmentId, codeId);
+  renderAll();
+}
+
+async function restoreMergeReviewResolution(resolutionId, segmentId = '', codeId = '', resolutionNote = '', expectedTriageUpdatedAt = '') {
+  if (!state.selectedProjectId || !resolutionId) return;
+  await postJson(`${API_BASE}/merge-review/restore`, {
+    projectId: state.selectedProjectId,
+    resolutionId,
+    resolutionNote,
+    expectedTriageUpdatedAt: expectedTriageUpdatedAt || undefined
+  });
+  await loadSelectedProjectData();
+  await runMergeReview();
+  if (segmentId && codeId) {
+    await loadMergeReviewHistory(segmentId, codeId);
+  }
+  renderAll();
+}
+
+async function patchCodingCalibrationSession(sessionId, patch) {
+  if (!state.selectedProjectId || !sessionId) return;
+  await patchJson(`${API_BASE}/coding-calibration-sessions/${encodeURIComponent(sessionId)}`, {
+    ...patch,
+    projectId: state.selectedProjectId
+  });
+  await loadSelectedProjectData();
+  renderAll();
+}
+
+async function runCodingCalibrationSession(sessionId) {
+  if (!state.selectedProjectId || !sessionId) return;
+  await postJson(`${API_BASE}/coding-calibration-sessions/${encodeURIComponent(sessionId)}/run`, {
+    projectId: state.selectedProjectId
+  });
+  await loadSelectedProjectData();
+  renderAll();
+}
+
+async function createCodingCalibrationSession() {
+  if (!state.selectedProjectId) {
+    window.alert('Select a project first.');
+    return;
+  }
+  const label = document.getElementById('coding-calibration-label')?.value?.trim() || '';
+  if (!label) {
+    window.alert('Calibration session label is required.');
+    return;
+  }
+  const scope = readQualitativeQueryInputs();
+  const sampleSize = Number(document.getElementById('coding-calibration-sample-size')?.value || 40);
+  await postJson(`${API_BASE}/coding-calibration-sessions`, {
+    projectId: state.selectedProjectId,
+    label,
+    scope,
+    targetCodeId: document.getElementById('coding-calibration-code-id')?.value?.trim() || null,
+    coderAId: document.getElementById('coding-calibration-coder-a')?.value?.trim() || null,
+    coderBId: document.getElementById('coding-calibration-coder-b')?.value?.trim() || null,
+    sampleSize,
+    targetAgreement: Number(document.getElementById('coding-calibration-target-agreement')?.value || 0.8),
+    targetKappa: Number(document.getElementById('coding-calibration-target-kappa')?.value || 0.7),
+    minSamples: Number(document.getElementById('coding-calibration-min-samples')?.value || 25)
+  });
+  const form = document.getElementById('coding-calibration-form');
+  if (form) form.reset();
+  await loadSelectedProjectData();
+  renderAll();
+}
+
+async function saveMergeGovernancePolicy() {
+  if (!state.selectedProjectId) {
+    window.alert('Select a project first.');
+    return;
+  }
+  const env = await putJson(`${API_BASE}/merge-review/governance-policy`, {
+    projectId: state.selectedProjectId,
+    expectedUpdatedAt: state.mergeGovernancePolicy?.updatedAt || undefined,
+    requireResolutionNote: document.getElementById('merge-governance-require-note')?.value === 'true',
+    restrictResolutionToOwnerOrProfessor: document.getElementById('merge-governance-restrict-resolve')?.value === 'true',
+    requireSecondReviewerForHighRisk: document.getElementById('merge-governance-require-second-reviewer')?.value === 'true',
+    highRiskMinCoderCount: Number(document.getElementById('merge-governance-high-risk-coder-count')?.value || 3),
+    highRiskMinConfidenceSpread: Number(document.getElementById('merge-governance-high-risk-spread')?.value || 0.35),
+    requiredApprovalCountForHighRisk: Number(document.getElementById('merge-governance-required-approval-count')?.value || 1),
+    approvalExpiryHours: Number(document.getElementById('merge-governance-approval-expiry-hours')?.value || 168),
+    defaultTriageSlaHours: Number(document.getElementById('merge-governance-default-sla-hours')?.value || 72)
+  });
+  state.mergeGovernancePolicy = env.data.policy ?? null;
+  await runMergeReview();
+  renderAll();
+}
+
+async function createCodingAssignmentTask() {
+  if (!state.selectedProjectId) {
+    window.alert('Select a project first.');
+    return;
+  }
+  const title = document.getElementById('coding-assignment-title')?.value?.trim() || '';
+  if (!title) {
+    window.alert('Assignment title is required.');
+    return;
+  }
+  const assigneeUsername = document.getElementById('coding-assignment-assignee')?.value?.trim() || null;
+  const env = await postJson(`${API_BASE}/coding-assignments`, {
+    projectId: state.selectedProjectId,
+    title,
+    description: document.getElementById('coding-assignment-description')?.value?.trim() || '',
+    sourceId: document.getElementById('coding-assignment-source-id')?.value?.trim() || null,
+    codeId: document.getElementById('coding-assignment-code-id')?.value?.trim() || null,
+    caseId: document.getElementById('coding-assignment-case-id')?.value?.trim() || null,
+    assigneeUsername,
+    status: document.getElementById('coding-assignment-status')?.value || 'todo',
+    priority: document.getElementById('coding-assignment-priority')?.value || 'normal',
+    dueAt: document.getElementById('coding-assignment-due-at')?.value
+      ? new Date(document.getElementById('coding-assignment-due-at').value).toISOString()
+      : null
+  });
+  const form = document.getElementById('coding-assignment-form');
+  if (form) form.reset();
+  const statusInput = document.getElementById('coding-assignment-status');
+  if (statusInput) statusInput.value = 'todo';
+  const priorityInput = document.getElementById('coding-assignment-priority');
+  if (priorityInput) priorityInput.value = 'normal';
+  await loadSelectedProjectData();
+  renderAll();
+  const statusEl = document.getElementById('coding-assignment-summary');
+  if (statusEl) statusEl.textContent = `Assignment created: ${env.data.task?.title ?? title}.`;
+}
+
+async function updateCodingAssignmentTask(taskId, patch) {
+  if (!state.selectedProjectId || !taskId) return;
+  await patchJson(`${API_BASE}/coding-assignments/${encodeURIComponent(taskId)}`, {
+    ...patch,
+    projectId: state.selectedProjectId
+  });
+  await loadSelectedProjectData();
+  renderAll();
+}
+
+async function deleteCodingAssignmentTask(taskId) {
+  if (!state.selectedProjectId || !taskId) return;
+  await getJson(`${API_BASE}/coding-assignments/${encodeURIComponent(taskId)}?projectId=${encodeURIComponent(state.selectedProjectId)}`, {
+    method: 'DELETE'
+  });
+  await loadSelectedProjectData();
+  renderAll();
 }
 
 function parseRecodeRules(text) {
@@ -6723,6 +13515,14 @@ async function saveWorkspaceMediaSegment() {
     const startMs = Math.round(startSeconds * 1000);
     const endMs = Math.round(endSeconds * 1000);
     const transcriptSourceId = transcriptSourceEl?.value?.trim() || '';
+    const syncMetadata = readManualSyncMetadata();
+    const tokenTimeline = buildManualTokenTimeline(
+      transcript,
+      startMs,
+      endMs,
+      syncMetadata.speakerLabel || 'Speaker 1',
+      syncMetadata.confidence
+    );
 
     if (editingLink) {
       const payload = {
@@ -6731,7 +13531,11 @@ async function saveWorkspaceMediaSegment() {
         segmentId: editingLink.segmentId,
         startMs,
         endMs,
-        transcriptText: transcript
+        transcriptText: transcript,
+        speakerLabel: syncMetadata.speakerLabel,
+        confidence: syncMetadata.confidence,
+        syncScore: syncMetadata.syncScore,
+        tokenTimeline
       };
       if (transcriptSourceId) {
         payload.transcriptSourceId = transcriptSourceId;
@@ -6757,7 +13561,11 @@ async function saveWorkspaceMediaSegment() {
           segmentId: segment.id,
           startMs,
           endMs,
-          transcriptText: transcript
+          transcriptText: transcript,
+          speakerLabel: syncMetadata.speakerLabel,
+          confidence: syncMetadata.confidence,
+          syncScore: syncMetadata.syncScore,
+          tokenTimeline
         });
       }
       if (textEl) textEl.value = '';
@@ -6807,11 +13615,15 @@ function renderSourceWorkspaceLegacy() {
   const codeInputEl = document.getElementById('ca-code-id');
   const caseInputEl = document.getElementById('ca-case-id');
   const transcriptSourceInput = document.getElementById('workspace-transcript-source-id');
+  const transcriptionLanguageInput = document.getElementById('workspace-transcription-language');
+  const speakerLabelInput = document.getElementById('workspace-media-speaker-label');
   if (segmentSourceEl) segmentSourceEl.value = state.activeSourceId ?? '';
   if (codeInputEl) codeInputEl.value = state.workspaceSelectedCodeId ?? '';
   if (caseInputEl) caseInputEl.value = state.workspaceSelectedCaseId ?? '';
 
   const source = getActiveSource();
+  const activeCode = state.selectedCodes.find((entry) => entry.id === state.workspaceSelectedCodeId) ?? null;
+  const activeCase = state.selectedCases.find((entry) => entry.id === state.workspaceSelectedCaseId) ?? null;
   if (!source) {
     view.innerHTML = '<div class="coding-empty">No source selected.</div>';
     statusEl.textContent = 'Select a source to start coding.';
@@ -6823,9 +13635,10 @@ function renderSourceWorkspaceLegacy() {
   const isMediaSource = (source.kind === 'audio' || source.kind === 'video') && !!source.contentUrl;
   mediaPanel.style.display = isMediaSource ? '' : 'none';
   if (isMediaSource) {
+    const mediaSrc = buildMediaPlaybackUrl(source);
     mediaPlayer.innerHTML = source.kind === 'video'
-      ? `<div class="media-shell"><video id="workspace-media-element" controls src="${escapeHtml(source.contentUrl)}"></video></div>`
-      : `<div class="media-shell"><audio id="workspace-media-element" controls src="${escapeHtml(source.contentUrl)}"></audio></div>`;
+      ? `<div class="media-shell"><video id="workspace-media-element" controls src="${escapeHtml(mediaSrc)}"></video></div>`
+      : `<div class="media-shell"><audio id="workspace-media-element" controls src="${escapeHtml(mediaSrc)}"></audio></div>`;
     if (transcriptSourceInput && !transcriptSourceInput.value.trim()) {
       const linkedTranscriptId = state.selectedTranscriptSyncLinks.find((link) => link.mediaSourceId === source.id)?.transcriptSourceId
         ?? state.transcriptionJobs.find((job) => job.mediaSourceId === source.id && job.outputSourceId)?.outputSourceId
@@ -6965,6 +13778,8 @@ function renderSourceWorkspace() {
   const codeInputEl = document.getElementById('ca-code-id');
   const caseInputEl = document.getElementById('ca-case-id');
   const transcriptSourceInput = document.getElementById('workspace-transcript-source-id');
+  const transcriptionLanguageInput = document.getElementById('workspace-transcription-language');
+  const speakerLabelInput = document.getElementById('workspace-media-speaker-label');
   if (segmentSourceEl) segmentSourceEl.value = state.activeSourceId ?? '';
   if (codeInputEl) codeInputEl.value = state.workspaceSelectedCodeId ?? '';
   if (caseInputEl) caseInputEl.value = state.workspaceSelectedCaseId ?? '';
@@ -6980,15 +13795,18 @@ function renderSourceWorkspace() {
     mediaPanel.style.display = 'none';
     mediaPlayer.innerHTML = '';
     state.workspaceEditingSyncLinkId = null;
+    state.workspaceFocusedSyncLinkId = null;
+    updateFocusedSyncLinkIndicator();
     return;
   }
 
   const isMediaSource = (source.kind === 'audio' || source.kind === 'video') && !!source.contentUrl;
   mediaPanel.style.display = isMediaSource ? '' : 'none';
   if (isMediaSource) {
+    const mediaSrc = buildMediaPlaybackUrl(source);
     mediaPlayer.innerHTML = source.kind === 'video'
-      ? `<div class="media-shell"><video id="workspace-media-element" controls src="${escapeHtml(source.contentUrl)}"></video></div>`
-      : `<div class="media-shell"><audio id="workspace-media-element" controls src="${escapeHtml(source.contentUrl)}"></audio></div>`;
+      ? `<div class="media-shell"><video id="workspace-media-element" controls src="${escapeHtml(mediaSrc)}"></video></div>`
+      : `<div class="media-shell"><audio id="workspace-media-element" controls src="${escapeHtml(mediaSrc)}"></audio></div>`;
     if (transcriptSourceInput && !transcriptSourceInput.value.trim()) {
       const linkedTranscriptId = state.selectedTranscriptSyncLinks.find((link) => link.mediaSourceId === source.id)?.transcriptSourceId
         ?? state.transcriptionJobs.find((job) => job.mediaSourceId === source.id && job.outputSourceId)?.outputSourceId
@@ -6996,9 +13814,17 @@ function renderSourceWorkspace() {
         ?? '';
       transcriptSourceInput.value = linkedTranscriptId;
     }
+    if (transcriptionLanguageInput && !transcriptionLanguageInput.value.trim()) {
+      transcriptionLanguageInput.value = source.language || 'en';
+    }
+    if (speakerLabelInput && !speakerLabelInput.value.trim()) {
+      speakerLabelInput.value = 'Speaker 1';
+    }
   } else {
     mediaPlayer.innerHTML = '';
     state.workspaceEditingSyncLinkId = null;
+    state.workspaceFocusedSyncLinkId = null;
+    updateFocusedSyncLinkIndicator();
     if (transcriptSourceInput) transcriptSourceInput.value = '';
   }
 
@@ -8327,6 +15153,18 @@ function renderRegression() {
     }));
     const diagnostics = result.diagnostics ?? {};
     const observationRows = Array.isArray(result.observations) ? result.observations : [];
+    const hasRobustInference = result.coefficients.some((item) =>
+        item.robustStandardError !== undefined
+        || item.robustStatistic !== undefined
+        || item.robustPValue !== undefined
+      );
+    const hasOddsRatioInterval = result.coefficients.some((item) => item.oddsRatioConfidenceInterval !== undefined);
+    const hasRobustOddsRatioInterval = hasRobustInference
+      && result.coefficients.some((item) => item.robustOddsRatioConfidenceInterval !== undefined);
+    const robustStatisticLabel = result.model === 'logistic' ? 'Robust z' : 'Robust t';
+    const rocAucInterval = (typeof diagnostics.rocAucCiLower === 'number' && typeof diagnostics.rocAucCiUpper === 'number')
+      ? { level: 0.95, lower: diagnostics.rocAucCiLower, upper: diagnostics.rocAucCiUpper }
+      : null;
     const multicollinearityRows = Array.isArray(result.multicollinearity) && result.multicollinearity.length > 0
       ? result.multicollinearity.map((row) => ({
         field: row.field,
@@ -8369,6 +15207,16 @@ function renderRegression() {
       ['Jarque-Bera p-value', formatStatValue(diagnostics.jarqueBeraPValue, 4)],
       ['Breusch-Pagan statistic', formatStatValue(diagnostics.breuschPaganStatistic, 4)],
       ['Breusch-Pagan p-value', formatStatValue(diagnostics.breuschPaganPValue, 4)],
+      ['Robust SE inflation (max)', formatStatValue(diagnostics.robustSeInflationMax, 4)],
+      ['Robust SE inflation (mean)', formatStatValue(diagnostics.robustSeInflationMean, 4)],
+      ['Hosmer-Lemeshow statistic', formatStatValue(diagnostics.hosmerLemeshowStatistic, 4)],
+      ['Hosmer-Lemeshow df', formatStatValue(diagnostics.hosmerLemeshowDf, 0)],
+      ['Hosmer-Lemeshow p-value', formatStatValue(diagnostics.hosmerLemeshowPValue, 4)],
+      ['Hosmer-Lemeshow groups', formatStatValue(diagnostics.hosmerLemeshowGroupCount, 0)],
+      ['Calibration intercept', formatStatValue(diagnostics.calibrationIntercept, 4)],
+      ['Calibration slope', formatStatValue(diagnostics.calibrationSlope, 4)],
+      ['ROC AUC', formatStatValue(diagnostics.rocAuc, 4)],
+      ['ROC AUC 95% CI', formatConfidenceInterval(rocAucInterval, 4)],
       ['Max VIF', formatStatValue(diagnostics.maxVif, 4)],
       ['Mean VIF', formatStatValue(diagnostics.meanVif, 4)],
       ['Max predictor correlation', formatStatValue(diagnostics.maxPredictorCorrelation, 4)],
@@ -8377,6 +15225,19 @@ function renderRegression() {
       ['Influential count', formatStatValue(diagnostics.influentialCount, 0)]
     ].filter((row) => row[1] !== 'n/a');
     const thresholdAnalysis = Array.isArray(result.thresholdAnalysis) ? result.thresholdAnalysis : [];
+    const defaultThresholdEntry = thresholdAnalysis.find((entry) => Math.abs((entry.threshold ?? 0) - 0.5) < 0.0001) ?? null;
+    const bestF1Threshold = typeof diagnostics.bestThresholdByF1 === 'number'
+      ? diagnostics.bestThresholdByF1
+      : (typeof result.calibration?.bestThresholdByF1 === 'number' ? result.calibration.bestThresholdByF1 : null);
+    const bestYoudenThreshold = typeof diagnostics.bestThresholdByYouden === 'number'
+      ? diagnostics.bestThresholdByYouden
+      : (typeof result.calibration?.bestThresholdByYouden === 'number' ? result.calibration.bestThresholdByYouden : null);
+    const bestF1Entry = bestF1Threshold === null
+      ? null
+      : thresholdAnalysis.find((entry) => Math.abs((entry.threshold ?? 0) - bestF1Threshold) < 0.0001) ?? null;
+    const bestYoudenEntry = bestYoudenThreshold === null
+      ? null
+      : thresholdAnalysis.find((entry) => Math.abs((entry.threshold ?? 0) - bestYoudenThreshold) < 0.0001) ?? null;
     const calibrationBins = Array.isArray(result.calibration?.bins) ? result.calibration.bins : [];
     const calibrationPoints = calibrationBins
       .filter((bin) => typeof bin.predictedRate === 'number' && typeof bin.observedRate === 'number')
@@ -8411,15 +15272,35 @@ function renderRegression() {
         buildOutputSection(
           'Coefficients',
           buildOutputTable(
-            ['Field', 'Coefficient', 'SE', 'Statistic', 'p', '95% CI', 'Odds ratio'],
+            [
+              'Field',
+              'Coefficient',
+              'SE',
+              ...(hasRobustInference ? ['Robust SE'] : []),
+              'Statistic',
+              ...(hasRobustInference ? [robustStatisticLabel] : []),
+              'p',
+              ...(hasRobustInference ? ['Robust p'] : []),
+              '95% CI',
+              ...(hasRobustInference ? ['Robust 95% CI'] : []),
+              'Odds ratio',
+              ...(hasOddsRatioInterval ? ['OR 95% CI'] : []),
+              ...(hasRobustOddsRatioInterval ? ['Robust OR 95% CI'] : [])
+            ],
             result.coefficients.map((item) => [
               escapeHtml(item.field),
               formatStatValue(item.coefficient, 4),
               formatStatValue(item.standardError, 4),
+              ...(hasRobustInference ? [formatStatValue(item.robustStandardError, 4)] : []),
               formatStatValue(item.statistic, 4),
+              ...(hasRobustInference ? [formatStatValue(item.robustStatistic, 4)] : []),
               formatStatValue(item.pValue, 4),
+              ...(hasRobustInference ? [formatStatValue(item.robustPValue, 4)] : []),
               formatConfidenceInterval(item.confidenceInterval, 4),
-              formatStatValue(item.oddsRatio, 4)
+              ...(hasRobustInference ? [formatConfidenceInterval(item.robustConfidenceInterval, 4)] : []),
+              formatStatValue(item.oddsRatio, 4),
+              ...(hasOddsRatioInterval ? [formatConfidenceInterval(item.oddsRatioConfidenceInterval, 4)] : []),
+              ...(hasRobustOddsRatioInterval ? [formatConfidenceInterval(item.robustOddsRatioConfidenceInterval, 4)] : [])
             ])
           )
         ),
@@ -8447,6 +15328,19 @@ function renderRegression() {
           : '',
         result.model === 'logistic' && thresholdAnalysis.length > 0
           ? buildOutputSection(
+            'Cutpoint summary',
+            buildOutputTable(
+              ['Cutpoint', 'Threshold', 'Accuracy', 'Precision', 'Recall', 'Specificity', 'F1', 'Youden J'],
+              [
+                ['Default', formatStatValue(defaultThresholdEntry?.threshold ?? 0.5, 2), formatStatValue(defaultThresholdEntry?.accuracy, 4), formatStatValue(defaultThresholdEntry?.precision, 4), formatStatValue(defaultThresholdEntry?.recall, 4), formatStatValue(defaultThresholdEntry?.specificity, 4), formatStatValue(defaultThresholdEntry?.f1Score, 4), formatStatValue(defaultThresholdEntry?.youdenJ, 4)],
+                ['Best F1', formatStatValue(bestF1Entry?.threshold, 2), formatStatValue(bestF1Entry?.accuracy, 4), formatStatValue(bestF1Entry?.precision, 4), formatStatValue(bestF1Entry?.recall, 4), formatStatValue(bestF1Entry?.specificity, 4), formatStatValue(bestF1Entry?.f1Score, 4), formatStatValue(bestF1Entry?.youdenJ, 4)],
+                ['Best Youden J', formatStatValue(bestYoudenEntry?.threshold, 2), formatStatValue(bestYoudenEntry?.accuracy, 4), formatStatValue(bestYoudenEntry?.precision, 4), formatStatValue(bestYoudenEntry?.recall, 4), formatStatValue(bestYoudenEntry?.specificity, 4), formatStatValue(bestYoudenEntry?.f1Score, 4), formatStatValue(bestYoudenEntry?.youdenJ, 4)]
+              ]
+            )
+          )
+          : '',
+        result.model === 'logistic' && thresholdAnalysis.length > 0
+          ? buildOutputSection(
             'Threshold analysis',
             buildOutputTable(
               ['Threshold', 'Accuracy', 'Precision', 'Recall', 'Specificity', 'F1', 'Youden J', 'TP', 'FP', 'TN', 'FN'],
@@ -8464,6 +15358,49 @@ function renderRegression() {
                 formatStatValue(entry.falseNegative, 2)
               ])
             )
+          )
+          : '',
+        result.model === 'logistic' && (defaultThresholdEntry || bestF1Entry || bestYoudenEntry)
+          ? buildOutputSection(
+            'Confusion matrix by cutpoint',
+            buildOutputTable(
+              ['Cutpoint', 'TP', 'FP', 'TN', 'FN'],
+              [
+                ['Default', formatStatValue(defaultThresholdEntry?.truePositive, 2), formatStatValue(defaultThresholdEntry?.falsePositive, 2), formatStatValue(defaultThresholdEntry?.trueNegative, 2), formatStatValue(defaultThresholdEntry?.falseNegative, 2)],
+                ['Best F1', formatStatValue(bestF1Entry?.truePositive, 2), formatStatValue(bestF1Entry?.falsePositive, 2), formatStatValue(bestF1Entry?.trueNegative, 2), formatStatValue(bestF1Entry?.falseNegative, 2)],
+                ['Best Youden J', formatStatValue(bestYoudenEntry?.truePositive, 2), formatStatValue(bestYoudenEntry?.falsePositive, 2), formatStatValue(bestYoudenEntry?.trueNegative, 2), formatStatValue(bestYoudenEntry?.falseNegative, 2)]
+              ]
+            )
+          )
+          : '',
+        result.model === 'logistic' && calibrationBins.length > 0
+          ? buildOutputSection(
+            'Hosmer-Lemeshow goodness of fit',
+            `
+              ${buildOutputTable(
+                ['Bin', 'Weighted N', 'Observed events', 'Expected events', 'Observed rate', 'Predicted rate'],
+                calibrationBins.map((bin) => {
+                  const weightedCount = typeof bin.weightedCount === 'number' ? bin.weightedCount : 0;
+                  const observedRate = typeof bin.observedRate === 'number' ? bin.observedRate : null;
+                  const predictedRate = typeof bin.predictedRate === 'number' ? bin.predictedRate : null;
+                  const observedEvents = observedRate === null ? null : observedRate * weightedCount;
+                  const expectedEvents = predictedRate === null ? null : predictedRate * weightedCount;
+                  return [
+                    escapeHtml(bin.bin),
+                    formatStatValue(weightedCount, 3),
+                    formatStatValue(observedEvents, 3),
+                    formatStatValue(expectedEvents, 3),
+                    formatStatValue(observedRate, 4),
+                    formatStatValue(predictedRate, 4)
+                  ];
+                })
+              )}
+              <div class="small-muted" style="margin-top:8px">
+                HL chi-square ${formatStatValue(diagnostics.hosmerLemeshowStatistic, 4)}
+                with df ${formatStatValue(diagnostics.hosmerLemeshowDf, 0)}
+                and p ${formatStatValue(diagnostics.hosmerLemeshowPValue, 4)}.
+              </div>
+            `
           )
           : '',
         result.model === 'logistic' && calibrationBins.length > 0
@@ -8559,106 +15496,19 @@ function renderRegression() {
     });
     return;
   }
-
-  const options = getDatasetAnalysisFieldOptions().filter((option) => option.valueType === 'number');
-  const previousDependent = dependentEl.value;
-  const previousPredictors = [...predictorEl.selectedOptions].map((option) => option.value);
-  dependentEl.innerHTML = options.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`).join('');
-  predictorEl.innerHTML = options.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`).join('');
-  if (options.length > 0) {
-    dependentEl.value = options.some((option) => option.key === previousDependent) ? previousDependent : options[0].key;
-  }
-  const availablePredictors = options.filter((option) => option.key !== dependentEl.value);
-  for (const option of predictorEl.options) {
-    option.selected = previousPredictors.includes(option.value) && option.value !== dependentEl.value;
-  }
-  if ([...predictorEl.selectedOptions].length === 0 && availablePredictors.length > 0) {
-    availablePredictors.slice(0, Math.min(2, availablePredictors.length)).forEach((option) => {
-      const target = [...predictorEl.options].find((candidate) => candidate.value === option.key);
-      if (target) target.selected = true;
-    });
-  }
-  runBtn.disabled = options.length < 2;
-
-  if (options.length < 2) {
-    resultEl.innerHTML = '<p>Add at least two numeric fields before running regression.</p>';
-    return;
-  }
-
-  if (!state.regressionResult) {
-    resultEl.innerHTML = '<p>Choose numeric fields and run a regression.</p>';
-    return;
-  }
-
-  const metrics = Object.entries(state.regressionResult.metrics)
-    .map(([key, value]) => `<span class="source-meta">${escapeHtml(key)}: ${value === null ? 'n/a' : escapeHtml(formatDecimal(value, 4))}</span>`)
-    .join('');
-  const diagnostics = Object.entries(state.regressionResult.diagnostics ?? {})
-    .map(([key, value]) => `<span class="source-meta">${escapeHtml(key)}: ${value === null ? 'n/a' : escapeHtml(formatDecimal(value, 4))}</span>`)
-    .join('');
-  const coefficients = state.regressionResult.coefficients
-    .map((item) => `<li>${escapeHtml(item.field)}: <strong>${formatDecimal(item.coefficient, 4)}</strong>${item.standardError !== null && item.standardError !== undefined ? ` | SE ${formatDecimal(item.standardError, 4)}` : ''}${item.statistic !== null && item.statistic !== undefined ? ` | stat ${formatDecimal(item.statistic, 4)}` : ''}${item.pValue !== null && item.pValue !== undefined ? ` | p ${formatDecimal(item.pValue, 4)}` : ''}${item.confidenceInterval?.lower !== null && item.confidenceInterval?.lower !== undefined ? ` | 95% CI ${formatDecimal(item.confidenceInterval.lower, 4)} to ${formatDecimal(item.confidenceInterval.upper, 4)}` : ''}${item.oddsRatio !== null && item.oddsRatio !== undefined ? ` | OR ${formatDecimal(item.oddsRatio, 4)}` : ''}</li>`)
-    .join('');
-  const observations = Array.isArray(state.regressionResult.observations) ? state.regressionResult.observations : [];
-
-  resultEl.innerHTML = `
-    <p><strong>${escapeHtml(state.regressionResult.model)}</strong> regression on <strong>${escapeHtml(state.regressionResult.dependentField)}</strong></p>
-    <p>Predictors: <strong>${escapeHtml(state.regressionResult.predictorFields.join(', '))}</strong></p>
-    <span class="source-meta">Cases: ${state.regressionResult.caseCount}</span>
-    <span class="source-meta">Intercept: ${formatDecimal(state.regressionResult.intercept, 4)}</span>
-    <span class="source-meta">Slope: ${formatDecimal(state.regressionResult.slope, 4)}</span>
-    ${metrics}
-    ${diagnostics ? `<div style="margin-top:10px">${diagnostics}</div>` : ''}
-    ${state.regressionResult.assumptions?.length ? `<ul style="margin-top:10px">${state.regressionResult.assumptions.map((item) => `<li>${escapeHtml(item.label)}: <strong>${escapeHtml(item.status)}</strong>${item.value !== null ? ` (${escapeHtml(String(item.value))})` : ''}</li>`).join('')}</ul>` : ''}
-    <ul style="margin-top:10px">${coefficients}</ul>
-    ${observations.length > 0 ? `
-      <div class="matrix-table-wrap" style="margin-top:16px">
-        <table class="matrix-table">
-          <thead>
-            <tr>
-              <th>Case</th>
-              <th>Actual</th>
-              <th>Predicted</th>
-              <th>Residual</th>
-              <th>Std residual</th>
-              <th>Leverage</th>
-              <th>Cook's D</th>
-              <th>Deviance residual</th>
-              <th>Predicted class</th>
-              <th>Outlier</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${observations.map((observation) => `
-              <tr>
-                <td>${escapeHtml(observation.caseLabel ?? observation.caseId ?? 'case')}</td>
-                <td>${observation.actual === null || observation.actual === undefined ? 'n/a' : formatDecimal(observation.actual, 4)}</td>
-                <td>${observation.predicted === null || observation.predicted === undefined ? 'n/a' : formatDecimal(observation.predicted, 4)}</td>
-                <td>${observation.residual === null || observation.residual === undefined ? 'n/a' : formatDecimal(observation.residual, 4)}</td>
-                <td>${observation.standardizedResidual === null || observation.standardizedResidual === undefined ? 'n/a' : formatDecimal(observation.standardizedResidual, 4)}</td>
-                <td>${observation.leverage === null || observation.leverage === undefined ? 'n/a' : formatDecimal(observation.leverage, 4)}</td>
-                <td>${observation.cooksDistance === null || observation.cooksDistance === undefined ? 'n/a' : formatDecimal(observation.cooksDistance, 4)}</td>
-                <td>${observation.devianceResidual === null || observation.devianceResidual === undefined ? 'n/a' : formatDecimal(observation.devianceResidual, 4)}</td>
-                <td>${observation.predictedClass === null || observation.predictedClass === undefined ? 'n/a' : escapeHtml(String(observation.predictedClass))}</td>
-                <td>${observation.outlier ? 'yes' : 'no'}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-    ` : ''}
-  `;
 }
 
 function renderReliability() {
   const fieldsEl = document.getElementById('reliability-fields');
   const subscaleEl = document.getElementById('reliability-subscales');
+  const stratifyEl = document.getElementById('reliability-stratify-field');
   const runBtn = document.getElementById('run-reliability-btn');
   const resultEl = document.getElementById('reliability-result');
   if (!fieldsEl || !subscaleEl || !runBtn || !resultEl) return;
 
   const numericOptions = getDatasetAnalysisFieldOptions().filter((option) => option.valueType === 'number');
   const previousSelections = getSelectedValues(fieldsEl);
+  const previousStratify = stratifyEl?.value ?? '';
   fieldsEl.innerHTML = numericOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`).join('');
   for (const option of fieldsEl.options) {
     option.selected = previousSelections.includes(option.value);
@@ -8670,6 +15520,17 @@ function renderReliability() {
     });
   }
   runBtn.disabled = numericOptions.length < 2;
+  if (stratifyEl) {
+    const stratifyOptions = getDatasetAnalysisFieldOptions()
+      .filter((option) => option.key !== 'case_id' && option.key !== 'case_label');
+    stratifyEl.innerHTML = `
+      <option value="">none</option>
+      ${stratifyOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`).join('')}
+    `;
+    if (previousStratify && stratifyOptions.some((option) => option.key === previousStratify)) {
+      stratifyEl.value = previousStratify;
+    }
+  }
 
   if (numericOptions.length < 2) {
     resultEl.innerHTML = '<p>Add at least two numeric fields before running reliability analysis.</p>';
@@ -8681,18 +15542,24 @@ function renderReliability() {
   }
 
   const result = state.reliabilityResult;
+  if (stratifyEl && !stratifyEl.value && typeof result.stratifiedByField === 'string' && result.stratifiedByField) {
+    stratifyEl.value = result.stratifiedByField;
+  }
   const itemCorrelationItems = result.items.map((item) => ({
     label: item.label,
     value: item.itemTotalCorrelation ?? 0
   }));
+  const alphaCiText = formatConfidenceInterval(result.alphaConfidenceInterval, 4);
+  const standardizedAlphaCiText = formatConfidenceInterval(result.standardizedAlphaConfidenceInterval, 4);
   resultEl.innerHTML = buildOutputViewer({
     eyebrow: 'Reliability',
     title: `Cronbach alpha for ${result.fieldLabels.join(', ')}`,
-    summary: `Alpha ${formatStatValue(result.alpha, 4)} across ${result.validCaseCount} complete case(s).`,
+    summary: `Alpha ${formatStatValue(result.alpha, 4)}${alphaCiText !== 'n/a' ? ` (95% CI ${alphaCiText})` : ''} across ${result.validCaseCount} complete case(s).`,
     metrics: [
       { label: 'Valid cases', value: result.validCaseCount },
       { label: 'Items', value: result.itemCount ?? result.fields?.length ?? result.fieldLabels.length },
       { label: 'Alpha', value: formatStatValue(result.alpha, 4) },
+      { label: 'Alpha 95% CI', value: alphaCiText },
       { label: 'Std alpha', value: formatStatValue(result.standardizedAlpha, 4) },
       { label: 'Omega', value: formatStatValue(result.omegaTotal, 4) },
       { label: 'Spearman-Brown', value: formatStatValue(result.spearmanBrown, 4) },
@@ -8706,7 +15573,9 @@ function renderReliability() {
           ['Metric', 'Value'],
           [
             ['Cronbach alpha', formatStatValue(result.alpha, 4)],
+            ['Cronbach alpha 95% CI', alphaCiText],
             ['Standardized alpha', formatStatValue(result.standardizedAlpha, 4)],
+            ['Standardized alpha 95% CI', standardizedAlphaCiText],
             ['McDonald omega total', formatStatValue(result.omegaTotal, 4)],
             ['Average inter-item correlation', formatStatValue(result.averageInterItemCorrelation, 4)],
             ['Split-half correlation', formatStatValue(result.splitHalfCorrelation, 4)],
@@ -8732,16 +15601,40 @@ function renderReliability() {
         ? buildOutputSection(
           'Subscale reliability',
           buildOutputTable(
-            ['Subscale', 'Fields', 'Items', 'Valid cases', 'Alpha', 'Omega', 'Avg inter-item r', 'SEM'],
+            ['Subscale', 'Fields', 'Items', 'Valid cases', 'Alpha', 'Alpha 95% CI', 'Std alpha 95% CI', 'Omega', 'Avg inter-item r', 'SEM'],
             result.subscales.map((subscale) => [
               escapeHtml(subscale.label),
               escapeHtml(subscale.fieldLabels.join(', ')),
               String(subscale.itemCount ?? subscale.fields.length),
               String(subscale.validCaseCount),
               formatStatValue(subscale.alpha, 4),
+              formatConfidenceInterval(subscale.alphaConfidenceInterval, 4),
+              formatConfidenceInterval(subscale.standardizedAlphaConfidenceInterval, 4),
               formatStatValue(subscale.omegaTotal, 4),
               formatStatValue(subscale.averageInterItemCorrelation, 4),
               formatStatValue(subscale.standardErrorOfMeasurement, 4)
+            ])
+          )
+        )
+        : '',
+      Array.isArray(result.strata) && result.strata.length > 0
+        ? buildOutputSection(
+          `Stratified reliability by ${result.stratifiedByLabel ?? result.stratifiedByField ?? 'group'}`,
+          buildOutputTable(
+            ['Group', 'Cases', 'Valid', 'Items', 'Alpha', 'Alpha 95% CI', 'Std alpha', 'Std alpha 95% CI', 'Omega', 'Avg inter-item r', 'SEM', 'Notes'],
+            result.strata.map((entry) => [
+              escapeHtml(entry.groupValue),
+              String(entry.caseCount ?? 0),
+              String(entry.validCaseCount ?? 0),
+              String(entry.itemCount ?? result.itemCount ?? 0),
+              formatStatValue(entry.alpha, 4),
+              formatConfidenceInterval(entry.alphaConfidenceInterval, 4),
+              formatStatValue(entry.standardizedAlpha, 4),
+              formatConfidenceInterval(entry.standardizedAlphaConfidenceInterval, 4),
+              formatStatValue(entry.omegaTotal, 4),
+              formatStatValue(entry.averageInterItemCorrelation, 4),
+              formatStatValue(entry.standardErrorOfMeasurement, 4),
+              escapeHtml((entry.notes ?? []).slice(0, 2).join(' | ') || '—')
             ])
           )
         )
@@ -8768,9 +15661,10 @@ function renderFactorAnalysis() {
   const fieldsEl = document.getElementById('factor-analysis-fields');
   const factorCountEl = document.getElementById('factor-count');
   const rotationEl = document.getElementById('factor-rotation');
+  const extractionEl = document.getElementById('factor-extraction');
   const runBtn = document.getElementById('run-factor-analysis-btn');
   const resultEl = document.getElementById('factor-analysis-result');
-  if (!fieldsEl || !factorCountEl || !rotationEl || !runBtn || !resultEl) return;
+  if (!fieldsEl || !factorCountEl || !rotationEl || !extractionEl || !runBtn || !resultEl) return;
 
   const numericOptions = getDatasetAnalysisFieldOptions().filter((option) => option.valueType === 'number');
   const previousSelections = getSelectedValues(fieldsEl);
@@ -8816,6 +15710,34 @@ function renderFactorAnalysis() {
     ? diagnostics.factorCorrelationMatrix.map((row, rowIndex) => [
       `Factor ${rowIndex + 1}`,
       ...row.map((value) => formatStatValue(value, 4))
+    ])
+    : [];
+  const patternMatrixRows = Array.isArray(diagnostics?.patternMatrix)
+    ? diagnostics.patternMatrix.map((row, rowIndex) => [
+      escapeHtml(result.fieldLabels[rowIndex] ?? result.fields[rowIndex] ?? ''),
+      ...row.map((value) => formatStatValue(value, 4))
+    ])
+    : [];
+  const structureMatrixRows = Array.isArray(diagnostics?.structureMatrix)
+    ? diagnostics.structureMatrix.map((row, rowIndex) => [
+      escapeHtml(result.fieldLabels[rowIndex] ?? result.fields[rowIndex] ?? ''),
+      ...row.map((value) => formatStatValue(value, 4))
+    ])
+    : [];
+  const factorScoreSummaryRows = Array.isArray(result.factorScoreSummary)
+    ? result.factorScoreSummary.map((entry) => [
+      `Factor ${entry.factor}`,
+      formatStatValue(entry.mean, 4),
+      formatStatValue(entry.stdDev, 4),
+      formatStatValue(entry.min, 4),
+      formatStatValue(entry.max, 4)
+    ])
+    : [];
+  const factorScoreSampleRows = Array.isArray(result.factorScoreSample)
+    ? result.factorScoreSample.map((entry) => [
+      escapeHtml(entry.caseId ?? ''),
+      escapeHtml(entry.caseLabel ?? ''),
+      ...(Array.isArray(entry.scores) ? entry.scores : []).map((value) => formatStatValue(value, 4))
     ])
     : [];
   resultEl.innerHTML = buildOutputViewer({
@@ -8874,6 +15796,16 @@ function renderFactorAnalysis() {
                 'Correlation determinant',
                 formatStatValue(diagnostics.correlationDeterminant, 6),
                 'n/a'
+              ],
+              [
+                'Residual RMSR',
+                formatStatValue(diagnostics.residualRmsr, 5),
+                'n/a'
+              ],
+              [
+                'Heywood count',
+                formatStatValue(diagnostics.heywoodCount, 0),
+                'n/a'
               ]
             ]
           )
@@ -8904,7 +15836,7 @@ function renderFactorAnalysis() {
         )
         : '',
       buildOutputSection(
-        'Loadings',
+        result.rotation === 'promax' ? 'Pattern loadings' : 'Loadings',
         buildOutputTable(
           ['Field', ...result.factors.map((factor) => `Factor ${factor.factor}`), 'Communality', 'Uniqueness'],
           result.fields.map((field, fieldIndex) => [
@@ -8915,6 +15847,44 @@ function renderFactorAnalysis() {
           ])
         )
       ),
+      patternMatrixRows.length > 0
+        ? buildOutputSection(
+          'Promax pattern matrix',
+          buildOutputTable(
+            ['Field', ...result.factors.map((factor) => `Factor ${factor.factor}`)],
+            patternMatrixRows
+          )
+        )
+        : '',
+      structureMatrixRows.length > 0
+        ? buildOutputSection(
+          'Promax structure matrix',
+          buildOutputTable(
+            ['Field', ...result.factors.map((factor) => `Factor ${factor.factor}`)],
+            structureMatrixRows
+          )
+        )
+        : '',
+      factorScoreSummaryRows.length > 0
+        ? buildOutputSection(
+          'Factor score distribution',
+          buildOutputTable(
+            ['Factor', 'Mean', 'Std dev', 'Min', 'Max'],
+            factorScoreSummaryRows
+          )
+        )
+        : '',
+      factorScoreSampleRows.length > 0
+        ? buildOutputSection(
+          `Case-level factor scores (${factorScoreSampleRows.length} of ${result.factorScoreCaseCount ?? factorScoreSampleRows.length})`,
+          `${buildOutputTable(
+            ['Case ID', 'Case label', ...result.factors.map((factor) => `Factor ${factor.factor}`)],
+            factorScoreSampleRows
+          )}${(Number(result.factorScoreCaseCount ?? factorScoreSampleRows.length) > factorScoreSampleRows.length && Number(result.factorScoreSampleLimit ?? 0) > 0)
+            ? `<div class="small-muted" style="margin-top:8px">Showing the first ${escapeHtml(String(result.factorScoreSampleLimit))} case rows.</div>`
+            : ''}`
+        )
+        : '',
       buildOutputSection(
         'Correlation matrix',
         buildOutputTable(
@@ -8937,6 +15907,347 @@ function renderFactorAnalysis() {
   });
   }
 
+function renderOptimalScaling() {
+  const fieldsEl = document.getElementById('optimal-scaling-fields');
+  const anchorFieldEl = document.getElementById('optimal-scaling-anchor-field');
+  const maxIterationsEl = document.getElementById('optimal-scaling-max-iterations');
+  const runBtn = document.getElementById('run-optimal-scaling-btn');
+  const resultEl = document.getElementById('optimal-scaling-result');
+  if (!fieldsEl || !anchorFieldEl || !maxIterationsEl || !runBtn || !resultEl) return;
+
+  const allOptions = getDatasetAnalysisFieldOptions();
+  const categoricalOptions = allOptions.filter((option) => option.valueType !== 'number');
+  const numericOptions = allOptions.filter((option) => option.valueType === 'number');
+  const previousSelections = getSelectedValues(fieldsEl);
+  const previousAnchor = anchorFieldEl.value;
+  fieldsEl.innerHTML = categoricalOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${option.valueType})</option>`).join('');
+  for (const option of fieldsEl.options) {
+    option.selected = previousSelections.includes(option.value);
+  }
+  if (getSelectedValues(fieldsEl).length < 2 && categoricalOptions.length >= 2) {
+    categoricalOptions.slice(0, 3).forEach((option) => {
+      const target = [...fieldsEl.options].find((candidate) => candidate.value === option.key);
+      if (target) target.selected = true;
+    });
+  }
+  anchorFieldEl.innerHTML = [
+    '<option value="">No anchor</option>',
+    ...numericOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`)
+  ].join('');
+  anchorFieldEl.value = numericOptions.some((option) => option.key === previousAnchor) ? previousAnchor : '';
+  runBtn.disabled = categoricalOptions.length < 2;
+
+  if (categoricalOptions.length < 2) {
+    resultEl.innerHTML = '<p>Add at least two categorical fields before running categories / optimal scaling.</p>';
+    return;
+  }
+  if (!state.optimalScalingResult) {
+    resultEl.innerHTML = '<p>Select at least two categorical fields and run categories / optimal scaling.</p>';
+    return;
+  }
+
+  const result = state.optimalScalingResult;
+  const discriminationItems = result.fieldSummaries.map((summary) => ({
+    label: summary.label,
+    value: summary.discrimination ?? 0
+  }));
+  const levelRows = result.fieldSummaries.flatMap((summary) =>
+    summary.levels.map((level) => [
+      escapeHtml(summary.label),
+      escapeHtml(level.level),
+      String(level.count),
+      formatStatValue(level.quantification, 4),
+      formatStatValue(level.anchorMean, 4)
+    ])
+  );
+  resultEl.innerHTML = buildOutputViewer({
+    eyebrow: 'Categories',
+    title: `Optimal scaling across ${result.fieldLabels.join(', ')}`,
+    summary: `${result.usableCaseCount} usable row(s), ${result.iterations} iteration(s), variance explained ${formatStatValue(result.varianceExplained, 4)}.`,
+    metrics: [
+      { label: 'Usable rows', value: result.usableCaseCount },
+      { label: 'Fields', value: result.fields.length },
+      { label: 'Iterations', value: result.iterations },
+      { label: 'Variance explained', value: formatStatValue(result.varianceExplained, 4) }
+    ],
+    sections: [
+      buildOutputSection(
+        'Field discrimination',
+        buildOutputTable(
+          ['Field', 'Discrimination'],
+          result.fieldSummaries.map((summary) => [
+            escapeHtml(summary.label),
+            formatStatValue(summary.discrimination, 4)
+          ])
+        )
+      ),
+      levelRows.length > 0
+        ? buildOutputSection('Level quantifications', buildOutputTable(['Field', 'Level', 'Count', 'Quantification', 'Anchor mean'], levelRows))
+        : '',
+      Array.isArray(result.caseScores) && result.caseScores.length > 0
+        ? buildOutputSection(
+          'Case score sample',
+          buildOutputTable(
+            ['Case ID', 'Case label', 'Score'],
+            result.caseScores.slice(0, 60).map((entry) => [
+              escapeHtml(entry.caseId ?? ''),
+              escapeHtml(entry.caseLabel ?? ''),
+              formatStatValue(entry.score, 4)
+            ])
+          )
+        )
+        : '',
+      discriminationItems.length > 0
+        ? buildOutputSection(
+          'Discrimination profile',
+          `<div class="chart-grid">${buildChartCard('Field discrimination', buildSvgBarChart(discriminationItems, { color: '#7ea7a1', formatter: (value) => formatDecimal(value, 3) }), 'Higher absolute discrimination indicates stronger separation on the latent dimension.')}</div>`
+        )
+        : '',
+      result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
+    ].filter(Boolean)
+  });
+}
+
+function renderConjointAnalysis() {
+  const profileFieldEl = document.getElementById('conjoint-profile-field');
+  const ratingFieldEl = document.getElementById('conjoint-rating-field');
+  const attributeFieldsEl = document.getElementById('conjoint-attribute-fields');
+  const holdoutFractionEl = document.getElementById('conjoint-holdout-fraction');
+  const runBtn = document.getElementById('run-conjoint-analysis-btn');
+  const resultEl = document.getElementById('conjoint-analysis-result');
+  if (!profileFieldEl || !ratingFieldEl || !attributeFieldsEl || !holdoutFractionEl || !runBtn || !resultEl) return;
+
+  const allOptions = getDatasetAnalysisFieldOptions();
+  const numericOptions = allOptions.filter((option) => option.valueType === 'number');
+  const candidateAttributeOptions = allOptions.filter((option) => option.valueType !== 'number');
+  const previousProfile = profileFieldEl.value;
+  const previousRating = ratingFieldEl.value;
+  const previousAttributes = getSelectedValues(attributeFieldsEl);
+
+  profileFieldEl.innerHTML = [
+    '<option value="">No profile field</option>',
+    ...allOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${option.valueType})</option>`)
+  ].join('');
+  profileFieldEl.value = allOptions.some((option) => option.key === previousProfile) ? previousProfile : '';
+
+  ratingFieldEl.innerHTML = numericOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`).join('');
+  ratingFieldEl.value = numericOptions.some((option) => option.key === previousRating) ? previousRating : numericOptions[0]?.key ?? '';
+
+  const attributeOptions = candidateAttributeOptions.filter((option) => option.key !== ratingFieldEl.value && option.key !== profileFieldEl.value);
+  attributeFieldsEl.innerHTML = attributeOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${option.valueType})</option>`).join('');
+  for (const option of attributeFieldsEl.options) {
+    option.selected = previousAttributes.includes(option.value);
+  }
+  if (getSelectedValues(attributeFieldsEl).length === 0 && attributeOptions.length > 0) {
+    attributeOptions.slice(0, Math.min(3, attributeOptions.length)).forEach((option) => {
+      const target = [...attributeFieldsEl.options].find((candidate) => candidate.value === option.key);
+      if (target) target.selected = true;
+    });
+  }
+  runBtn.disabled = numericOptions.length === 0 || attributeOptions.length === 0;
+
+  if (numericOptions.length === 0 || attributeOptions.length === 0) {
+    resultEl.innerHTML = '<p>Add at least one numeric rating field and one categorical attribute field before running conjoint analysis.</p>';
+    return;
+  }
+  if (!state.conjointResult) {
+    resultEl.innerHTML = '<p>Select rating and attribute fields, then run conjoint analysis.</p>';
+    return;
+  }
+
+  const result = state.conjointResult;
+  const importanceItems = result.attributes.map((attribute) => ({
+    label: attribute.label,
+    value: attribute.importance ?? 0
+  }));
+  const levelRows = result.attributes.flatMap((attribute) =>
+    attribute.levels.map((level) => [
+      escapeHtml(attribute.label),
+      escapeHtml(level.level),
+      String(level.count),
+      formatStatValue(level.meanScore, 4),
+      formatStatValue(level.utility, 4)
+    ])
+  );
+  resultEl.innerHTML = buildOutputViewer({
+    eyebrow: 'Conjoint',
+    title: `${result.ratingLabel} conjoint model`,
+    summary: `${result.usableCaseCount} usable row(s), MAE ${formatStatValue(result.meanAbsoluteError, 4)}, RMSE ${formatStatValue(result.rootMeanSquaredError, 4)}.`,
+    metrics: [
+      { label: 'Usable rows', value: result.usableCaseCount },
+      { label: 'Holdout rows', value: result.holdoutCount },
+      { label: 'MAE', value: formatStatValue(result.meanAbsoluteError, 4) },
+      { label: 'RMSE', value: formatStatValue(result.rootMeanSquaredError, 4) }
+    ],
+    sections: [
+      buildOutputSection(
+        'Attribute importance',
+        buildOutputTable(
+          ['Attribute', 'Importance %', 'Utility range'],
+          result.attributes.map((attribute) => [
+            escapeHtml(attribute.label),
+            formatStatValue(attribute.importance, 3),
+            formatStatValue(attribute.range, 4)
+          ])
+        )
+      ),
+      levelRows.length > 0
+        ? buildOutputSection('Level part-worth utilities', buildOutputTable(['Attribute', 'Level', 'Count', 'Mean score', 'Centered utility'], levelRows))
+        : '',
+      Array.isArray(result.profiles) && result.profiles.length > 0
+        ? buildOutputSection(
+          'Profile prediction sample',
+          buildOutputTable(
+            ['Case', 'Holdout', 'Observed', 'Predicted', 'Residual'],
+            result.profiles.slice(0, 80).map((profile) => [
+              escapeHtml(profile.caseLabel ?? profile.caseId ?? ''),
+              profile.holdout ? 'yes' : 'no',
+              formatStatValue(profile.observedScore, 4),
+              formatStatValue(profile.predictedScore, 4),
+              formatStatValue(profile.residual, 4)
+            ])
+          )
+        )
+        : '',
+      importanceItems.length > 0
+        ? buildOutputSection(
+          'Importance profile',
+          `<div class="chart-grid">${buildChartCard('Attribute importance %', buildSvgBarChart(importanceItems, { color: '#cfbc9a', formatter: (value) => `${formatDecimal(value, 1)}%` }), 'Importance values are normalized by utility range across included attributes.')}</div>`
+        )
+        : '',
+      result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
+    ].filter(Boolean)
+  });
+}
+
+function renderDirectMarketing() {
+  const customerFieldEl = document.getElementById('direct-marketing-customer-field');
+  const responseFieldEl = document.getElementById('direct-marketing-response-field');
+  const recencyFieldEl = document.getElementById('direct-marketing-recency-field');
+  const frequencyFieldEl = document.getElementById('direct-marketing-frequency-field');
+  const monetaryFieldEl = document.getElementById('direct-marketing-monetary-field');
+  const runBtn = document.getElementById('run-direct-marketing-btn');
+  const resultEl = document.getElementById('direct-marketing-result');
+  if (!customerFieldEl || !responseFieldEl || !recencyFieldEl || !frequencyFieldEl || !monetaryFieldEl || !runBtn || !resultEl) return;
+
+  const allOptions = getDatasetAnalysisFieldOptions();
+  const numericOptions = allOptions.filter((option) => option.valueType === 'number');
+  const currentValues = {
+    customerField: customerFieldEl.value,
+    responseField: responseFieldEl.value,
+    recencyField: recencyFieldEl.value,
+    frequencyField: frequencyFieldEl.value,
+    monetaryField: monetaryFieldEl.value
+  };
+  customerFieldEl.innerHTML = [
+    '<option value="">No customer field</option>',
+    ...allOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${option.valueType})</option>`)
+  ].join('');
+  responseFieldEl.innerHTML = [
+    '<option value="">No response field</option>',
+    ...allOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${option.valueType})</option>`)
+  ].join('');
+  const numericSelectMarkup = [
+    '<option value="">None</option>',
+    ...numericOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`)
+  ].join('');
+  recencyFieldEl.innerHTML = numericSelectMarkup;
+  frequencyFieldEl.innerHTML = numericSelectMarkup;
+  monetaryFieldEl.innerHTML = numericSelectMarkup;
+
+  if (allOptions.some((option) => option.key === currentValues.customerField)) customerFieldEl.value = currentValues.customerField;
+  if (allOptions.some((option) => option.key === currentValues.responseField)) responseFieldEl.value = currentValues.responseField;
+  if (numericOptions.some((option) => option.key === currentValues.recencyField)) recencyFieldEl.value = currentValues.recencyField;
+  if (numericOptions.some((option) => option.key === currentValues.frequencyField)) frequencyFieldEl.value = currentValues.frequencyField;
+  if (numericOptions.some((option) => option.key === currentValues.monetaryField)) monetaryFieldEl.value = currentValues.monetaryField;
+
+  const hasRequiredField = Boolean(responseFieldEl.value || recencyFieldEl.value || frequencyFieldEl.value || monetaryFieldEl.value);
+  runBtn.disabled = !hasRequiredField;
+  if (!hasRequiredField) {
+    resultEl.innerHTML = '<p>Choose at least one response/recency/frequency/monetary field before running direct marketing.</p>';
+    return;
+  }
+  if (!state.directMarketingResult) {
+    resultEl.innerHTML = '<p>Choose response and/or RFM fields, then run direct marketing.</p>';
+    return;
+  }
+
+  const result = state.directMarketingResult;
+  const decileItems = result.deciles.map((entry) => ({
+    label: `D${entry.decile}`,
+    value: entry.responseRate ?? 0
+  }));
+  resultEl.innerHTML = buildOutputViewer({
+    eyebrow: 'Direct marketing',
+    title: 'RFM and response propensity scoring',
+    summary: `${result.usableCaseCount} scored row(s), overall response rate ${formatStatValue(result.overallResponseRate, 4)}.`,
+    metrics: [
+      { label: 'Scored rows', value: result.usableCaseCount },
+      { label: 'Segments', value: result.segments.length },
+      { label: 'Deciles', value: result.deciles.length },
+      { label: 'Overall response', value: formatStatValue(result.overallResponseRate, 4) }
+    ],
+    sections: [
+      buildOutputSection(
+        'Segment summary',
+        buildOutputTable(
+          ['Segment', 'Count', 'Avg propensity', 'Response rate', 'Avg recency', 'Avg frequency', 'Avg monetary'],
+          result.segments.map((segment) => [
+            escapeHtml(segment.segment),
+            String(segment.count),
+            formatStatValue(segment.averagePropensity, 4),
+            formatStatValue(segment.responseRate, 4),
+            formatStatValue(segment.averageRecency, 4),
+            formatStatValue(segment.averageFrequency, 4),
+            formatStatValue(segment.averageMonetary, 4)
+          ])
+        )
+      ),
+      result.deciles.length > 0
+        ? buildOutputSection(
+          'Decile lift table',
+          buildOutputTable(
+            ['Decile', 'Count', 'Responders', 'Response rate', 'Lift', 'Avg propensity'],
+            result.deciles.map((entry) => [
+              `D${entry.decile}`,
+              String(entry.count),
+              String(entry.responders),
+              formatStatValue(entry.responseRate, 4),
+              formatStatValue(entry.lift, 4),
+              formatStatValue(entry.averagePropensity, 4)
+            ])
+          )
+        )
+        : '',
+      Array.isArray(result.customerScores) && result.customerScores.length > 0
+        ? buildOutputSection(
+          'Top customer scores',
+          buildOutputTable(
+            ['Customer', 'Segment', 'Propensity', 'Response', 'Recency score', 'Frequency score', 'Monetary score'],
+            result.customerScores.slice(0, 80).map((entry) => [
+              escapeHtml(entry.customerId),
+              escapeHtml(entry.segment),
+              formatStatValue(entry.propensity, 4),
+              entry.response === null ? 'n/a' : escapeHtml(String(entry.response)),
+              formatStatValue(entry.recencyScore, 4),
+              formatStatValue(entry.frequencyScore, 4),
+              formatStatValue(entry.monetaryScore, 4)
+            ])
+          )
+        )
+        : '',
+      result.topRecommendations?.length ? buildOutputSection('Recommendations', buildOutputList(result.topRecommendations.map(escapeHtml))) : '',
+      decileItems.length > 0
+        ? buildOutputSection(
+          'Response-rate profile by decile',
+          `<div class="chart-grid">${buildChartCard('Decile response rate', buildSvgBarChart(decileItems, { color: '#8fb3ff', formatter: (value) => formatDecimal(value, 3) }), 'Higher deciles should show stronger response concentration when scoring is informative.')}</div>`
+        )
+        : '',
+      result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
+    ].filter(Boolean)
+  });
+}
+
 function renderForecasting() {
   const timeEl = document.getElementById('forecast-time-field');
   const valueEl = document.getElementById('forecast-value-field');
@@ -8944,9 +16255,11 @@ function renderForecasting() {
   const methodEl = document.getElementById('forecast-method');
   const windowEl = document.getElementById('forecast-window');
   const alphaEl = document.getElementById('forecast-alpha');
+  const betaEl = document.getElementById('forecast-beta');
+  const dampingEl = document.getElementById('forecast-damping');
   const runBtn = document.getElementById('run-forecasting-btn');
   const resultEl = document.getElementById('forecasting-result');
-  if (!timeEl || !valueEl || !horizonEl || !methodEl || !windowEl || !alphaEl || !runBtn || !resultEl) return;
+  if (!timeEl || !valueEl || !horizonEl || !methodEl || !windowEl || !alphaEl || !betaEl || !dampingEl || !runBtn || !resultEl) return;
 
   const options = getDatasetAnalysisFieldOptions();
   const numericOptions = options.filter((option) => option.valueType === 'number');
@@ -8959,13 +16272,18 @@ function renderForecasting() {
   valueEl.value = numericOptions.some((option) => option.key === previousValue && option.key !== timeEl.value)
     ? previousValue
     : numericOptions.find((option) => option.key !== timeEl.value)?.key ?? numericOptions[0]?.key ?? '';
-  methodEl.value = ['linear_trend', 'moving_average', 'exponential_smoothing'].includes(previousMethod)
+  methodEl.value = ['auto', 'arima_auto', 'ets_auto', 'linear_trend', 'moving_average', 'exponential_smoothing'].includes(previousMethod)
     ? previousMethod
-    : (state.forecastingResult?.method ?? 'linear_trend');
+    : (state.forecastingResult?.requestedMethod ?? state.forecastingResult?.method ?? 'auto');
   windowEl.value = windowEl.value || '3';
   alphaEl.value = alphaEl.value || '0.35';
+  betaEl.value = betaEl.value || '0.20';
+  dampingEl.value = dampingEl.value || '0.95';
   windowEl.disabled = methodEl.value !== 'moving_average';
-  alphaEl.disabled = methodEl.value !== 'exponential_smoothing';
+  const usesSmoothing = methodEl.value === 'exponential_smoothing' || methodEl.value === 'ets_auto';
+  alphaEl.disabled = !usesSmoothing;
+  betaEl.disabled = !usesSmoothing;
+  dampingEl.disabled = !usesSmoothing;
   runBtn.disabled = options.length < 2 || numericOptions.length === 0 || !valueEl.value;
 
   if (!state.forecastingResult) {
@@ -8978,25 +16296,44 @@ function renderForecasting() {
     ? 'Moving average'
     : result.method === 'exponential_smoothing'
       ? 'Exponential smoothing'
-      : 'Linear trend';
+      : result.method === 'arima_auto'
+        ? 'ARIMA auto'
+        : result.method === 'ets_auto'
+          ? 'ETS auto'
+          : 'Linear trend';
   const observedItems = result.observations.map((item, index) => ({ label: String(index + 1), value: item.actual }));
   const fittedItems = result.observations.map((item, index) => ({ label: String(index + 1), value: item.fitted }));
   resultEl.innerHTML = buildOutputViewer({
     eyebrow: 'Forecasting',
     title: `${result.valueLabel} over ${result.timeLabel} (${methodLabel})`,
-    summary: result.method === 'linear_trend'
-      ? `Linear trend slope ${formatStatValue(result.slope, 5)} with RMSE ${formatStatValue(result.metrics.rootMeanSquaredError, 5)}.`
-      : result.method === 'moving_average'
-        ? `Moving-average forecast (window ${result.methodSettings?.movingAverageWindow ?? 'n/a'}) with RMSE ${formatStatValue(result.metrics.rootMeanSquaredError, 5)}.`
-        : `Exponential-smoothing forecast (alpha ${formatStatValue(result.methodSettings?.smoothingAlpha, 2)}) with RMSE ${formatStatValue(result.metrics.rootMeanSquaredError, 5)}.`,
+    summary: `${methodLabel} forecast with RMSE ${formatStatValue(result.metrics.rootMeanSquaredError, 5)} and AIC ${formatStatValue(result.metrics.aic, 3)}.`,
     metrics: [
       { label: 'Rows', value: result.caseCount },
       { label: 'Method', value: methodLabel },
       { label: 'Horizon', value: result.horizon },
       { label: 'MAE', value: formatStatValue(result.metrics.meanAbsoluteError, 5) },
+      { label: 'MAPE', value: formatStatValue(result.metrics.meanAbsolutePercentageError === null ? null : result.metrics.meanAbsolutePercentageError * 100, 2) },
       { label: 'R squared', value: formatStatValue(result.metrics.rSquared, 5) }
     ],
     sections: [
+      buildOutputSection(
+        'Method settings',
+        buildOutputTable(
+          ['Requested', 'Selected', 'Window', 'Alpha', 'Beta', 'Damping', 'AR order', 'Differencing', 'AIC', 'BIC'],
+          [[
+            escapeHtml(result.requestedMethod ?? result.method),
+            escapeHtml(result.method),
+            formatStatValue(result.methodSettings?.movingAverageWindow, 3),
+            formatStatValue(result.methodSettings?.smoothingAlpha, 3),
+            formatStatValue(result.methodSettings?.smoothingBeta, 3),
+            formatStatValue(result.methodSettings?.dampingPhi, 3),
+            formatStatValue(result.methodSettings?.arOrder, 3),
+            formatStatValue(result.methodSettings?.differencing, 3),
+            formatStatValue(result.metrics.aic, 4),
+            formatStatValue(result.metrics.bic, 4)
+          ]]
+        )
+      ),
       buildOutputSection(
         'Forecast points',
         buildOutputTable(
@@ -9117,9 +16454,14 @@ function renderDecisionTree() {
   const targetEl = document.getElementById('decision-tree-target-field');
   const predictorsEl = document.getElementById('decision-tree-predictor-fields');
   const depthEl = document.getElementById('decision-tree-depth');
+  const methodEl = document.getElementById('decision-tree-method');
+  const criterionEl = document.getElementById('decision-tree-criterion');
+  const treeCountEl = document.getElementById('decision-tree-count');
+  const minLeafEl = document.getElementById('decision-tree-min-leaf');
+  const featureSubsetEl = document.getElementById('decision-tree-feature-subset');
   const runBtn = document.getElementById('run-decision-tree-btn');
   const resultEl = document.getElementById('decision-tree-result');
-  if (!targetEl || !predictorsEl || !depthEl || !runBtn || !resultEl) return;
+  if (!targetEl || !predictorsEl || !depthEl || !methodEl || !criterionEl || !treeCountEl || !minLeafEl || !featureSubsetEl || !runBtn || !resultEl) return;
   const options = getDatasetAnalysisFieldOptions();
   const previousTarget = targetEl.value;
   const previousPredictors = getSelectedValues(predictorsEl);
@@ -9135,6 +16477,9 @@ function renderDecisionTree() {
       if (target) target.selected = true;
     });
   }
+  methodEl.value = methodEl.value === 'random_forest' ? 'random_forest' : 'cart';
+  criterionEl.value = criterionEl.value === 'entropy' ? 'entropy' : 'gini';
+  treeCountEl.disabled = methodEl.value !== 'random_forest';
   runBtn.disabled = options.length < 2;
 
   if (!state.decisionTreeResult) {
@@ -9146,15 +16491,28 @@ function renderDecisionTree() {
   const treeRows = flattenDecisionTree(result.tree);
   resultEl.innerHTML = buildOutputViewer({
     eyebrow: 'Decision tree',
-    title: `${result.targetLabel} classification tree`,
-    summary: `Training accuracy ${formatStatValue(result.accuracy === null ? null : result.accuracy * 100, 2)}% across ${result.caseCount} row(s).`,
+    title: `${result.targetLabel} ${result.method === 'random_forest' ? 'random forest' : 'CART'} model`,
+    summary: `Accuracy ${formatStatValue(result.accuracy === null ? null : result.accuracy * 100, 2)}% across ${result.caseCount} row(s), balanced accuracy ${formatStatValue(result.balancedAccuracy === null ? null : result.balancedAccuracy * 100, 2)}%.`,
     metrics: [
       { label: 'Rows', value: result.caseCount },
+      { label: 'Method', value: result.method === 'random_forest' ? 'random forest' : 'CART' },
+      { label: 'Trees', value: result.treeCount },
       { label: 'Depth', value: result.maxDepth },
-      { label: 'Predictors', value: result.predictorFields.length },
-      { label: 'Accuracy', value: result.accuracy === null ? 'n/a' : `${formatDecimal(result.accuracy * 100, 1)}%` }
+      { label: 'Accuracy', value: result.accuracy === null ? 'n/a' : `${formatDecimal(result.accuracy * 100, 1)}%` },
+      { label: 'Balanced', value: result.balancedAccuracy === null ? 'n/a' : `${formatDecimal(result.balancedAccuracy * 100, 1)}%` },
+      { label: 'OOB', value: result.oobAccuracy === null ? 'n/a' : `${formatDecimal(result.oobAccuracy * 100, 1)}%` }
     ],
     sections: [
+      result.featureImportance?.length ? buildOutputSection(
+        'Feature importance',
+        buildOutputTable(
+          ['Feature', 'Importance'],
+          result.featureImportance.map((item) => [
+            escapeHtml(item.label ?? item.field),
+            formatStatValue(item.importance === null ? null : item.importance * 100, 2)
+          ])
+        )
+      ) : '',
       buildOutputSection(
         'Tree nodes',
         buildOutputTable(
@@ -9188,17 +16546,21 @@ function renderGeneralLinearModel() {
   const dependentEl = document.getElementById('glm-dependent-field');
   const factorsEl = document.getElementById('glm-factor-fields');
   const covariatesEl = document.getElementById('glm-covariate-fields');
+  const familyEl = document.getElementById('glm-family');
+  const linkEl = document.getElementById('glm-link');
   const runBtn = document.getElementById('run-general-linear-model-btn');
   const resultEl = document.getElementById('general-linear-model-result');
-  if (!dependentEl || !factorsEl || !covariatesEl || !runBtn || !resultEl) return;
+  if (!dependentEl || !factorsEl || !covariatesEl || !familyEl || !linkEl || !runBtn || !resultEl) return;
 
   const options = getDatasetAnalysisFieldOptions();
   const numericOptions = options.filter((option) => option.valueType === 'number');
+  const family = familyEl.value === 'binomial' ? 'binomial' : familyEl.value === 'poisson' ? 'poisson' : 'gaussian';
+  const dependentOptions = family === 'binomial' ? options : numericOptions;
   const previousDependent = dependentEl.value;
   const previousFactors = getSelectedValues(factorsEl);
   const previousCovariates = getSelectedValues(covariatesEl);
-  dependentEl.innerHTML = numericOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`).join('');
-  dependentEl.value = numericOptions.some((option) => option.key === previousDependent) ? previousDependent : numericOptions[0]?.key ?? '';
+  dependentEl.innerHTML = dependentOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`).join('');
+  dependentEl.value = dependentOptions.some((option) => option.key === previousDependent) ? previousDependent : dependentOptions[0]?.key ?? '';
   factorsEl.innerHTML = options
     .filter((option) => option.key !== dependentEl.value)
     .map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${escapeHtml(option.valueType)})</option>`)
@@ -9213,6 +16575,16 @@ function renderGeneralLinearModel() {
     const defaultFactor = [...factorsEl.options].find((option) => option.value !== dependentEl.value);
     if (defaultFactor) defaultFactor.selected = true;
   }
+  if (family === 'gaussian') {
+    linkEl.innerHTML = '<option value="identity" selected>identity</option>';
+    linkEl.value = 'identity';
+  } else if (family === 'binomial') {
+    linkEl.innerHTML = '<option value="logit" selected>logit</option>';
+    linkEl.value = 'logit';
+  } else {
+    linkEl.innerHTML = '<option value="log" selected>log</option>';
+    linkEl.value = 'log';
+  }
   runBtn.disabled = !dependentEl.value || (getSelectedValues(factorsEl).length === 0 && getSelectedValues(covariatesEl).length === 0);
 
   if (!state.generalLinearModelResult) {
@@ -9223,12 +16595,16 @@ function renderGeneralLinearModel() {
   const result = state.generalLinearModelResult;
   resultEl.innerHTML = buildOutputViewer({
     eyebrow: 'GLM / ANCOVA',
-    title: `${result.dependentLabel} general linear model`,
-    summary: `${result.caseCount} usable row(s), R squared ${formatStatValue(result.metrics.rSquared, 5)}, omnibus F ${formatStatValue(result.metrics.fStatistic, 5)}.`,
+    title: `${result.dependentLabel} ${escapeHtml(result.family)} model`,
+    summary: result.family === 'gaussian'
+      ? `${result.caseCount} usable row(s), R^2 ${formatStatValue(result.metrics.rSquared, 5)}, omnibus F ${formatStatValue(result.metrics.fStatistic, 5)}.`
+      : `${result.caseCount} usable row(s), deviance ${formatStatValue(result.metrics.deviance, 5)}, model chi-square ${formatStatValue(result.metrics.fStatistic, 5)}.`,
     metrics: [
       { label: 'Rows', value: result.caseCount },
+      { label: 'Family', value: result.family },
+      { label: 'Link', value: result.link },
       { label: 'Design columns', value: result.designColumnCount },
-      { label: 'R squared', value: formatStatValue(result.metrics.rSquared, 5) },
+      { label: result.family === 'gaussian' ? 'R^2' : 'Pseudo fit', value: formatStatValue(result.metrics.rSquared, 5) },
       { label: 'Model p', value: formatStatValue(result.metrics.fPValue, 5) }
     ],
     sections: [
@@ -9241,14 +16617,18 @@ function renderGeneralLinearModel() {
             ['Residual df', String(result.metrics.residualDf)],
             ['SS model', formatStatValue(result.metrics.sumSquaresModel, 5)],
             ['SS residual', formatStatValue(result.metrics.sumSquaresResidual, 5)],
-            ['Residual std. error', formatStatValue(result.metrics.residualStdError, 5)]
+            ['Residual std. error', formatStatValue(result.metrics.residualStdError, 5)],
+            ['Deviance', formatStatValue(result.metrics.deviance, 5)],
+            ['Null deviance', formatStatValue(result.metrics.nullDeviance, 5)],
+            ['AIC', formatStatValue(result.metrics.aic, 5)],
+            ['BIC', formatStatValue(result.metrics.bic, 5)]
           ]
         )
       ),
       buildOutputSection(
         'Coefficients',
         buildOutputTable(
-          ['Term', 'Type', 'B', 'Std. error', 't', 'p', '95% CI'],
+          ['Term', 'Type', 'B', 'SE', 't', 'p', '95% CI', 'Robust SE', 'Robust t', 'Robust p', 'Robust 95% CI'],
           result.coefficients.map((coefficient) => [
             escapeHtml(coefficient.label ?? coefficient.field),
             escapeHtml(coefficient.termType),
@@ -9256,7 +16636,11 @@ function renderGeneralLinearModel() {
             formatStatValue(coefficient.standardError, 6),
             formatStatValue(coefficient.statistic, 5),
             formatStatValue(coefficient.pValue, 5),
-            escapeHtml(formatConfidenceInterval(coefficient.confidenceInterval, 5))
+            escapeHtml(formatConfidenceInterval(coefficient.confidenceInterval, 5)),
+            formatStatValue(coefficient.robustStandardError, 6),
+            formatStatValue(coefficient.robustStatistic, 5),
+            formatStatValue(coefficient.robustPValue, 5),
+            escapeHtml(formatConfidenceInterval(coefficient.robustConfidenceInterval, 5))
           ])
         )
       ),
@@ -9273,7 +16657,43 @@ function renderGeneralLinearModel() {
           ])
         )
       ),
+      result.observations?.length ? buildOutputSection(
+        'Observation diagnostics preview',
+        buildOutputTable(
+          ['Case', 'Actual', 'Predicted', 'Residual', 'Std. residual', 'Leverage', "Cook's D", 'Outlier'],
+          result.observations.map((observation) => [
+            escapeHtml(observation.caseLabel ?? observation.caseId ?? 'case'),
+            formatStatValue(observation.actual, 6),
+            formatStatValue(observation.predicted, 6),
+            formatStatValue(observation.residual, 6),
+            formatStatValue(observation.standardizedResidual, 6),
+            formatStatValue(observation.leverage, 6),
+            formatStatValue(observation.cooksDistance, 6),
+            observation.outlier ? 'Yes' : 'No'
+          ])
+        )
+      ) : '',
+      result.influenceSummary?.length ? buildOutputSection(
+        'Influence summary',
+        buildOutputTable(
+          ['Case', 'Leverage', "Cook's D", 'Std. residual', 'Deviance residual'],
+          result.influenceSummary.map((item) => [
+            escapeHtml(item.caseLabel ?? item.caseId ?? 'case'),
+            formatStatValue(item.leverage, 6),
+            formatStatValue(item.cooksDistance, 6),
+            formatStatValue(item.standardizedResidual, 6),
+            formatStatValue(item.devianceResidual, 6)
+          ])
+        )
+      ) : '',
       buildAssumptionsSection(result.assumptions),
+      buildOutputSection(
+        'Diagnostics',
+        buildOutputTable(
+          ['Metric', 'Value'],
+          Object.entries(result.diagnostics ?? {}).map(([key, value]) => [escapeHtml(key), formatStatValue(value, 6)])
+        )
+      ),
       result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
     ].filter(Boolean)
   });
@@ -9336,14 +16756,18 @@ function renderMixedModel() {
       buildOutputSection(
         'Fixed effects',
         buildOutputTable(
-          ['Term', 'B', 'Std. error', 't', 'p', '95% CI'],
+          ['Term', 'B', 'SE', 't', 'p', '95% CI', 'Robust SE', 'Robust t', 'Robust p', 'Robust 95% CI'],
           result.coefficients.map((coefficient) => [
             escapeHtml(coefficient.label ?? coefficient.field),
             formatStatValue(coefficient.coefficient, 6),
             formatStatValue(coefficient.standardError, 6),
             formatStatValue(coefficient.statistic, 5),
             formatStatValue(coefficient.pValue, 5),
-            escapeHtml(formatConfidenceInterval(coefficient.confidenceInterval, 5))
+            escapeHtml(formatConfidenceInterval(coefficient.confidenceInterval, 5)),
+            formatStatValue(coefficient.robustStandardError, 6),
+            formatStatValue(coefficient.robustStatistic, 5),
+            formatStatValue(coefficient.robustPValue, 5),
+            escapeHtml(formatConfidenceInterval(coefficient.robustConfidenceInterval, 5))
           ])
         )
       ),
@@ -9374,6 +16798,35 @@ function renderMixedModel() {
           ]
         )
       ),
+      result.observations?.length ? buildOutputSection(
+        'Observation diagnostics preview',
+        buildOutputTable(
+          ['Case', 'Group', 'Actual', 'Mixed predicted', 'Residual', 'Std. residual', 'Leverage', "Cook's D", 'Outlier'],
+          result.observations.map((observation) => [
+            escapeHtml(observation.caseLabel ?? observation.caseId ?? 'case'),
+            escapeHtml(observation.groupValue),
+            formatStatValue(observation.actual, 6),
+            formatStatValue(observation.mixedPredicted, 6),
+            formatStatValue(observation.residual, 6),
+            formatStatValue(observation.standardizedResidual, 6),
+            formatStatValue(observation.leverage, 6),
+            formatStatValue(observation.cooksDistance, 6),
+            observation.outlier ? 'Yes' : 'No'
+          ])
+        )
+      ) : '',
+      result.influenceSummary?.length ? buildOutputSection(
+        'Influence summary',
+        buildOutputTable(
+          ['Case', 'Leverage', "Cook's D", 'Std. residual'],
+          result.influenceSummary.map((item) => [
+            escapeHtml(item.caseLabel ?? item.caseId ?? 'case'),
+            formatStatValue(item.leverage, 6),
+            formatStatValue(item.cooksDistance, 6),
+            formatStatValue(item.standardizedResidual, 6)
+          ])
+        )
+      ) : '',
       buildAssumptionsSection(result.assumptions),
       buildOutputSection(
         'Diagnostics',
@@ -9432,10 +16885,11 @@ function renderGeeModel() {
   }
 
   const result = state.geeModelResult;
+  const defaultThresholdMetrics = result.thresholdAnalysis?.find((item) => Math.abs(item.threshold - 0.5) < 1e-9) ?? null;
   resultEl.innerHTML = buildOutputViewer({
     eyebrow: 'GEE',
     title: `${result.dependentLabel} ${result.family} model`,
-    summary: `${result.caseCount} usable row(s), ${result.clusterCount} cluster(s), robust covariance with ${result.correlation} working correlation.`,
+    summary: `${result.caseCount} usable row(s), ${result.clusterCount} cluster(s), robust covariance with ${result.correlation} working correlation, model p ${formatStatValue(result.metrics.modelPValue, 5)}.`,
     metrics: [
       { label: 'Rows', value: result.caseCount },
       { label: 'Clusters', value: result.clusterCount },
@@ -9470,6 +16924,8 @@ function renderGeeModel() {
             ['Max cluster size', formatStatValue(result.metrics.maxClusterSize, 3)],
             ['Working correlation', formatStatValue(result.metrics.workingCorrelation, 5)],
             ['Quasi-likelihood', formatStatValue(result.metrics.quasiLikelihood, 5)],
+            ['Model log-likelihood', formatStatValue(result.diagnostics?.modelLogLikelihood ?? null, 5)],
+            ['Null log-likelihood', formatStatValue(result.diagnostics?.nullModelLogLikelihood ?? null, 5)],
             ['R²', formatStatValue(result.metrics.rSquared, 5)],
             ['Pseudo R²', formatStatValue(result.metrics.pseudoRSquared, 5)]
           ]
@@ -9478,16 +16934,66 @@ function renderGeeModel() {
       buildOutputSection(
         'Observation preview',
         buildOutputTable(
-          ['Case', 'Cluster', 'Actual', 'Predicted', 'Residual'],
+          ['Case', 'Cluster', 'Actual', 'Predicted', 'Residual', 'Std. residual', 'Leverage', "Cook's D", 'Deviance residual', 'Pred class', 'Outlier'],
           result.observations.map((item) => [
             escapeHtml(item.caseLabel ?? item.caseId ?? 'case'),
             escapeHtml(item.clusterValue),
             formatStatValue(item.actual, 6),
             formatStatValue(item.predicted, 6),
-            formatStatValue(item.residual, 6)
+            formatStatValue(item.residual, 6),
+            formatStatValue(item.standardizedResidual, 6),
+            formatStatValue(item.leverage, 6),
+            formatStatValue(item.cooksDistance, 6),
+            formatStatValue(item.devianceResidual, 6),
+            formatStatValue(item.predictedClass, 6),
+            item.outlier ? 'Yes' : 'No'
           ])
         )
       ),
+      result.thresholdAnalysis?.length ? buildOutputSection(
+        'Classification thresholds',
+        buildOutputTable(
+          ['Threshold', 'Accuracy', 'Precision', 'Recall', 'Specificity', 'F1', 'Youden J'],
+          result.thresholdAnalysis.map((item) => [
+            formatStatValue(item.threshold, 3),
+            formatStatValue(item.accuracy, 5),
+            formatStatValue(item.precision, 5),
+            formatStatValue(item.recall, 5),
+            formatStatValue(item.specificity, 5),
+            formatStatValue(item.f1Score, 5),
+            formatStatValue(item.youdenJ, 5)
+          ])
+        )
+      ) : '',
+      result.calibration ? buildOutputSection(
+        'Calibration summary',
+        buildOutputTable(
+          ['Metric', 'Value'],
+          [
+            ['Mean absolute calibration error', formatStatValue(result.calibration.meanAbsoluteCalibrationError, 6)],
+            ['Max calibration gap', formatStatValue(result.calibration.maxCalibrationGap, 6)],
+            ['Calibration intercept', formatStatValue(result.calibration.calibrationIntercept, 6)],
+            ['Calibration slope', formatStatValue(result.calibration.calibrationSlope, 6)],
+            ['Best threshold (F1)', formatStatValue(result.calibration.bestThresholdByF1, 3)],
+            ['Best threshold (Youden)', formatStatValue(result.calibration.bestThresholdByYouden, 3)],
+            ['Threshold 0.50 accuracy', formatStatValue(defaultThresholdMetrics?.accuracy ?? null, 5)]
+          ]
+        )
+      ) : '',
+      result.calibration?.bins?.length ? buildOutputSection(
+        'Calibration bins',
+        buildOutputTable(
+          ['Bin', 'Count', 'Weighted', 'Observed', 'Predicted', 'Gap'],
+          result.calibration.bins.map((bin) => [
+            escapeHtml(bin.bin),
+            String(bin.count),
+            formatStatValue(bin.weightedCount, 3),
+            formatStatValue(bin.observedRate, 5),
+            formatStatValue(bin.predictedRate, 5),
+            formatStatValue(bin.calibrationGap, 5)
+          ])
+        )
+      ) : '',
       buildAssumptionsSection(result.assumptions),
       buildOutputSection(
         'Diagnostics',
@@ -9553,13 +17059,17 @@ function renderRepeatedMeasures() {
       result.anova ? buildOutputSection(
         'Within-subject omnibus test',
         buildOutputTable(
-          ['Effect', 'SS', 'df', 'F', 'p', 'Partial eta squared'],
+          ['Effect', 'SS', 'df', 'F', 'p', 'GG p', 'HF p', 'Mauchly W', 'Mauchly p', 'Partial eta squared'],
           [[
             'Condition',
             formatStatValue(result.anova.ssCondition, 5),
             `${result.anova.dfCondition}, ${result.anova.dfError}`,
             formatStatValue(result.anova.fStatistic, 5),
             formatStatValue(result.anova.pValue, 5),
+            formatStatValue(result.anova.pValueGreenhouseGeisser, 5),
+            formatStatValue(result.anova.pValueHuynhFeldt, 5),
+            formatStatValue(result.anova.mauchlyW, 5),
+            formatStatValue(result.anova.mauchlyPValue, 5),
             formatStatValue(result.anova.partialEtaSquared, 5)
           ]]
         )
@@ -9593,13 +17103,15 @@ function renderSurvivalAnalysis() {
   const timeEl = document.getElementById('survival-time-field');
   const eventEl = document.getElementById('survival-event-field');
   const groupEl = document.getElementById('survival-group-field');
+  const predictorsEl = document.getElementById('survival-predictor-fields');
   const runBtn = document.getElementById('run-survival-analysis-btn');
   const resultEl = document.getElementById('survival-analysis-result');
-  if (!timeEl || !eventEl || !groupEl || !runBtn || !resultEl) return;
+  if (!timeEl || !eventEl || !groupEl || !predictorsEl || !runBtn || !resultEl) return;
   const options = getDatasetAnalysisFieldOptions();
   const previousTime = timeEl.value;
   const previousEvent = eventEl.value;
   const previousGroup = groupEl.value;
+  const previousPredictors = getSelectedValues(predictorsEl);
   timeEl.innerHTML = options.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${escapeHtml(option.valueType)})</option>`).join('');
   timeEl.value = options.some((option) => option.key === previousTime) ? previousTime : options[0]?.key ?? '';
   eventEl.innerHTML = options
@@ -9614,6 +17126,9 @@ function renderSurvivalAnalysis() {
     .map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)} (${escapeHtml(option.valueType)})</option>`)
     .join('')}`;
   groupEl.value = options.some((option) => option.key === previousGroup && option.key !== timeEl.value && option.key !== eventEl.value) ? previousGroup : '';
+  const numericOptions = options.filter((option) => option.valueType === 'number' && option.key !== timeEl.value && option.key !== eventEl.value && option.key !== groupEl.value);
+  predictorsEl.innerHTML = numericOptions.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`).join('');
+  for (const option of predictorsEl.options) option.selected = previousPredictors.includes(option.value);
   runBtn.disabled = options.length < 2 || !timeEl.value || !eventEl.value;
 
   if (!state.survivalAnalysisResult) {
@@ -9622,6 +17137,7 @@ function renderSurvivalAnalysis() {
   }
 
   const result = state.survivalAnalysisResult;
+  const logRankPValue = result.diagnostics?.logRankPValue ?? null;
   const survivalCharts = result.groups.map((group) => {
     const items = result.steps
       .filter((step) => step.groupValue === group.groupValue)
@@ -9635,12 +17151,14 @@ function renderSurvivalAnalysis() {
   resultEl.innerHTML = buildOutputViewer({
     eyebrow: 'Survival analysis',
     title: `${result.timeLabel} by ${result.eventLabel}`,
-    summary: `${result.caseCount} usable row(s) across ${result.groups.length} group(s).`,
+    summary: `${result.caseCount} usable row(s) across ${result.groups.length} group(s), log-rank p ${formatStatValue(logRankPValue, 5)}.`,
     metrics: [
       { label: 'Rows', value: result.caseCount },
       { label: 'Groups', value: result.groups.length },
       { label: 'Events', value: result.groups.reduce((total, group) => total + group.eventCount, 0) },
-      { label: 'Censored', value: result.groups.reduce((total, group) => total + group.censoredCount, 0) }
+      { label: 'Censored', value: result.groups.reduce((total, group) => total + group.censoredCount, 0) },
+      { label: 'Log-rank p', value: formatStatValue(logRankPValue, 5) },
+      { label: 'Cox concordance', value: formatStatValue(result.cox?.concordance, 5) }
     ],
     sections: [
       buildOutputSection(
@@ -9660,18 +17178,56 @@ function renderSurvivalAnalysis() {
       buildOutputSection(
         'Kaplan-Meier table',
         buildOutputTable(
-          ['Group', 'Time', 'At risk', 'Events', 'Censored', 'Survival'],
+          ['Group', 'Time', 'At risk', 'Events', 'Censored', 'Survival', 'SE', '95% CI'],
           result.steps.map((step) => [
             escapeHtml(step.groupValue),
             formatStatValue(step.time, 5),
             String(step.atRisk),
             String(step.events),
             String(step.censored),
-            formatStatValue(step.survival, 5)
+            formatStatValue(step.survival, 5),
+            formatStatValue(step.standardError, 5),
+            `[${formatStatValue(step.confidenceLower, 5)}, ${formatStatValue(step.confidenceUpper, 5)}]`
           ])
         )
       ),
       survivalCharts ? buildOutputSection('Survival curves', `<div class="chart-grid">${survivalCharts}</div>`) : '',
+      result.cox ? buildOutputSection(
+        'Cox model coefficients',
+        buildOutputTable(
+          ['Predictor', 'Beta', 'SE', 'z', 'p', '95% CI', 'Hazard ratio'],
+          (result.cox.coefficients ?? []).map((coefficient) => [
+            escapeHtml(coefficient.label ?? coefficient.field),
+            formatStatValue(coefficient.coefficient, 6),
+            formatStatValue(coefficient.standardError, 6),
+            formatStatValue(coefficient.statistic, 6),
+            formatStatValue(coefficient.pValue, 6),
+            escapeHtml(formatConfidenceInterval(coefficient.confidenceInterval, 6)),
+            formatStatValue(coefficient.oddsRatio, 6)
+          ])
+        )
+      ) : '',
+      result.cox ? buildOutputSection(
+        'Cox baseline hazard',
+        buildOutputTable(
+          ['Time', 'Events', 'Risk set', 'Hazard increment', 'Cumulative hazard', 'Baseline survival'],
+          (result.cox.baselineHazard ?? []).map((row) => [
+            formatStatValue(row.time, 5),
+            String(row.events),
+            String(row.riskSetCount),
+            formatStatValue(row.hazardIncrement, 6),
+            formatStatValue(row.cumulativeHazard, 6),
+            formatStatValue(row.baselineSurvival, 6)
+          ])
+        )
+      ) : '',
+      result.diagnostics ? buildOutputSection(
+        'Diagnostics',
+        buildOutputTable(
+          ['Metric', 'Value'],
+          Object.entries(result.diagnostics).map(([key, value]) => [escapeHtml(key), formatStatValue(value, 6)])
+        )
+      ) : '',
       result.notes?.length ? buildOutputSection('Notes', buildOutputList(result.notes.map(escapeHtml))) : ''
     ].filter(Boolean)
   });
@@ -9843,6 +17399,20 @@ function renderNeuralNetwork() {
 }
 
 function renderSyntaxCommandOutput(result) {
+  const splitOutput = result?.output && Array.isArray(result.output.groups) && Array.isArray(result.output.splitBy)
+    ? result.output
+    : null;
+  if (splitOutput) {
+    return buildOutputTable(
+      ['Group', 'Rows', 'Status'],
+      splitOutput.groups.map((groupEntry) => [
+        escapeHtml(Object.entries(groupEntry.group ?? {}).map(([key, value]) => `${key}=${value ?? 'null'}`).join(', ') || 'all'),
+        String(groupEntry.caseCount ?? ''),
+        escapeHtml(groupEntry.error ? `error: ${groupEntry.error}` : 'ok')
+      ])
+    );
+  }
+
   if (result.status !== 'ok') {
     return `<p class="small-muted">${escapeHtml(result.message)}</p>`;
   }
@@ -9925,6 +17495,30 @@ function renderSyntaxCommandOutput(result) {
       )
     ].join('');
   }
+  if (result.outputKind === 'dataset') {
+    const summary = result.output?.datasetSummary ?? {};
+    const preview = Array.isArray(result.output?.preview) ? result.output.preview : [];
+    const previewRows = preview.slice(0, 12).map((row) => {
+      const firstKeys = Object.keys(row).slice(0, 5);
+      return [
+        escapeHtml(String(row.case_id ?? row.case_label ?? row.id ?? 'row')),
+        escapeHtml(firstKeys.map((key) => `${key}=${row[key] ?? 'null'}`).join(', ') || 'n/a')
+      ];
+    });
+    return [
+      buildOutputTable(
+        ['Metric', 'Value'],
+        [
+          ['Cases', String(summary.caseCount ?? '')],
+          ['Fields', String(summary.fieldCount ?? '')],
+          ['Field keys', escapeHtml(Array.isArray(summary.fields) ? summary.fields.slice(0, 8).join(', ') : '')]
+        ]
+      ),
+      previewRows.length > 0
+        ? buildOutputTable(['Row', 'Preview'], previewRows)
+        : ''
+    ].join('');
+  }
   return `<pre>${escapeHtml(JSON.stringify(result.output ?? result.message, null, 2))}</pre>`;
 }
 
@@ -9944,12 +17538,12 @@ function renderSyntaxRun() {
   resultEl.innerHTML = buildOutputViewer({
     eyebrow: 'Syntax run',
     title: 'SPSS-like syntax output',
-    summary: `${result.successfulCommandCount} of ${result.commandCount} command(s) completed.`,
+    summary: `${result.successfulCommandCount} of ${result.commandCount} command(s) completed. Active dataset ${result.activeDatasetName ?? 'WORK'} with ${result.finalDatasetSummary?.caseCount ?? 0} row(s).`,
     metrics: [
       { label: 'Commands', value: result.commandCount },
       { label: 'Successful', value: result.successfulCommandCount },
       { label: 'Failed', value: result.commandCount - result.successfulCommandCount },
-      { label: 'Status', value: result.successfulCommandCount === result.commandCount ? 'complete' : 'review' }
+      { label: 'Datasets', value: Array.isArray(result.datasetNames) ? result.datasetNames.length : 1 }
     ],
     sections: [
       ...result.results.map((commandResult, index) => buildOutputSection(
@@ -10131,7 +17725,7 @@ function renderTextSearch() {
     return;
   }
   const result = state.textSearchResult;
-  summaryEl.textContent = `${result.totalHits} hit(s) across ${result.totalSegments} segment(s) using ${result.matchMode}.`;
+  summaryEl.textContent = `${result.totalHits} hit(s) across ${result.totalSegments} matching segment(s), showing ${result.returnedSegments} of ${result.maxRows} row limit. Scope ${result.codingScope}, min hits ${result.minHitCount}, mode ${result.matchMode}, linguistic ${result.linguisticMode}, fuzzy distance ${result.fuzzyDistance}.`;
   if (result.hits.length === 0) {
     resultEl.innerHTML = '<p>No text-search hits matched the current qualitative scope.</p>';
     return;
@@ -10282,12 +17876,27 @@ function renderCompoundQuery() {
     return;
   }
   const result = state.compoundQueryResult;
-  summaryEl.textContent = `${result.matchCount} match(es), ${result.sourceCount} source(s), ${result.caseCount} case(s) using ${result.operator} logic across ${result.clauseCount} clause(s).`;
+  const isWorkbench = result.mode === 'workbench' || Array.isArray(result.groupBreakdown);
+  const minGroupsMatched = isWorkbench && Number.isFinite(Number(result.minGroupsMatched))
+    ? Number(result.minGroupsMatched)
+    : null;
+  const logicSummary = isWorkbench
+    ? `${result.operator} group logic across ${result.groupCount ?? 0} group(s) and ${result.clauseCount ?? 0} clause(s)${minGroupsMatched !== null ? `, minimum ${minGroupsMatched} group(s) matched` : ''}`
+    : `${result.operator} logic across ${result.clauseCount} active clause(s)`;
+  summaryEl.textContent = `${result.matchCount} match(es) in ${result.scopedCount} scoped segment(s), showing ${result.returnedCount} row(s). ${result.sourceCount} source(s), ${result.caseCount} case(s), ${logicSummary}, case-sensitive ${result.caseSensitive ? 'yes' : 'no'}.`;
   if (result.items.length === 0) {
     resultEl.innerHTML = '<p>No matches satisfied the current compound query.</p>';
     return;
   }
+  const groupSummaryMarkup = isWorkbench && Array.isArray(result.groupBreakdown) && result.groupBreakdown.length > 0
+    ? `<div class="small-muted" style="margin-bottom:10px">${result.groupBreakdown.map((group) => {
+      const threshold = Number.isFinite(Number(group.minClausesMatched)) ? `, min clauses ${Number(group.minClausesMatched)}` : '';
+      const avg = Number.isFinite(Number(group.avgMatchedClauses)) ? `, avg ${Number(group.avgMatchedClauses).toFixed(2)}` : '';
+      return `${escapeHtml(group.label)} (${escapeHtml(group.operator)}${escapeHtml(threshold)}): ${escapeHtml(String(group.matchCount))} pass${group.matchCount === 1 ? '' : 'es'}${escapeHtml(avg)}`;
+    }).join(' | ')}</div>`
+    : '';
   resultEl.innerHTML = `
+    ${groupSummaryMarkup}
     <ul class="interactive-list">
       ${result.items.map((item) => `
         <li class="interactive-list-item">
@@ -10297,6 +17906,17 @@ function renderCompoundQuery() {
               <span class="source-meta">${escapeHtml(item.segment.id)} · ${escapeHtml(summarizeText(item.segment.text, 220))}</span>
               <span class="source-meta">Codes: ${item.applications.map((application) => escapeHtml(application.codeId)).join(', ') || 'none'}</span>
               <span class="source-meta">Cases: ${item.cases.map((caseEntity) => escapeHtml(caseEntity.label)).join(', ') || 'none'}</span>
+              ${isWorkbench && result.itemGroupMatches?.[item.segment.id]
+        ? `<span class="source-meta">Groups: ${(result.itemGroupMatches[item.segment.id] || []).map((matched, index) => {
+          const groupLabel = result.groupBreakdown?.[index]?.label ?? `Group ${index + 1}`;
+          const matchedClauses = result.itemGroupClauseMatches?.[item.segment.id]?.[index];
+          const totalClauses = result.itemGroupClauseTotals?.[item.segment.id]?.[index];
+          const clausePart = Number.isFinite(Number(totalClauses)) && Number(totalClauses) > 0
+            ? ` (${matchedClauses ?? 0}/${totalClauses} clauses)`
+            : '';
+          return `${escapeHtml(groupLabel)}=${matched ? 'yes' : 'no'}${escapeHtml(clausePart)}`;
+        }).join(' | ')}</span>`
+        : ''}
             </div>
             <div class="inline-actions">
               <button type="button" class="small compound-open-workspace-btn" data-segment-id="${escapeHtml(item.segment.id)}" data-source-id="${escapeHtml(item.segment.sourceId)}">Open in coding</button>
@@ -10313,6 +17933,81 @@ function renderCompoundQuery() {
   });
 }
 
+function renderCompoundPresetControls() {
+  const presetSelectEl = document.getElementById('compound-preset-select');
+  const presetSummaryEl = document.getElementById('compound-preset-summary');
+  const templateSummaryEl = document.getElementById('compound-template-summary');
+  if (!presetSelectEl || !presetSummaryEl || !templateSummaryEl) return;
+
+  const existingSelection = presetSelectEl.value;
+  const presets = getCompoundPresetQueries();
+  presetSelectEl.innerHTML = '<option value="">none</option>';
+  for (const preset of presets) {
+    const option = document.createElement('option');
+    option.value = preset.id;
+    option.textContent = preset.label;
+    presetSelectEl.appendChild(option);
+  }
+  if (presets.some((preset) => preset.id === existingSelection)) {
+    presetSelectEl.value = existingSelection;
+  }
+
+  if (!state.selectedProjectId) {
+    presetSummaryEl.textContent = 'Select a project to use saved clause presets.';
+  } else if (presets.length === 0) {
+    presetSummaryEl.textContent = 'No saved clause presets yet for this project.';
+  } else {
+    presetSummaryEl.textContent = `${presets.length} saved clause preset(s) available for one-click apply or run.`;
+  }
+
+  const templateSelectEl = document.getElementById('compound-template-select');
+  const selectedTemplate = templateSelectEl?.value ? COMPOUND_QUERY_TEMPLATE_DEFINITIONS[templateSelectEl.value] : null;
+  if (selectedTemplate) {
+    templateSummaryEl.textContent = `Template selected: ${selectedTemplate.label}.`;
+  } else {
+    templateSummaryEl.textContent = 'Pick a template to load common compound-clause setups in one click.';
+  }
+  renderCompoundWorkbenchStatus();
+}
+
+async function executeSavedQualitativeQuery(savedQuery, options = {}) {
+  const withReport = options.withReport === true;
+  const loadOnly = options.loadOnly === true;
+  if (savedQuery.mode === 'compound_query_preset') {
+    applyCompoundQueryConfig(savedQuery.query ?? {});
+    if (!loadOnly) await runCompoundQuery();
+    if (withReport && !loadOnly) await runQualitativeQueryReport();
+    return;
+  }
+
+  applyQualitativeQueryInputs(savedQuery.query ?? {});
+  if (loadOnly) return;
+
+  if (savedQuery.mode === 'matrix_code_case') await runMatrixCoding();
+  else if (savedQuery.mode === 'matrix_code_code') await runCodeCodeMatrix();
+  else if (savedQuery.mode === 'framework_matrix') await runFrameworkMatrix();
+  else if (savedQuery.mode === 'code_by_case') await runCodeByCaseView();
+  else if (savedQuery.mode === 'cooccurrence') await runCodeCooccurrence();
+  else if (savedQuery.mode === 'coding_comparison') await runCodingComparison();
+  else if (savedQuery.mode === 'inter_rater_summary') await runInterRaterSummary();
+  else if (savedQuery.mode === 'merge_review') await runMergeReview();
+  else if (savedQuery.mode === 'query_report') await runQualitativeQueryReport();
+  else if (savedQuery.mode === 'text_search') await runTextSearch();
+  else if (savedQuery.mode === 'sentiment') await runSentimentAnalysis();
+  else if (savedQuery.mode === 'word_frequency') await runWordFrequency();
+  else if (savedQuery.mode === 'word_cloud') await runWordCloud();
+  else if (savedQuery.mode === 'compound_query' || savedQuery.mode === 'compound_workbench') await runCompoundQuery();
+  else if (savedQuery.mode === 'map_visualization') await runMapVisualization();
+  else if (savedQuery.mode === 'code_hierarchy') await runCodeHierarchy();
+  else if (savedQuery.mode === 'concept_map') await runConceptMap();
+  else if (savedQuery.mode === 'pattern_autocode') await runPatternAutocode();
+  else await runRetrieval();
+
+  if (withReport && savedQuery.mode !== 'query_report') {
+    await runQualitativeQueryReport();
+  }
+}
+
 function renderSavedQualitativeQueries() {
   const node = document.getElementById('saved-qualitative-queries-list');
   if (!node) return;
@@ -10321,44 +18016,56 @@ function renderSavedQualitativeQueries() {
     return;
   }
 
+  const sortedQueries = [...state.savedQualitativeQueries].sort((left, right) => {
+    const leftPinned = left.query?.qualQueryPinned === true ? 1 : 0;
+    const rightPinned = right.query?.qualQueryPinned === true ? 1 : 0;
+    return rightPinned - leftPinned
+      || left.label.localeCompare(right.label)
+      || left.mode.localeCompare(right.mode);
+  });
+
   node.innerHTML = '';
-  for (const savedQuery of state.savedQualitativeQueries) {
+  for (const savedQuery of sortedQueries) {
+    const isPinned = savedQuery.query?.qualQueryPinned === true;
+    const runProfile = savedQuery.query?.qualQueryRunProfile === 'run_and_report' ? 'run_and_report' : 'run_only';
     const li = document.createElement('li');
     li.className = 'interactive-list-item';
     li.innerHTML = `
       <div class="source-row">
         <div>
-          <span class="project-title">${escapeHtml(savedQuery.label)}</span>
+          <span class="project-title">${isPinned ? 'Pinned • ' : ''}${escapeHtml(savedQuery.label)}</span>
           <span class="source-meta">${escapeHtml(savedQuery.id)}</span>
-          <span class="source-meta">Mode: ${escapeHtml(savedQuery.mode)}</span>
+          <span class="source-meta">Mode: ${escapeHtml(savedQuery.mode)} | Default run: ${escapeHtml(runProfile)}</span>
         </div>
         <div class="inline-actions">
-          <button type="button" class="small qual-query-load-btn">Load</button>
+          <button type="button" class="small qual-query-run-btn">Run</button>
+          <button type="button" class="small qual-query-run-report-btn">Run + report</button>
+          <button type="button" class="small qual-query-load-btn">Load only</button>
           <button type="button" class="small danger qual-query-delete-btn">Delete</button>
         </div>
       </div>
     `;
+    li.querySelector('.qual-query-run-btn')?.addEventListener('click', async () => {
+      try {
+        await executeSavedQualitativeQuery(savedQuery, { withReport: runProfile === 'run_and_report' });
+      } catch (err) {
+        window.alert(`Saved query run failed: ${err.message}`);
+      }
+    });
+    li.querySelector('.qual-query-run-report-btn')?.addEventListener('click', async () => {
+      try {
+        await executeSavedQualitativeQuery(savedQuery, { withReport: true });
+      } catch (err) {
+        window.alert(`Saved query run + report failed: ${err.message}`);
+      }
+    });
     li.querySelector('.qual-query-load-btn')?.addEventListener('click', async () => {
-      applyQualitativeQueryInputs(savedQuery.query ?? {});
-      if (savedQuery.mode === 'matrix_code_case') await runMatrixCoding();
-      else if (savedQuery.mode === 'matrix_code_code') await runCodeCodeMatrix();
-      else if (savedQuery.mode === 'framework_matrix') await runFrameworkMatrix();
-      else if (savedQuery.mode === 'code_by_case') await runCodeByCaseView();
-      else if (savedQuery.mode === 'cooccurrence') await runCodeCooccurrence();
-      else if (savedQuery.mode === 'coding_comparison') await runCodingComparison();
-      else if (savedQuery.mode === 'inter_rater_summary') await runInterRaterSummary();
-      else if (savedQuery.mode === 'query_report') await runQualitativeQueryReport();
-        else if (savedQuery.mode === 'text_search') await runTextSearch();
-        else if (savedQuery.mode === 'sentiment') await runSentimentAnalysis();
-        else if (savedQuery.mode === 'word_frequency') await runWordFrequency();
-        else if (savedQuery.mode === 'word_cloud') await runWordCloud();
-        else if (savedQuery.mode === 'compound_query') await runCompoundQuery();
-        else if (savedQuery.mode === 'map_visualization') await runMapVisualization();
-        else if (savedQuery.mode === 'code_hierarchy') await runCodeHierarchy();
-        else if (savedQuery.mode === 'concept_map') await runConceptMap();
-        else if (savedQuery.mode === 'pattern_autocode') await runPatternAutocode();
-        else await runRetrieval();
-      });
+      try {
+        await executeSavedQualitativeQuery(savedQuery, { loadOnly: true });
+      } catch (err) {
+        window.alert(`Saved query load failed: ${err.message}`);
+      }
+    });
     li.querySelector('.qual-query-delete-btn')?.addEventListener('click', async () => {
       await getJson(`${API_BASE}/saved-qualitative-queries/${encodeURIComponent(savedQuery.id)}?projectId=${encodeURIComponent(state.selectedProjectId)}`, {
         method: 'DELETE'
@@ -10578,33 +18285,78 @@ function renderQualitativeQueryReport() {
   }
 
   const report = state.qualitativeQueryReport;
-  summaryEl.textContent = `${report.summary.matchCount} matches, ${report.summary.sourceCount} sources, ${report.summary.caseCount} cases, ${report.summary.memoCount} memos.`;
+  summaryEl.textContent = `${report.summary.matchCount} matches, ${report.summary.sourceCount} sources, ${report.summary.caseCount} cases, ${report.summary.memoCount} memos. Profile: sort ${report.options?.sortBy ?? 'match_count'}, top sources ${report.options?.topSources ?? 20}, top cases ${report.options?.topCases ?? 20}, excerpts ${report.options?.includeExcerptRows === false ? 'off' : `on (${report.options?.excerptLimit ?? 60})`}.`;
+  const sourceMarkup = report.options?.includeSourceCoverage === false
+    ? '<div class="small-muted">Source coverage hidden by current report profile.</div>'
+    : `
+      <ul class="interactive-list" style="margin-top:12px">
+        ${report.sources.map((source) => `
+          <li class="interactive-list-item">
+            <span class="project-title">${escapeHtml(source.sourceTitle ?? source.sourceId)}</span>
+            <span class="source-meta">Matches ${source.matchCount} | Cases ${source.caseCount} | Memos ${source.memoCount}</span>
+            <span class="source-meta">Top codes: ${source.topCodes.map((code) => `${escapeHtml(code.codeName)} (${code.count})`).join(', ') || 'none'}</span>
+          </li>
+        `).join('')}
+      </ul>
+    `;
+  const caseMarkup = report.options?.includeCaseCoverage === false
+    ? '<div class="small-muted">Case coverage hidden by current report profile.</div>'
+    : `
+      <ul class="interactive-list" style="margin-top:12px">
+        ${report.cases.map((caseEntry) => `
+          <li class="interactive-list-item">
+            <span class="project-title">${escapeHtml(caseEntry.caseLabel)}</span>
+            <span class="source-meta">Matches ${caseEntry.matchCount} | Sources ${caseEntry.sourceCount} | Memos ${caseEntry.memoCount}</span>
+            <span class="source-meta">Top codes: ${caseEntry.topCodes.map((code) => `${escapeHtml(code.codeName)} (${code.count})`).join(', ') || 'none'}</span>
+          </li>
+        `).join('')}
+      </ul>
+    `;
+  const excerptMarkup = report.options?.includeExcerptRows === false
+    ? '<div class="small-muted" style="margin-top:12px">Excerpt rows hidden by current report profile.</div>'
+    : `
+      <div class="matrix-table-wrap" style="margin-top:12px">
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Segment</th>
+              <th>Cases</th>
+              <th>Codes</th>
+              <th>Memos</th>
+              <th>Excerpt</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(report.excerpts ?? []).map((entry) => `
+              <tr>
+                <td>${escapeHtml(entry.sourceTitle ?? entry.sourceId)}</td>
+                <td>${escapeHtml(entry.segmentId)}</td>
+                <td>${escapeHtml((entry.caseLabels ?? []).join(', ') || 'none')}</td>
+                <td>${escapeHtml((entry.codeNames ?? []).join(', ') || 'none')}</td>
+                <td>${entry.memoCount}</td>
+                <td>${escapeHtml(summarizeText(entry.text ?? '', 180))}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+
   resultEl.innerHTML = `
     <div class="grid grid-2 compact-grid">
       <div class="interactive-list-item">
         <span class="project-title">Sources</span>
-        <ul class="interactive-list" style="margin-top:12px">
-          ${report.sources.map((source) => `
-            <li class="interactive-list-item">
-              <span class="project-title">${escapeHtml(source.sourceTitle ?? source.sourceId)}</span>
-              <span class="source-meta">Matches ${source.matchCount} | Cases ${source.caseCount} | Memos ${source.memoCount}</span>
-              <span class="source-meta">Top codes: ${source.topCodes.map((code) => `${escapeHtml(code.codeName)} (${code.count})`).join(', ') || 'none'}</span>
-            </li>
-          `).join('')}
-        </ul>
+        ${sourceMarkup}
       </div>
       <div class="interactive-list-item">
         <span class="project-title">Cases</span>
-        <ul class="interactive-list" style="margin-top:12px">
-          ${report.cases.map((caseEntry) => `
-            <li class="interactive-list-item">
-              <span class="project-title">${escapeHtml(caseEntry.caseLabel)}</span>
-              <span class="source-meta">Matches ${caseEntry.matchCount} | Sources ${caseEntry.sourceCount} | Memos ${caseEntry.memoCount}</span>
-              <span class="source-meta">Top codes: ${caseEntry.topCodes.map((code) => `${escapeHtml(code.codeName)} (${code.count})`).join(', ') || 'none'}</span>
-            </li>
-          `).join('')}
-        </ul>
+        ${caseMarkup}
       </div>
+    </div>
+    <div class="interactive-list-item" style="margin-top:12px">
+      <span class="project-title">Evidence excerpts</span>
+      ${excerptMarkup}
     </div>
   `;
 }
@@ -10658,6 +18410,7 @@ function renderFrameworkMatrix() {
                     <strong>${cell.count}</strong>
                     <br><span class="small-muted">Memos ${cell.memoCount}</span>
                     ${cell.summary ? `<br><span class="small-muted">${escapeHtml(summarizeText(cell.summary, 120))}</span>` : ''}
+                    ${(cell.memoHighlights ?? []).length > 0 ? `<br><span class="small-muted">${escapeHtml(summarizeText((cell.memoHighlights ?? []).join(' | '), 110))}</span>` : ''}
                     ${firstSegmentId ? `<br><button type="button" class="small framework-open-btn" data-segment-id="${escapeHtml(firstSegmentId)}">Open</button>` : ''}
                   </td>
                 `;
@@ -10674,7 +18427,9 @@ function renderFrameworkMatrix() {
             <tr>
               <th>Case summary</th>
               <th>Top codes</th>
+              <th>Top sources</th>
               <th>Narrative summary</th>
+              <th>Memo highlights</th>
               <th>Open</th>
             </tr>
           </thead>
@@ -10689,7 +18444,9 @@ function renderFrameworkMatrix() {
               <tr>
                 <td>${escapeHtml(entry.caseLabel)}</td>
                 <td>${escapeHtml((entry.topCodes ?? []).map((code) => `${code.codeName} (${code.count})`).join(', ') || 'none')}</td>
+                <td>${escapeHtml((entry.topSources ?? []).map((source) => `${source.sourceTitle ?? source.sourceId} (${source.count})`).join(', ') || 'none')}</td>
                 <td>${escapeHtml(summarizeText(entry.summary || 'No excerpt summary.', 140))}</td>
+                <td>${escapeHtml(summarizeText((entry.memoHighlights ?? []).join(' | ') || 'none', 120))}</td>
                 <td>${entry.highlightSegmentId ? `<button type="button" class="small framework-open-btn" data-segment-id="${escapeHtml(entry.highlightSegmentId)}">Open</button>` : 'n/a'}</td>
               </tr>
             `).join('')}
@@ -10702,7 +18459,9 @@ function renderFrameworkMatrix() {
             <tr>
               <th>Code summary</th>
               <th>Top cases</th>
+              <th>Top sources</th>
               <th>Narrative summary</th>
+              <th>Memo highlights</th>
               <th>Open</th>
             </tr>
           </thead>
@@ -10711,7 +18470,9 @@ function renderFrameworkMatrix() {
               <tr>
                 <td>${escapeHtml(entry.codeName)}</td>
                 <td>${escapeHtml((entry.topCases ?? []).map((caseEntry) => `${caseEntry.caseLabel} (${caseEntry.count})`).join(', ') || 'none')}</td>
+                <td>${escapeHtml((entry.topSources ?? []).map((source) => `${source.sourceTitle ?? source.sourceId} (${source.count})`).join(', ') || 'none')}</td>
                 <td>${escapeHtml(summarizeText(entry.summary || 'No excerpt summary.', 140))}</td>
+                <td>${escapeHtml(summarizeText((entry.memoHighlights ?? []).join(' | ') || 'none', 120))}</td>
                 <td>${entry.highlightSegmentId ? `<button type="button" class="small framework-open-btn" data-segment-id="${escapeHtml(entry.highlightSegmentId)}">Open</button>` : 'n/a'}</td>
               </tr>
             `).join('')}
@@ -10756,47 +18517,189 @@ function renderFrameworkMatrix() {
 function renderMapVisualization() {
   const summaryEl = document.getElementById('map-visualization-summary');
   const resultEl = document.getElementById('map-visualization-result');
-  if (!summaryEl || !resultEl) return;
+  const inspectorEl = document.getElementById('map-visualization-inspector');
+  if (!summaryEl || !resultEl || !inspectorEl) return;
   if (!state.mapVisualizationResult) {
     summaryEl.textContent = 'Build a map view to aggregate qualitative evidence by location-like case attributes.';
     resultEl.innerHTML = '<p>No map view yet.</p>';
+    inspectorEl.textContent = 'Select a map point to inspect linked evidence context.';
     return;
   }
   const result = state.mapVisualizationResult;
   if (!result.locationField) {
     summaryEl.textContent = 'No location-style case attribute was found in the current scope.';
     resultEl.innerHTML = '<p>Add case attributes such as campus, city, region, state, or country to build a map summary.</p>';
+    inspectorEl.textContent = 'Map location attributes are required before point-level inspection is available.';
     return;
   }
-  summaryEl.textContent = `${result.points.length} location point(s) using ${result.locationField}${result.coordinateMode ? ' with coordinates' : ''}.`;
-  resultEl.innerHTML = result.points.length === 0
-    ? '<p>No scoped evidence could be aggregated into location points.</p>'
-    : `
+  const metricLabel = result.metric === 'case_count'
+    ? 'case count'
+    : result.metric === 'segment_count'
+      ? 'segment count'
+      : 'evidence count';
+  const normalizationLabel = result.normalization === 'within_scope_pct'
+    ? 'within-scope percent'
+    : result.normalization === 'log_scaled'
+      ? 'log-scaled'
+      : 'raw';
+  summaryEl.textContent = `${result.pointsReturned ?? result.points.length}/${result.pointsAvailable ?? result.points.length} location point(s), metric ${metricLabel}, normalization ${normalizationLabel}, field ${result.locationField}${result.coordinateMode ? ', coordinate mode' : ''}.`;
+  if (result.points.length === 0) {
+    resultEl.innerHTML = '<p>No scoped evidence could be aggregated into location points.</p>';
+    inspectorEl.textContent = 'No point-level evidence available.';
+    return;
+  }
+
+  const pointsWithCoordinates = result.points.filter((point) => point.latitude !== null && point.longitude !== null);
+  const hasCoordinates = pointsWithCoordinates.length > 0;
+  let pointGeometry = [];
+  if (hasCoordinates) {
+    const width = 640;
+    const height = 300;
+    const padding = 24;
+    const latitudes = pointsWithCoordinates.map((point) => Number(point.latitude));
+    const longitudes = pointsWithCoordinates.map((point) => Number(point.longitude));
+    const minLat = Math.min(...latitudes);
+    const maxLat = Math.max(...latitudes);
+    const minLon = Math.min(...longitudes);
+    const maxLon = Math.max(...longitudes);
+    const latSpan = Math.max(0.000001, maxLat - minLat);
+    const lonSpan = Math.max(0.000001, maxLon - minLon);
+    const maxRendered = Math.max(1, ...result.points.map((point) => Number(point.renderedValue) || 0));
+    pointGeometry = result.points.map((point, index) => {
+      if (point.latitude === null || point.longitude === null) {
+        return { index, x: null, y: null, r: 5, opacity: 0.6 };
+      }
+      const x = padding + ((Number(point.longitude) - minLon) / lonSpan) * (width - (padding * 2));
+      const y = padding + (1 - ((Number(point.latitude) - minLat) / latSpan)) * (height - (padding * 2));
+      const r = 4 + ((Math.max(0, Number(point.renderedValue) || 0) / maxRendered) * 16);
+      return { index, x, y, r, opacity: 0.92 };
+    });
+    resultEl.innerHTML = `
+      <div class="viz-grid">
+        <div class="viz-canvas-shell">
+          <svg class="viz-map-svg" viewBox="0 0 640 300" role="img" aria-label="Map visualization">
+            <rect x="0" y="0" width="640" height="300" class="viz-map-bg"></rect>
+            ${pointGeometry
+              .filter((item) => item.x !== null && item.y !== null)
+              .map((item) => {
+                const point = result.points[item.index];
+                return `
+                  <g class="viz-map-point" data-point-index="${item.index}">
+                    <circle cx="${item.x}" cy="${item.y}" r="${item.r}" opacity="${item.opacity}"></circle>
+                    <title>${escapeHtml(point.label)} · metric ${formatDecimal(point.rawMetricValue, 2)}</title>
+                  </g>
+                `;
+              }).join('')}
+          </svg>
+          <div class="small-muted">Bubble size reflects ${escapeHtml(metricLabel)} (${escapeHtml(normalizationLabel)} scale).</div>
+        </div>
+        <div class="matrix-table-wrap">
+          <table class="matrix-table">
+            <thead>
+              <tr>
+                <th>Location</th>
+                <th>Metric</th>
+                <th>Cases</th>
+                <th>Segments</th>
+                <th>Coordinates</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${result.points.map((point, index) => `
+                <tr class="viz-map-row" data-point-index="${index}">
+                  <td>${escapeHtml(point.label)}</td>
+                  <td>${formatDecimal(point.rawMetricValue, 2)}</td>
+                  <td>${point.caseCount}</td>
+                  <td>${point.segmentCount}</td>
+                  <td>${point.latitude !== null && point.longitude !== null ? `${point.latitude.toFixed(4)}, ${point.longitude.toFixed(4)}` : 'label only'}</td>
+                  <td>${point.caseIds?.[0] ? `<button type="button" class="small map-point-filter-case-btn" data-case-id="${escapeHtml(point.caseIds[0])}" data-point-index="${index}">Filter to case</button>` : 'n/a'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } else {
+    resultEl.innerHTML = `
       <div class="matrix-table-wrap">
         <table class="matrix-table">
           <thead>
             <tr>
               <th>Location</th>
-              <th>Evidence</th>
+              <th>Metric</th>
               <th>Cases</th>
               <th>Segments</th>
-              <th>Coordinates</th>
+              <th>Sources</th>
+              <th>Action</th>
             </tr>
           </thead>
           <tbody>
-            ${result.points.map((point) => `
-              <tr>
+            ${result.points.map((point, index) => `
+              <tr class="viz-map-row" data-point-index="${index}">
                 <td>${escapeHtml(point.label)}</td>
-                <td>${point.count}</td>
+                <td>${formatDecimal(point.rawMetricValue, 2)}</td>
                 <td>${point.caseCount}</td>
                 <td>${point.segmentCount}</td>
-                <td>${point.latitude !== null && point.longitude !== null ? `${point.latitude.toFixed(4)}, ${point.longitude.toFixed(4)}` : 'label only'}</td>
+                <td>${point.sourceCount ?? 0}</td>
+                <td>${point.caseIds?.[0] ? `<button type="button" class="small map-point-filter-case-btn" data-case-id="${escapeHtml(point.caseIds[0])}" data-point-index="${index}">Filter to case</button>` : 'n/a'}</td>
               </tr>
             `).join('')}
           </tbody>
         </table>
       </div>
     `;
+  }
+
+  const focusPoint = (pointIndex) => {
+    const point = result.points[pointIndex];
+    if (!point) return;
+    resultEl.querySelectorAll('.viz-map-row').forEach((row) => {
+      row.classList.toggle('is-active', String(pointIndex) === row.getAttribute('data-point-index'));
+    });
+    resultEl.querySelectorAll('.viz-map-point').forEach((node) => {
+      node.classList.toggle('is-active', String(pointIndex) === node.getAttribute('data-point-index'));
+    });
+    inspectorEl.innerHTML = `
+      <strong>${escapeHtml(point.label)}</strong>
+      <span class="source-meta">${escapeHtml(metricLabel)} ${formatDecimal(point.rawMetricValue, 2)} · cases ${point.caseCount} · segments ${point.segmentCount} · sources ${point.sourceCount ?? 0}</span>
+      <span class="source-meta">Top codes: ${(point.topCodeIds ?? []).map((entry) => {
+        const codeName = state.selectedCodes.find((code) => code.id === entry.codeId)?.name || entry.codeId;
+        return `${escapeHtml(codeName)} (${entry.count})`;
+      }).join(', ') || 'none'}</span>
+    `;
+  };
+
+  resultEl.querySelectorAll('.viz-map-row').forEach((row) => {
+    row.addEventListener('click', () => {
+      const pointIndex = Number(row.getAttribute('data-point-index'));
+      if (Number.isFinite(pointIndex)) focusPoint(pointIndex);
+    });
+  });
+  resultEl.querySelectorAll('.viz-map-point').forEach((node) => {
+    node.addEventListener('click', () => {
+      const pointIndex = Number(node.getAttribute('data-point-index'));
+      if (Number.isFinite(pointIndex)) focusPoint(pointIndex);
+    });
+  });
+  resultEl.querySelectorAll('.map-point-filter-case-btn').forEach((button) => {
+    button.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      const caseId = button.dataset.caseId || '';
+      const pointIndex = Number(button.dataset.pointIndex ?? -1);
+      if (!caseId) return;
+      const caseInput = document.getElementById('retrieval-case-id');
+      if (caseInput) caseInput.value = caseId;
+      focusPoint(pointIndex);
+      try {
+        await runRetrieval();
+      } catch (err) {
+        inspectorEl.textContent = `Case filter retrieval failed: ${err.message}`;
+      }
+    });
+  });
+  focusPoint(0);
 }
 
 function renderHierarchyNode(node) {
@@ -10830,50 +18733,191 @@ function renderCodeHierarchy() {
 function renderConceptMap() {
   const summaryEl = document.getElementById('concept-map-summary');
   const resultEl = document.getElementById('concept-map-result');
-  if (!summaryEl || !resultEl) return;
+  const inspectorEl = document.getElementById('concept-map-inspector');
+  if (!summaryEl || !resultEl || !inspectorEl) return;
   if (!state.conceptMapResult) {
     summaryEl.textContent = 'Build a concept map to inspect code relationships and co-occurrence links.';
     resultEl.innerHTML = '<p>No concept map yet.</p>';
+    inspectorEl.textContent = 'Select a concept node to inspect link-level evidence context.';
     return;
   }
   const result = state.conceptMapResult;
-  summaryEl.textContent = `${result.nodes.length} node(s), ${result.links.length} link(s).`;
-  resultEl.innerHTML = result.nodes.length === 0
-    ? '<p>No concept links are available in the current scope.</p>'
-    : buildOutputViewer({
-      eyebrow: 'Concept map',
-      title: 'Code relationship network',
-      summary: 'Co-occurrence links and explicit see-also relationships across the current qualitative scope.',
-      metrics: [
-        { label: 'Nodes', value: result.nodes.length },
-        { label: 'Links', value: result.links.length }
-      ],
-      sections: [
-        buildOutputSection(
-          'Code nodes',
-          buildOutputTable(
-            ['Code', 'Weight', 'Group'],
-            result.nodes.slice(0, 30).map((node) => [
-              escapeHtml(node.label),
-              String(node.size),
-              escapeHtml(node.group)
-            ])
-          )
-        ),
-        buildOutputSection(
-          'Links',
-          buildOutputTable(
-            ['Source', 'Target', 'Weight', 'Kind'],
-            result.links.slice(0, 40).map((link) => [
-              escapeHtml(state.selectedCodes.find((code) => code.id === link.sourceId)?.name || link.sourceId),
-              escapeHtml(state.selectedCodes.find((code) => code.id === link.targetId)?.name || link.targetId),
-              String(link.weight),
-              escapeHtml(link.kind)
-            ])
-          )
-        )
-      ]
+  const options = result.options ?? {};
+  summaryEl.textContent = `${result.nodes.length}/${result.totalNodesBeforeFiltering ?? result.nodes.length} node(s), ${result.links.length}/${result.totalLinksBeforeFiltering ?? result.links.length} link(s), min-link ${options.minLinkWeight ?? 1}, node-size ${options.nodeSizeMode ?? 'applications'}.`;
+  if (result.nodes.length === 0) {
+    resultEl.innerHTML = '<p>No concept links are available in the current scope.</p>';
+    inspectorEl.textContent = 'No node-level evidence available.';
+    return;
+  }
+  const width = 700;
+  const height = 380;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const nodeCount = result.nodes.length;
+  const ringRadius = Math.max(90, Math.min(150, 100 + (nodeCount * 2)));
+  const maxNodeSize = Math.max(1, ...result.nodes.map((node) => Number(node.size) || 0));
+  const maxLinkWeight = Math.max(1, ...result.links.map((link) => Number(link.weight) || 0));
+  const nodePositions = new Map(result.nodes.map((node, index) => {
+    const angle = (Math.PI * 2 * index) / Math.max(1, nodeCount);
+    return [node.id, {
+      x: centerX + (Math.cos(angle) * ringRadius),
+      y: centerY + (Math.sin(angle) * ringRadius)
+    }];
+  }));
+  const connectedByNode = new Map();
+  for (const link of result.links) {
+    const sourceBucket = connectedByNode.get(link.sourceId) ?? [];
+    sourceBucket.push(link);
+    connectedByNode.set(link.sourceId, sourceBucket);
+    const targetBucket = connectedByNode.get(link.targetId) ?? [];
+    targetBucket.push(link);
+    connectedByNode.set(link.targetId, targetBucket);
+  }
+  resultEl.innerHTML = `
+    <div class="viz-grid">
+      <div class="viz-canvas-shell">
+        <svg class="viz-concept-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Concept map">
+          <rect x="0" y="0" width="${width}" height="${height}" class="viz-map-bg"></rect>
+          ${result.links.map((link, index) => {
+            const source = nodePositions.get(link.sourceId);
+            const target = nodePositions.get(link.targetId);
+            if (!source || !target) return '';
+            const weight = Number(link.weight) || 0;
+            const strokeWidth = 1 + ((weight / maxLinkWeight) * 6);
+            return `
+              <line
+                class="viz-concept-link"
+                data-link-index="${index}"
+                data-source-id="${escapeHtml(link.sourceId)}"
+                data-target-id="${escapeHtml(link.targetId)}"
+                x1="${source.x}"
+                y1="${source.y}"
+                x2="${target.x}"
+                y2="${target.y}"
+                stroke-width="${strokeWidth}"
+              ></line>
+            `;
+          }).join('')}
+          ${result.nodes.map((node) => {
+            const position = nodePositions.get(node.id);
+            if (!position) return '';
+            const radius = 7 + ((Math.max(0, Number(node.size) || 0) / maxNodeSize) * 16);
+            return `
+              <g class="viz-concept-node" data-node-id="${escapeHtml(node.id)}" transform="translate(${position.x}, ${position.y})">
+                <circle r="${radius}"></circle>
+                <text y="${radius + 14}" text-anchor="middle">${escapeHtml(node.label)}</text>
+                <title>${escapeHtml(node.label)} · size ${formatDecimal(node.size, 2)}</title>
+              </g>
+            `;
+          }).join('')}
+        </svg>
+        <div class="small-muted">Node radius uses ${escapeHtml(options.nodeSizeMode ?? 'applications')} size; line width reflects link weight.</div>
+      </div>
+      <div class="matrix-table-wrap">
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Size</th>
+              <th>Degree</th>
+              <th>Cases</th>
+              <th>Sources</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${result.nodes.slice(0, 80).map((node) => `
+              <tr class="viz-concept-row" data-node-id="${escapeHtml(node.id)}">
+                <td>${escapeHtml(node.label)}</td>
+                <td>${formatDecimal(node.size, 2)}</td>
+                <td>${node.degree ?? 0}</td>
+                <td>${node.caseCount ?? 0}</td>
+                <td>${node.sourceCount ?? 0}</td>
+                <td><button type="button" class="small concept-node-filter-btn" data-code-id="${escapeHtml(node.id)}" data-node-id="${escapeHtml(node.id)}">Filter to code</button></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="matrix-table-wrap">
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Target</th>
+              <th>Weight</th>
+              <th>Kind</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${result.links.slice(0, 120).map((link) => `
+              <tr>
+                <td>${escapeHtml(state.selectedCodes.find((code) => code.id === link.sourceId)?.name || link.sourceId)}</td>
+                <td>${escapeHtml(state.selectedCodes.find((code) => code.id === link.targetId)?.name || link.targetId)}</td>
+                <td>${formatDecimal(link.weight, 2)}</td>
+                <td>${escapeHtml(link.kind)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  const focusNode = (nodeId) => {
+    const node = result.nodes.find((entry) => entry.id === nodeId);
+    if (!node) return;
+    resultEl.querySelectorAll('.viz-concept-node').forEach((entry) => {
+      entry.classList.toggle('is-active', entry.getAttribute('data-node-id') === nodeId);
     });
+    resultEl.querySelectorAll('.viz-concept-row').forEach((entry) => {
+      entry.classList.toggle('is-active', entry.getAttribute('data-node-id') === nodeId);
+    });
+    resultEl.querySelectorAll('.viz-concept-link').forEach((entry) => {
+      const sourceId = entry.getAttribute('data-source-id');
+      const targetId = entry.getAttribute('data-target-id');
+      entry.classList.toggle('is-active', sourceId === nodeId || targetId === nodeId);
+    });
+    const links = connectedByNode.get(nodeId) ?? [];
+    inspectorEl.innerHTML = `
+      <strong>${escapeHtml(node.label)}</strong>
+      <span class="source-meta">Size ${formatDecimal(node.size, 2)} · degree ${node.degree ?? 0} · weighted degree ${formatDecimal(node.weightedDegree ?? 0, 2)}</span>
+      <span class="source-meta">Cases ${node.caseCount ?? 0} · Sources ${node.sourceCount ?? 0} · Segments ${node.segmentCount ?? 0}</span>
+      <span class="source-meta">Connected links: ${links.slice(0, 8).map((link) => {
+        const otherId = link.sourceId === nodeId ? link.targetId : link.sourceId;
+        const otherLabel = state.selectedCodes.find((code) => code.id === otherId)?.name || otherId;
+        return `${escapeHtml(otherLabel)} (${formatDecimal(link.weight, 2)})`;
+      }).join(', ') || 'none'}</span>
+    `;
+  };
+
+  resultEl.querySelectorAll('.viz-concept-node').forEach((entry) => {
+    entry.addEventListener('click', () => {
+      const nodeId = entry.getAttribute('data-node-id');
+      if (nodeId) focusNode(nodeId);
+    });
+  });
+  resultEl.querySelectorAll('.viz-concept-row').forEach((entry) => {
+    entry.addEventListener('click', () => {
+      const nodeId = entry.getAttribute('data-node-id');
+      if (nodeId) focusNode(nodeId);
+    });
+  });
+  resultEl.querySelectorAll('.concept-node-filter-btn').forEach((button) => {
+    button.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      const codeId = button.dataset.codeId || '';
+      const codeInput = document.getElementById('retrieval-code-id');
+      if (codeInput) codeInput.value = codeId;
+      if (codeId) focusNode(codeId);
+      try {
+        await runRetrieval();
+      } catch (err) {
+        inspectorEl.textContent = `Code filter retrieval failed: ${err.message}`;
+      }
+    });
+  });
+  focusNode(result.nodes[0]?.id ?? '');
 }
 
 function renderCodeClusters() {
@@ -10945,6 +18989,234 @@ function renderReferences() {
   listEl.querySelectorAll('.reference-delete-btn').forEach((button) => {
     button.addEventListener('click', async () => {
       await deleteReference(button.dataset.referenceId);
+    });
+  });
+}
+
+function renderReferenceLibrary() {
+  const summaryEl = document.getElementById('reference-summary');
+  const listEl = document.getElementById('reference-list');
+  const importEl = document.getElementById('reference-import-result');
+  const duplicateEl = document.getElementById('reference-duplicate-list');
+  const collectionListEl = document.getElementById('reference-collection-list');
+  const mergeHistoryEl = document.getElementById('reference-merge-history-list');
+  if (!summaryEl || !listEl || !importEl || !duplicateEl || !collectionListEl || !mergeHistoryEl) return;
+
+  const normalizeText = (value) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const populateSelect = (id, options, placeholderLabel, preserveValue = true) => {
+    const select = document.getElementById(id);
+    if (!select) return;
+    const currentValue = preserveValue ? select.value : '';
+    select.innerHTML = `<option value="">${escapeHtml(placeholderLabel)}</option>${options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join('')}`;
+    if (currentValue && options.some((option) => option.value === currentValue)) {
+      select.value = currentValue;
+    }
+  };
+
+  const sourceOptions = state.selectedSources.map((source) => ({
+    value: source.id,
+    label: `${source.title} (${source.id})`
+  }));
+  const referenceOptions = state.selectedReferences.map((reference) => ({
+    value: reference.id,
+    label: `${reference.title || 'Untitled reference'} (${reference.id})`
+  }));
+  const collectionOptions = state.referenceCollections.map((collection) => ({
+    value: collection.id,
+    label: `${collection.name} (${collection.id})`
+  }));
+
+  populateSelect('reference-related-source-id', sourceOptions, 'No source link');
+  populateSelect('reference-editor-source', sourceOptions, 'No source link');
+  populateSelect('reference-filter-collection-id', collectionOptions, 'All collections');
+  populateSelect('reference-collection-target', collectionOptions, 'Select collection');
+  populateSelect('reference-collection-reference-id', referenceOptions, 'Select reference');
+  populateSelect('reference-link-reference-id', referenceOptions, 'Select reference');
+
+  const activeTargetType = document.getElementById('reference-link-target-type')?.value || 'source';
+  const targetOptions = activeTargetType === 'source'
+    ? state.selectedSources.map((item) => ({ value: item.id, label: `${item.title} (${item.id})` }))
+    : activeTargetType === 'segment'
+      ? state.selectedSegments.map((item) => ({ value: item.id, label: `${summarizeText(item.text || item.id, 48)} (${item.id})` }))
+      : activeTargetType === 'memo'
+        ? state.selectedMemos.map((item) => ({ value: item.id, label: `${item.title || 'Untitled memo'} (${item.id})` }))
+        : activeTargetType === 'code'
+          ? state.selectedCodes.map((item) => ({ value: item.id, label: `${item.name} (${item.id})` }))
+          : activeTargetType === 'case'
+            ? state.selectedCases.map((item) => ({ value: item.id, label: `${item.label} (${item.id})` }))
+            : state.selectedAnnotations.map((item) => ({ value: item.id, label: `${summarizeText(item.note || item.id, 48)} (${item.id})` }));
+  populateSelect('reference-link-target-id', targetOptions, 'Select target');
+
+  if (state.editingReferenceId && !state.selectedReferences.some((reference) => reference.id === state.editingReferenceId)) {
+    clearReferenceEditor();
+  }
+
+  const searchText = document.getElementById('reference-search-text')?.value?.trim() || '';
+  const sourceFormatFilter = document.getElementById('reference-filter-format')?.value || 'all';
+  const selectedCollectionId = document.getElementById('reference-filter-collection-id')?.value?.trim() || '';
+  const allowedCollectionReferenceIds = new Set(
+    selectedCollectionId
+      ? state.referenceCollectionItems.filter((item) => item.collectionId === selectedCollectionId).map((item) => item.referenceId)
+      : []
+  );
+
+  const references = state.selectedReferences.filter((reference) => {
+    if (sourceFormatFilter !== 'all' && reference.sourceFormat !== sourceFormatFilter) return false;
+    if (selectedCollectionId && !allowedCollectionReferenceIds.has(reference.id)) return false;
+    if (!searchText) return true;
+    const haystack = normalizeText([
+      reference.title,
+      reference.referenceType,
+      (reference.authors ?? []).join(' '),
+      reference.containerTitle,
+      reference.publisher,
+      reference.doi,
+      reference.url,
+      reference.abstractText,
+      (reference.keywords ?? []).join(' ')
+    ].join(' '));
+    return haystack.includes(normalizeText(searchText));
+  });
+
+  summaryEl.textContent = `${references.length} shown of ${state.selectedReferences.length} project reference(s).`;
+  if (state.referenceImportResult?.total) {
+    const skippedCount = Number(state.referenceImportResult.skippedCount ?? 0);
+    importEl.textContent = `Imported ${state.referenceImportResult.total} reference(s)${skippedCount > 0 ? `, skipped ${skippedCount} duplicate(s)` : ''}.`;
+  } else {
+    importEl.textContent = 'Import RIS, BibTeX, or CSL-JSON references and keep them attached to project evidence.';
+  }
+
+  const collectionNameById = new Map(state.referenceCollections.map((collection) => [collection.id, collection.name]));
+  const collectionItemsByReferenceId = new Map();
+  for (const item of state.referenceCollectionItems) {
+    const bucket = collectionItemsByReferenceId.get(item.referenceId) ?? [];
+    bucket.push(item);
+    collectionItemsByReferenceId.set(item.referenceId, bucket);
+  }
+  const linksByReferenceId = new Map();
+  for (const link of state.referenceLinks) {
+    const bucket = linksByReferenceId.get(link.referenceId) ?? [];
+    bucket.push(link);
+    linksByReferenceId.set(link.referenceId, bucket);
+  }
+
+  const resolveTargetLabel = (link) => {
+    if (link.targetType === 'source') return state.selectedSources.find((item) => item.id === link.targetId)?.title || link.targetId;
+    if (link.targetType === 'segment') return summarizeText(state.selectedSegments.find((item) => item.id === link.targetId)?.text || link.targetId, 56);
+    if (link.targetType === 'memo') return state.selectedMemos.find((item) => item.id === link.targetId)?.title || link.targetId;
+    if (link.targetType === 'code') return state.selectedCodes.find((item) => item.id === link.targetId)?.name || link.targetId;
+    if (link.targetType === 'case') return state.selectedCases.find((item) => item.id === link.targetId)?.label || link.targetId;
+    return summarizeText(state.selectedAnnotations.find((item) => item.id === link.targetId)?.note || link.targetId, 56);
+  };
+
+  collectionListEl.innerHTML = state.referenceCollections.length === 0
+    ? '<li class="interactive-list-item empty">No reference collections yet.</li>'
+    : state.referenceCollections.map((collection) => {
+      const count = state.referenceCollectionItems.filter((item) => item.collectionId === collection.id).length;
+      return `
+        <li class="interactive-list-item">
+          <div class="source-row">
+            <div>
+              <span class="project-title">${escapeHtml(collection.name)}</span>
+              <span class="source-meta">${count} reference(s) · ${escapeHtml(collection.colorToken)}</span>
+              <span class="source-meta">${escapeHtml(collection.description || 'No description')}</span>
+            </div>
+            <div class="inline-actions">
+              <button type="button" class="small danger reference-collection-delete-btn" data-collection-id="${escapeHtml(collection.id)}">Delete</button>
+            </div>
+          </div>
+        </li>
+      `;
+    }).join('');
+  collectionListEl.querySelectorAll('.reference-collection-delete-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await deleteReferenceCollection(button.dataset.collectionId);
+    });
+  });
+
+  mergeHistoryEl.innerHTML = state.referenceMergeEvents.length === 0
+    ? '<li class="interactive-list-item empty">No reference merge history yet.</li>'
+    : state.referenceMergeEvents.slice(0, 40).map((event) => `
+      <li class="interactive-list-item">
+        <div>
+          <span class="project-title">${escapeHtml(event.primaryReferenceId)} ← ${escapeHtml(event.mergedReferenceId)}</span>
+          <span class="source-meta">${escapeHtml(event.createdAt)} · ${escapeHtml(event.createdByUsername || 'system')}</span>
+          <span class="source-meta">${escapeHtml(event.reason || 'No merge note')}</span>
+        </div>
+      </li>
+    `).join('');
+
+  duplicateEl.innerHTML = state.referenceDuplicateCandidates.length === 0
+    ? '<li class="interactive-list-item empty">No duplicate candidates detected.</li>'
+    : state.referenceDuplicateCandidates.slice(0, 60).map((candidate) => `
+      <li class="interactive-list-item">
+        <div class="source-row">
+          <div>
+            <span class="project-title">${escapeHtml(candidate.primary?.title || candidate.primaryReferenceId)}</span>
+            <span class="source-meta">duplicate: ${escapeHtml(candidate.duplicate?.title || candidate.duplicateReferenceId)}</span>
+            <span class="source-meta">score ${escapeHtml(String(candidate.score))} · ${escapeHtml((candidate.reasons || []).join(', '))}</span>
+          </div>
+          <div class="inline-actions">
+            <button type="button" class="small reference-merge-btn" data-primary-id="${escapeHtml(candidate.primaryReferenceId)}" data-duplicate-id="${escapeHtml(candidate.duplicateReferenceId)}">Merge</button>
+          </div>
+        </div>
+      </li>
+    `).join('');
+  duplicateEl.querySelectorAll('.reference-merge-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await mergeReferences(button.dataset.primaryId, button.dataset.duplicateId);
+    });
+  });
+
+  if (references.length === 0) {
+    listEl.innerHTML = '<li class="interactive-list-item empty">No project references match the current filters.</li>';
+    return;
+  }
+
+  listEl.innerHTML = references.map((reference) => {
+    const collectionItems = collectionItemsByReferenceId.get(reference.id) ?? [];
+    const links = linksByReferenceId.get(reference.id) ?? [];
+    return `
+      <li class="interactive-list-item">
+        <div class="source-row">
+          <div>
+            <span class="project-title">${escapeHtml(reference.title || 'Untitled reference')}</span>
+            <span class="source-meta">${escapeHtml(reference.referenceType)} · ${escapeHtml(reference.sourceFormat)}${reference.year ? ` · ${reference.year}` : ''}</span>
+            <span class="source-meta">${escapeHtml((reference.authors ?? []).join(', ') || 'No authors')}</span>
+            <span class="source-meta">${escapeHtml(reference.containerTitle || reference.publisher || reference.doi || reference.url || 'No container metadata')}</span>
+            ${collectionItems.length > 0 ? `<span class="source-meta">Collections: ${collectionItems.map((item) => escapeHtml(collectionNameById.get(item.collectionId) || item.collectionId)).join(', ')}</span>` : '<span class="source-meta">Collections: none</span>'}
+            ${links.length > 0 ? `<span class="source-meta">Links: ${links.map((link) => `${escapeHtml(link.targetType)}:${escapeHtml(resolveTargetLabel(link))}`).join(' | ')}</span>` : '<span class="source-meta">Links: none</span>'}
+          </div>
+          <div class="inline-actions">
+            ${reference.url ? `<a class="small button-link" href="${escapeHtml(reference.url)}" target="_blank" rel="noreferrer">Open URL</a>` : ''}
+            <button type="button" class="small reference-edit-btn" data-reference-id="${escapeHtml(reference.id)}">Edit</button>
+            ${collectionItems.length > 0 ? collectionItems.map((item) => `<button type="button" class="small danger reference-collection-item-delete-btn" data-collection-id="${escapeHtml(item.collectionId)}" data-item-id="${escapeHtml(item.id)}">Remove from ${escapeHtml(collectionNameById.get(item.collectionId) || 'collection')}</button>`).join('') : ''}
+            ${links.length > 0 ? links.map((link) => `<button type="button" class="small danger reference-link-delete-btn" data-link-id="${escapeHtml(link.id)}">Unlink ${escapeHtml(link.targetType)}</button>`).join('') : ''}
+            <button type="button" class="small danger reference-delete-btn" data-reference-id="${escapeHtml(reference.id)}">Delete</button>
+          </div>
+        </div>
+      </li>
+    `;
+  }).join('');
+
+  listEl.querySelectorAll('.reference-edit-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      editReferenceById(button.dataset.referenceId);
+    });
+  });
+  listEl.querySelectorAll('.reference-collection-item-delete-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await removeReferenceCollectionItem(button.dataset.collectionId, button.dataset.itemId);
+    });
+  });
+  listEl.querySelectorAll('.reference-link-delete-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await deleteReferenceLink(button.dataset.linkId);
+    });
+  });
+  listEl.querySelectorAll('.reference-delete-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await deleteReferenceById(button.dataset.referenceId);
     });
   });
 }
@@ -11186,12 +19458,15 @@ function renderBackupItems() {
 }
 
 function renderAll() {
+  syncCompoundClauseOperatorSelects();
   renderInteractionStatus();
   renderOfficeLaunchStatus();
   renderExternalSqlPanel();
+  renderOfficeConnectorPanel();
+  renderReferenceConnectorPanel();
   renderProjects();
   renderProjectActions();
-  renderProjectsSecondary();
+  renderWorkspacePermissionStates();
   renderProjectChatHistory();
   renderMembers();
   renderActiveUsers();
@@ -11206,7 +19481,7 @@ function renderAll() {
     syncAnnotationFormState();
     renderRelationships();
     syncRelationshipFormState();
-    renderReferences();
+    renderReferenceLibrary();
     renderAttributes();
   renderSegments();
   renderCodeApplications();
@@ -11218,8 +19493,10 @@ function renderAll() {
     renderSavedAnalysisJobs();
     renderQuantOutputHistory();
     renderQuantOutputTree();
+    renderOutputStyleTemplateControls();
     renderCompiledReportControls();
   renderCompiledReportPresets();
+  renderOutputPackList();
   renderCompareMeans();
   renderTTest();
   renderPairedTTest();
@@ -11233,6 +19510,9 @@ function renderAll() {
   renderRegression();
   renderReliability();
   renderFactorAnalysis();
+  renderOptimalScaling();
+  renderConjointAnalysis();
+  renderDirectMarketing();
   renderForecasting();
   renderClusterAnalysis();
   renderDecisionTree();
@@ -11246,6 +19526,10 @@ function renderAll() {
   renderSyntaxRun();
   renderRetrieval();
   renderSavedQualitativeQueries();
+  renderCommitteePackSummary();
+  renderCompoundPresetControls();
+  renderCompoundOperatorGuide();
+  renderCompoundWorkbenchStatus();
   renderTextSearch();
     renderSentimentResult();
     renderWordFrequency();
@@ -11264,14 +19548,19 @@ function renderAll() {
   renderCodingComparison();
   renderInterRaterSummary();
   renderMergeReview();
+  renderMergeGovernancePolicy();
+  renderCodingAssignments();
+  renderCodingCalibrationSessions();
   renderAutocodeResult();
   renderMediaTimeline();
+  renderDiarizationQaReview();
   renderGovernanceStatus();
   renderAuditEvents();
   renderBackupItems();
   renderSourceWorkspace();
   renderSummary();
   renderPresenceBanner();
+  applyOutputStyleTemplateToWorkspace();
   syncWorkspaceMenus();
   updateGlobalChatButton();
 }
@@ -11423,15 +19712,35 @@ function wireForms() {
 
   document.getElementById('project-form').addEventListener('submit', async (event) => {
     event.preventDefault();
+    const formEl = event.target;
+    const submitBtn = formEl.querySelector('button[type="submit"]');
     const name = document.getElementById('project-name').value.trim();
     const description = document.getElementById('project-description').value.trim();
     const workspaceMode = document.getElementById('project-workspace-mode').value;
-    if (!name) { alert('Project name is required.'); return; }
-    const env = await postJson(`${API_BASE}/projects`, { name, description, workspaceMode });
-    event.target.reset();
-    document.getElementById('project-workspace-mode').value = 'solo';
-    state.selectedProjectId = env.data.project.id;
-    await refreshPage();
+    setInlineStatus('project-form-status', 'Validating project details...', 'info');
+    if (!name) {
+      setInlineStatus('project-form-status', 'Project name is required.', 'error');
+      document.getElementById('project-name')?.focus();
+      return;
+    }
+    if (name.length < 3) {
+      setInlineStatus('project-form-status', 'Project name must be at least 3 characters.', 'error');
+      document.getElementById('project-name')?.focus();
+      return;
+    }
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      const env = await postJson(`${API_BASE}/projects`, { name, description, workspaceMode });
+      formEl.reset();
+      document.getElementById('project-workspace-mode').value = 'solo';
+      state.selectedProjectId = env.data.project.id;
+      await refreshPage();
+      setInlineStatus('project-form-status', `Project "${name}" created successfully.`, 'success');
+    } catch (err) {
+      setInlineStatus('project-form-status', `Could not create project: ${err.message}`, 'error');
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
   });
 
   document.getElementById('member-form').addEventListener('submit', async (event) => {
@@ -11461,12 +19770,20 @@ function wireForms() {
   document.getElementById('project-chat-popup-btn')?.addEventListener('click', () => {
     openChatPopup();
   });
+  document.getElementById('open-descriptive-popup-btn')?.addEventListener('click', () => {
+    ensureDescriptivePopupOpen({ auto: false });
+  });
+  document.getElementById('open-quant-output-popup-btn')?.addEventListener('click', () => {
+    ensureQuantOutputPopupOpen();
+  });
 
   document.getElementById('delete-project-btn')?.addEventListener('click', async () => {
+    setInlineStatus('project-management-status', 'Processing project delete request...', 'info');
     try {
       await deleteSelectedProject();
+      setInlineStatus('project-management-status', 'Project deleted successfully.', 'success');
     } catch (err) {
-      window.alert(err.message);
+      setInlineStatus('project-management-status', `Delete failed: ${err.message}`, 'error');
     }
   });
 
@@ -11688,6 +20005,8 @@ document.getElementById('annotation-form')?.addEventListener('submit', async (ev
   const importFileInput = document.getElementById('import-file-input');
   const importDropzone = document.getElementById('import-dropzone');
   const sqlProfileSelect = document.getElementById('sql-profile-select');
+  const officeConnectorProfileSelect = document.getElementById('office-connector-profile-select');
+  const referenceConnectorProfileSelect = document.getElementById('reference-connector-profile-select');
 
   document.getElementById('save-sql-profile-btn')?.addEventListener('click', async () => {
     try {
@@ -11745,6 +20064,348 @@ document.getElementById('annotation-form')?.addEventListener('submit', async (ev
     await loadExternalSqlTables(state.selectedSqlProfileId);
   renderAll();
 });
+
+  officeConnectorProfileSelect?.addEventListener('change', (event) => {
+    state.selectedOfficeConnectorProfileId = event.target.value || null;
+    state.officeConnectorDiscovery = [];
+    renderAll();
+  });
+
+  document.getElementById('save-office-connector-profile-btn')?.addEventListener('click', async () => {
+    try {
+      requireProjectExportPermission();
+      const label = document.getElementById('office-connector-profile-label')?.value?.trim() || '';
+      const rootPath = document.getElementById('office-connector-root-path')?.value?.trim() || '';
+      const includeSubdirectories = document.getElementById('office-connector-include-subdirs')?.checked !== false;
+      const allowedExtensions = (document.getElementById('office-connector-allowed-extensions')?.value || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const env = await postJson(`${API_BASE}/office-connectors/profiles`, {
+        projectId: state.selectedProjectId,
+        label,
+        rootPath,
+        includeSubdirectories,
+        allowedExtensions
+      });
+      state.selectedOfficeConnectorProfileId = env.data?.profile?.id ?? null;
+      await loadOfficeConnectorProfiles();
+      await loadOfficeConnectorJobs();
+      renderAll();
+      document.getElementById('office-connector-status').textContent = 'Office connector profile saved.';
+    } catch (err) {
+      document.getElementById('office-connector-status').textContent = `Office connector profile save failed: ${err.message}`;
+    }
+  });
+
+  document.getElementById('delete-office-connector-profile-btn')?.addEventListener('click', async () => {
+    try {
+      requireProjectExportPermission();
+      if (!state.selectedOfficeConnectorProfileId) throw new Error('Select an Office connector profile first.');
+      await deleteJson(`${API_BASE}/office-connectors/profiles/${encodeURIComponent(state.selectedOfficeConnectorProfileId)}?projectId=${encodeURIComponent(state.selectedProjectId)}`);
+      state.selectedOfficeConnectorProfileId = null;
+      state.officeConnectorDiscovery = [];
+      await loadOfficeConnectorProfiles();
+      await loadOfficeConnectorJobs();
+      renderAll();
+      document.getElementById('office-connector-status').textContent = 'Office connector profile deleted.';
+    } catch (err) {
+      document.getElementById('office-connector-status').textContent = `Office connector profile delete failed: ${err.message}`;
+    }
+  });
+
+  document.getElementById('scan-office-connector-btn')?.addEventListener('click', async () => {
+    try {
+      requireProjectExportPermission();
+      if (!state.selectedOfficeConnectorProfileId) throw new Error('Select an Office connector profile first.');
+      const maxFiles = Number(document.getElementById('office-connector-job-max-files')?.value || 500);
+      const env = await postJson(`${API_BASE}/office-connectors/profiles/${encodeURIComponent(state.selectedOfficeConnectorProfileId)}/discover`, {
+        projectId: state.selectedProjectId,
+        maxFiles
+      });
+      state.officeConnectorDiscovery = env.data?.items ?? [];
+      renderAll();
+      document.getElementById('office-connector-status').textContent = `Discovered ${state.officeConnectorDiscovery.length} file(s) for this Office connector profile.`;
+    } catch (err) {
+      document.getElementById('office-connector-status').textContent = `Office connector discovery failed: ${err.message}`;
+    }
+  });
+
+  document.getElementById('save-office-connector-job-btn')?.addEventListener('click', async () => {
+    try {
+      requireProjectExportPermission();
+      if (!state.selectedOfficeConnectorProfileId) throw new Error('Select an Office connector profile first.');
+      const selectedProfile = state.officeConnectorProfiles.find((item) => item.id === state.selectedOfficeConnectorProfileId) ?? null;
+      const defaultLabel = selectedProfile ? `${selectedProfile.label} sync` : 'Office connector sync';
+      const label = window.prompt('Office connector job name', defaultLabel);
+      if (label === null) return;
+      const maxFiles = Number(document.getElementById('office-connector-job-max-files')?.value || 500);
+      const forceResync = Boolean(document.getElementById('office-connector-job-force-resync')?.checked);
+      const scheduleEnabled = Boolean(document.getElementById('office-connector-job-schedule-enabled')?.checked);
+      const scheduleIntervalMinutes = Number(document.getElementById('office-connector-job-schedule-interval')?.value || 60);
+      await postJson(`${API_BASE}/office-connectors/jobs`, {
+        projectId: state.selectedProjectId,
+        profileId: state.selectedOfficeConnectorProfileId,
+        label: label.trim(),
+        maxFiles,
+        forceResync,
+        scheduleEnabled,
+        scheduleIntervalMinutes
+      });
+      await loadOfficeConnectorJobs();
+      renderAll();
+      document.getElementById('office-connector-status').textContent = scheduleEnabled
+        ? `Office connector job saved with a ${scheduleIntervalMinutes}-minute schedule.`
+        : 'Office connector job saved.';
+    } catch (err) {
+      document.getElementById('office-connector-status').textContent = `Office connector job save failed: ${err.message}`;
+    }
+  });
+
+  document.getElementById('office-connector-jobs')?.addEventListener('click', async (event) => {
+    const target = event.target instanceof Element ? event.target.closest('button') : null;
+    if (!(target instanceof HTMLButtonElement)) return;
+    const jobId = target.dataset.jobId;
+    if (!jobId) return;
+    try {
+      requireProjectExportPermission();
+      const maxFiles = Number(document.getElementById('office-connector-job-max-files')?.value || 500);
+      const forceResync = Boolean(document.getElementById('office-connector-job-force-resync')?.checked);
+      if (target.classList.contains('office-connector-job-run-btn')) {
+        const env = await postJson(`${API_BASE}/office-connectors/jobs/${encodeURIComponent(jobId)}/run`, {
+          projectId: state.selectedProjectId,
+          maxFiles,
+          forceResync
+        });
+        await loadSelectedProjectData();
+        await loadOfficeConnectorJobs();
+        renderAll();
+        document.getElementById('office-connector-status').textContent = `Office connector synced ${env.data?.stats?.importedCount ?? 0} changed file(s).`;
+        return;
+      }
+      if (target.classList.contains('office-connector-job-enable-schedule-btn') || target.classList.contains('office-connector-job-reschedule-btn')) {
+        const suggested = target.dataset.currentInterval || document.getElementById('office-connector-job-schedule-interval')?.value || '60';
+        const response = window.prompt('Automatic refresh interval in minutes', suggested);
+        if (response === null) return;
+        const intervalMinutes = Number(response || 60);
+        await patchJson(`${API_BASE}/office-connectors/jobs/${encodeURIComponent(jobId)}/schedule`, {
+          projectId: state.selectedProjectId,
+          enabled: true,
+          intervalMinutes,
+          maxFiles,
+          forceResync
+        });
+        await loadOfficeConnectorJobs();
+        renderAll();
+        document.getElementById('office-connector-status').textContent = `Office connector job scheduled every ${intervalMinutes} minutes.`;
+        return;
+      }
+      if (target.classList.contains('office-connector-job-pause-schedule-btn')) {
+        await patchJson(`${API_BASE}/office-connectors/jobs/${encodeURIComponent(jobId)}/schedule`, {
+          projectId: state.selectedProjectId,
+          enabled: false,
+          maxFiles,
+          forceResync
+        });
+        await loadOfficeConnectorJobs();
+        renderAll();
+        document.getElementById('office-connector-status').textContent = 'Office connector schedule paused.';
+        return;
+      }
+      if (target.classList.contains('office-connector-job-delete-btn')) {
+        await deleteJson(`${API_BASE}/office-connectors/jobs/${encodeURIComponent(jobId)}?projectId=${encodeURIComponent(state.selectedProjectId)}`);
+        await loadOfficeConnectorJobs();
+        renderAll();
+        document.getElementById('office-connector-status').textContent = 'Office connector job deleted.';
+      }
+    } catch (err) {
+      document.getElementById('office-connector-status').textContent = `Office connector job action failed: ${err.message}`;
+    }
+  });
+
+  referenceConnectorProfileSelect?.addEventListener('change', (event) => {
+    state.selectedReferenceConnectorProfileId = event.target.value || null;
+    state.referenceConnectorSearchResults = [];
+    renderAll();
+  });
+
+  document.getElementById('save-reference-connector-profile-btn')?.addEventListener('click', async () => {
+    try {
+      requireProjectExportPermission();
+      const label = document.getElementById('reference-connector-profile-label')?.value?.trim() || '';
+      const provider = document.getElementById('reference-connector-provider')?.value || 'crossref';
+      const mailto = document.getElementById('reference-connector-mailto')?.value?.trim() || '';
+      const apiKey = document.getElementById('reference-connector-api-key')?.value?.trim() || '';
+      const env = await postJson(`${API_BASE}/reference-connectors/profiles`, {
+        projectId: state.selectedProjectId,
+        label,
+        provider,
+        settings: { mailto, apiKey }
+      });
+      state.selectedReferenceConnectorProfileId = env.data?.profile?.id ?? null;
+      const apiKeyInput = document.getElementById('reference-connector-api-key');
+      if (apiKeyInput) apiKeyInput.value = '';
+      await loadReferenceConnectorProfiles();
+      await loadReferenceConnectorJobs();
+      renderAll();
+      document.getElementById('reference-connector-status').textContent = 'Reference connector profile saved.';
+    } catch (err) {
+      document.getElementById('reference-connector-status').textContent = `Reference connector profile save failed: ${err.message}`;
+    }
+  });
+
+  document.getElementById('delete-reference-connector-profile-btn')?.addEventListener('click', async () => {
+    try {
+      requireProjectExportPermission();
+      if (!state.selectedReferenceConnectorProfileId) throw new Error('Select a reference connector profile first.');
+      await deleteJson(`${API_BASE}/reference-connectors/profiles/${encodeURIComponent(state.selectedReferenceConnectorProfileId)}?projectId=${encodeURIComponent(state.selectedProjectId)}`);
+      state.selectedReferenceConnectorProfileId = null;
+      state.referenceConnectorSearchResults = [];
+      await loadReferenceConnectorProfiles();
+      await loadReferenceConnectorJobs();
+      renderAll();
+      document.getElementById('reference-connector-status').textContent = 'Reference connector profile deleted.';
+    } catch (err) {
+      document.getElementById('reference-connector-status').textContent = `Reference connector profile delete failed: ${err.message}`;
+    }
+  });
+
+  document.getElementById('search-reference-connector-btn')?.addEventListener('click', async () => {
+    try {
+      requireProjectExportPermission();
+      if (!state.selectedReferenceConnectorProfileId) throw new Error('Select a reference connector profile first.');
+      const queryText = document.getElementById('reference-connector-query-text')?.value?.trim() || '';
+      const maxRows = Number(document.getElementById('reference-connector-max-rows')?.value || 50);
+      const env = await postJson(`${API_BASE}/reference-connectors/profiles/${encodeURIComponent(state.selectedReferenceConnectorProfileId)}/search`, {
+        projectId: state.selectedProjectId,
+        queryText,
+        maxRows
+      });
+      state.referenceConnectorSearchResults = env.data?.items ?? [];
+      renderAll();
+      document.getElementById('reference-connector-status').textContent = `Reference search returned ${state.referenceConnectorSearchResults.length} row(s).`;
+    } catch (err) {
+      document.getElementById('reference-connector-status').textContent = `Reference search failed: ${err.message}`;
+    }
+  });
+
+  document.getElementById('import-reference-connector-btn')?.addEventListener('click', async () => {
+    try {
+      requireProjectExportPermission();
+      if (!state.selectedReferenceConnectorProfileId) throw new Error('Select a reference connector profile first.');
+      const queryText = document.getElementById('reference-connector-query-text')?.value?.trim() || '';
+      const maxRows = Number(document.getElementById('reference-connector-max-rows')?.value || 50);
+      const skipDuplicates = document.getElementById('reference-connector-skip-duplicates')?.checked !== false;
+      const env = await postJson(`${API_BASE}/reference-connectors/profiles/${encodeURIComponent(state.selectedReferenceConnectorProfileId)}/import`, {
+        projectId: state.selectedProjectId,
+        queryText,
+        maxRows,
+        skipDuplicates
+      });
+      await loadSelectedProjectData();
+      renderAll();
+      document.getElementById('reference-connector-status').textContent = `Imported ${env.data?.importedCount ?? 0} references; skipped ${env.data?.skippedCount ?? 0}.`;
+    } catch (err) {
+      document.getElementById('reference-connector-status').textContent = `Reference import failed: ${err.message}`;
+    }
+  });
+
+  document.getElementById('save-reference-connector-job-btn')?.addEventListener('click', async () => {
+    try {
+      requireProjectExportPermission();
+      if (!state.selectedReferenceConnectorProfileId) throw new Error('Select a reference connector profile first.');
+      const queryText = document.getElementById('reference-connector-query-text')?.value?.trim() || '';
+      if (!queryText) throw new Error('Enter query text first.');
+      const label = window.prompt('Reference connector job name', `Reference query: ${queryText.slice(0, 48)}`) || '';
+      if (!label.trim()) return;
+      const maxRows = Number(document.getElementById('reference-connector-max-rows')?.value || 50);
+      const skipDuplicates = document.getElementById('reference-connector-skip-duplicates')?.checked !== false;
+      const scheduleEnabled = Boolean(document.getElementById('reference-connector-job-schedule-enabled')?.checked);
+      const scheduleIntervalMinutes = Number(document.getElementById('reference-connector-job-schedule-interval')?.value || 60);
+      await postJson(`${API_BASE}/reference-connectors/jobs`, {
+        projectId: state.selectedProjectId,
+        profileId: state.selectedReferenceConnectorProfileId,
+        label: label.trim(),
+        queryText,
+        maxRows,
+        skipDuplicates,
+        scheduleEnabled,
+        scheduleIntervalMinutes
+      });
+      await loadReferenceConnectorJobs();
+      renderAll();
+      document.getElementById('reference-connector-status').textContent = scheduleEnabled
+        ? `Reference connector job saved with a ${scheduleIntervalMinutes}-minute schedule.`
+        : 'Reference connector job saved.';
+    } catch (err) {
+      document.getElementById('reference-connector-status').textContent = `Reference connector job save failed: ${err.message}`;
+    }
+  });
+
+  document.getElementById('reference-connector-jobs')?.addEventListener('click', async (event) => {
+    const target = event.target instanceof Element ? event.target.closest('button') : null;
+    if (!(target instanceof HTMLButtonElement)) return;
+    const jobId = target.dataset.jobId;
+    if (!jobId) return;
+    try {
+      requireProjectExportPermission();
+      const queryText = document.getElementById('reference-connector-query-text')?.value?.trim() || '';
+      const maxRows = Number(document.getElementById('reference-connector-max-rows')?.value || 50);
+      const skipDuplicates = document.getElementById('reference-connector-skip-duplicates')?.checked !== false;
+      if (target.classList.contains('reference-connector-job-run-btn')) {
+        const env = await postJson(`${API_BASE}/reference-connectors/jobs/${encodeURIComponent(jobId)}/run`, {
+          projectId: state.selectedProjectId,
+          queryText,
+          maxRows,
+          skipDuplicates
+        });
+        await loadSelectedProjectData();
+        await loadReferenceConnectorJobs();
+        renderAll();
+        document.getElementById('reference-connector-status').textContent = `Reference job fetched ${env.data?.fetchedCount ?? 0}, imported ${env.data?.importedCount ?? 0}.`;
+        return;
+      }
+      if (target.classList.contains('reference-connector-job-enable-schedule-btn') || target.classList.contains('reference-connector-job-reschedule-btn')) {
+        const suggested = target.dataset.currentInterval || document.getElementById('reference-connector-job-schedule-interval')?.value || '60';
+        const response = window.prompt('Automatic refresh interval in minutes', suggested);
+        if (response === null) return;
+        const intervalMinutes = Number(response || 60);
+        await patchJson(`${API_BASE}/reference-connectors/jobs/${encodeURIComponent(jobId)}/schedule`, {
+          projectId: state.selectedProjectId,
+          enabled: true,
+          intervalMinutes,
+          queryText,
+          maxRows,
+          skipDuplicates
+        });
+        await loadReferenceConnectorJobs();
+        renderAll();
+        document.getElementById('reference-connector-status').textContent = `Reference connector job scheduled every ${intervalMinutes} minutes.`;
+        return;
+      }
+      if (target.classList.contains('reference-connector-job-pause-schedule-btn')) {
+        await patchJson(`${API_BASE}/reference-connectors/jobs/${encodeURIComponent(jobId)}/schedule`, {
+          projectId: state.selectedProjectId,
+          enabled: false,
+          queryText,
+          maxRows,
+          skipDuplicates
+        });
+        await loadReferenceConnectorJobs();
+        renderAll();
+        document.getElementById('reference-connector-status').textContent = 'Reference connector schedule paused.';
+        return;
+      }
+      if (target.classList.contains('reference-connector-job-delete-btn')) {
+        await deleteJson(`${API_BASE}/reference-connectors/jobs/${encodeURIComponent(jobId)}?projectId=${encodeURIComponent(state.selectedProjectId)}`);
+        await loadReferenceConnectorJobs();
+        renderAll();
+        document.getElementById('reference-connector-status').textContent = 'Reference connector job deleted.';
+      }
+    } catch (err) {
+      document.getElementById('reference-connector-status').textContent = `Reference connector job action failed: ${err.message}`;
+    }
+  });
 
 document.getElementById('relationship-form')?.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -12023,13 +20684,29 @@ document.getElementById('relationship-cancel-edit-btn')?.addEventListener('click
     }
   });
 
-    document.getElementById('export-json-btn')?.addEventListener('click', async () => {
-      try {
-        await downloadProjectDataset('json');
-      } catch (err) {
-        document.getElementById('import-result').textContent = `Export failed: ${err.message}`;
-      }
-    });
+  document.getElementById('export-json-btn')?.addEventListener('click', async () => {
+    try {
+      await downloadProjectDataset('json');
+    } catch (err) {
+      document.getElementById('import-result').textContent = `Export failed: ${err.message}`;
+    }
+  });
+
+  document.getElementById('export-sav-btn')?.addEventListener('click', async () => {
+    try {
+      await downloadProjectDataset('sav');
+    } catch (err) {
+      document.getElementById('import-result').textContent = `SPSS SAV export failed: ${err.message}`;
+    }
+  });
+
+  document.getElementById('export-zsav-btn')?.addEventListener('click', async () => {
+    try {
+      await downloadProjectDataset('zsav');
+    } catch (err) {
+      document.getElementById('import-result').textContent = `SPSS ZSAV export failed: ${err.message}`;
+    }
+  });
 
     document.getElementById('open-recent-word-btn')?.addEventListener('click', async () => {
       try {
@@ -12221,13 +20898,37 @@ document.getElementById('relationship-cancel-edit-btn')?.addEventListener('click
     }
   });
 
+  document.getElementById('run-cutover-check-btn')?.addEventListener('click', async () => {
+    const summaryEl = document.getElementById('cutover-summary');
+    try {
+      const env = await getJson(`${API_BASE}/deployment/cutover-check`);
+      state.cutoverValidation = env.data ?? null;
+      renderGovernanceStatus();
+      if (summaryEl && state.cutoverValidation) {
+        const blockers = Number(state.cutoverValidation.blockerCount ?? 0);
+        const warnings = Number(state.cutoverValidation.warningCount ?? 0);
+        summaryEl.textContent = state.cutoverValidation.readyForCutover
+          ? `Cutover ready. ${warnings} warning(s) remain for review.`
+          : `Cutover blocked. ${blockers} blocker(s) and ${warnings} warning(s) detected.`;
+      }
+    } catch (err) {
+      if (summaryEl) summaryEl.textContent = `Cutover check failed: ${err.message}`;
+    }
+  });
+
   document.getElementById('governance-policy-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
       const env = await putJson(`${API_BASE}/governance/policies`, {
         idleTimeoutMinutes: Number(document.getElementById('policy-idle-timeout').value),
+        sessionAbsoluteTimeoutMinutes: Number(document.getElementById('policy-session-absolute-timeout').value),
         loginThrottleWindowMinutes: Number(document.getElementById('policy-login-window').value),
         loginThrottleMaxFailures: Number(document.getElementById('policy-login-failures').value),
+        localAuthEnabled: document.getElementById('policy-local-auth-enabled').value === 'true',
+        passwordMinLength: Number(document.getElementById('policy-password-min-length').value),
+        passwordRequireUppercase: document.getElementById('policy-password-require-uppercase').value === 'true',
+        passwordRequireNumber: document.getElementById('policy-password-require-number').value === 'true',
+        passwordRequireSymbol: document.getElementById('policy-password-require-symbol').value === 'true',
         auditExportMaxRows: Number(document.getElementById('policy-audit-max-rows').value),
         backupRetentionDays: Number(document.getElementById('policy-backup-retention').value)
       });
@@ -12288,6 +20989,141 @@ document.getElementById('run-sentiment-analysis-btn')?.addEventListener('click',
     }
   });
 
+  document.getElementById('run-compound-query-report-btn')?.addEventListener('click', async () => {
+    try {
+      await runCompoundQueryAndReport();
+    } catch (err) {
+      document.getElementById('compound-workbench-status').textContent = `Run + report failed: ${err.message}`;
+    }
+  });
+
+  document.getElementById('apply-compound-operator-family-btn')?.addEventListener('click', () => {
+    applyCompoundOperatorFamilyPreset();
+  });
+
+  document.getElementById('apply-compound-report-profile-btn')?.addEventListener('click', () => {
+    applyCompoundReportProfilePreset();
+  });
+
+  document.getElementById('compound-operator-family')?.addEventListener('change', () => {
+    renderCompoundWorkbenchStatus();
+  });
+
+  document.getElementById('compound-report-profile-select')?.addEventListener('change', () => {
+    renderCompoundWorkbenchStatus();
+  });
+
+  document.getElementById('compound-template-select')?.addEventListener('change', () => {
+    renderCompoundPresetControls();
+    renderCompoundWorkbenchStatus();
+  });
+
+  document.getElementById('apply-compound-template-btn')?.addEventListener('click', () => {
+    applySelectedCompoundTemplate();
+    renderCompoundWorkbenchStatus();
+  });
+
+  document.getElementById('run-compound-template-btn')?.addEventListener('click', async () => {
+    try {
+      if (applySelectedCompoundTemplate()) {
+        await runCompoundQuery();
+      }
+    } catch (err) {
+      document.getElementById('compound-template-summary').textContent = `Template run failed: ${err.message}`;
+    }
+  });
+
+  document.getElementById('compound-preset-select')?.addEventListener('change', (event) => {
+    const preset = getCompoundPresetById(event.target.value);
+    const labelEl = document.getElementById('compound-preset-label');
+    if (preset && labelEl) labelEl.value = preset.label;
+    renderCompoundWorkbenchStatus();
+  });
+
+  document.getElementById('save-compound-preset-btn')?.addEventListener('click', async () => {
+    try {
+      await saveCompoundClausePreset();
+    } catch (err) {
+      document.getElementById('compound-preset-summary').textContent = `Preset save failed: ${err.message}`;
+    }
+  });
+
+  document.getElementById('apply-compound-preset-btn')?.addEventListener('click', () => {
+    applySelectedCompoundPreset();
+    renderCompoundWorkbenchStatus();
+  });
+
+  document.getElementById('run-compound-preset-btn')?.addEventListener('click', async () => {
+    try {
+      if (applySelectedCompoundPreset()) {
+        await runCompoundQuery();
+      }
+    } catch (err) {
+      document.getElementById('compound-preset-summary').textContent = `Preset run failed: ${err.message}`;
+    }
+  });
+
+  document.getElementById('delete-compound-preset-btn')?.addEventListener('click', async () => {
+    try {
+      await deleteSelectedCompoundPreset();
+      renderCompoundWorkbenchStatus();
+    } catch (err) {
+      document.getElementById('compound-preset-summary').textContent = `Preset delete failed: ${err.message}`;
+    }
+  });
+
+  [
+    'compound-query-operator',
+    'compound-query-case-sensitive',
+    'compound-query-max-rows',
+    'compound-workbench-group-operator',
+    'compound-workbench-min-groups-matched',
+    'compound-default-linguistic-mode',
+    'compound-default-fuzzy-distance',
+    'compound-default-proximity-within',
+    'compound-default-proximity-ordered',
+    'compound-workbench-group-1-operator',
+    'compound-workbench-group-1-min-clauses',
+    'compound-workbench-group-2-operator',
+    'compound-workbench-group-2-min-clauses',
+    'compound-workbench-group-3-operator',
+    'compound-workbench-group-3-min-clauses',
+    'query-report-top-sources',
+    'query-report-top-cases',
+    'query-report-top-codes',
+    'query-report-excerpt-limit',
+    'query-report-include-sources',
+    'query-report-include-cases',
+    'query-report-include-excerpts',
+    'query-report-sort-by'
+  ].forEach((id) => {
+    document.getElementById(id)?.addEventListener('change', () => {
+      renderCompoundWorkbenchStatus();
+    });
+  });
+
+  for (let clauseIndex = 1; clauseIndex <= COMPOUND_QUERY_CLAUSE_COUNT; clauseIndex += 1) {
+    [
+      `compound-clause-${clauseIndex}-enabled`,
+      `compound-clause-${clauseIndex}-group`,
+      `compound-clause-${clauseIndex}-field`,
+      `compound-clause-${clauseIndex}-operator`,
+      `compound-clause-${clauseIndex}-negate`,
+      `compound-clause-${clauseIndex}-value`,
+      `compound-clause-${clauseIndex}-linguistic-mode`,
+      `compound-clause-${clauseIndex}-fuzzy-distance`,
+      `compound-clause-${clauseIndex}-proximity-within`,
+      `compound-clause-${clauseIndex}-proximity-ordered`
+    ].forEach((id) => {
+      document.getElementById(id)?.addEventListener('change', () => {
+        renderCompoundWorkbenchStatus();
+      });
+      document.getElementById(id)?.addEventListener('input', () => {
+        renderCompoundWorkbenchStatus();
+      });
+    });
+  }
+
   document.getElementById('run-code-cooccurrence-btn')?.addEventListener('click', async () => {
     try {
       await runCodeCooccurrence();
@@ -12330,6 +21166,26 @@ document.getElementById('run-sentiment-analysis-btn')?.addEventListener('click',
 
   document.getElementById('forecast-method')?.addEventListener('change', () => {
     renderForecasting();
+  });
+
+  document.getElementById('decision-tree-method')?.addEventListener('change', () => {
+    renderDecisionTree();
+  });
+
+  document.getElementById('glm-family')?.addEventListener('change', () => {
+    renderGeneralLinearModel();
+  });
+
+  document.getElementById('survival-time-field')?.addEventListener('change', () => {
+    renderSurvivalAnalysis();
+  });
+
+  document.getElementById('survival-event-field')?.addEventListener('change', () => {
+    renderSurvivalAnalysis();
+  });
+
+  document.getElementById('survival-group-field')?.addEventListener('change', () => {
+    renderSurvivalAnalysis();
   });
 
   document.getElementById('filter-operator')?.addEventListener('change', (event) => {
@@ -12431,8 +21287,15 @@ document.getElementById('run-sentiment-analysis-btn')?.addEventListener('click',
 
 document.getElementById('workspace-source-select')?.addEventListener('change', (event) => {
   state.activeSourceId = event.target.value || null;
+  resetDiarizationQaWorkspaceState({ preserveFilters: true });
   state.workspaceSelectedItemKey = null;
   state.workspaceEditingSyncLinkId = null;
+  state.workspaceFocusedSyncLinkId = null;
+  updateFocusedSyncLinkIndicator();
+  const alignStatus = document.getElementById('workspace-sync-align-status');
+  if (alignStatus) {
+    alignStatus.textContent = 'Auto-align shifts transcript sync links back to their segment anchors when drift is high.';
+  }
   const segmentSourceEl = document.getElementById('segment-source-id');
   if (segmentSourceEl) segmentSourceEl.value = state.activeSourceId ?? '';
   void loadMediaTimelineForActiveSource().then(() => {
@@ -12477,10 +21340,51 @@ document.getElementById('workspace-cancel-sync-edit-btn')?.addEventListener('cli
 });
 document.getElementById('workspace-refresh-media-timeline-btn')?.addEventListener('click', async () => {
   await loadMediaTimelineForActiveSource();
-  renderMediaTimeline();
+  renderAll();
 });
 document.getElementById('workspace-queue-transcription-btn')?.addEventListener('click', async () => {
   await queueTranscriptionJob();
+});
+document.getElementById('workspace-auto-align-sync-btn')?.addEventListener('click', async () => {
+  await autoAlignTranscriptSyncLinks();
+});
+document.getElementById('workspace-media-code-focused-row-btn')?.addEventListener('click', async () => {
+  const link = getFocusedSyncLink();
+  if (!link) {
+    window.alert('Select a transcript row first.');
+    return;
+  }
+  await codeTranscriptSyncLink(link.id, { contextSeconds: 0 });
+});
+document.getElementById('workspace-media-code-context-row-btn')?.addEventListener('click', async () => {
+  const link = getFocusedSyncLink();
+  if (!link) {
+    window.alert('Select a transcript row first.');
+    return;
+  }
+  const contextSeconds = parseBoundedInput(document.getElementById('workspace-media-context-seconds')?.value, 5, 0, 120, 2);
+  await codeTranscriptSyncLink(link.id, { contextSeconds });
+});
+document.getElementById('workspace-media-save-focused-range-btn')?.addEventListener('click', async () => {
+  await saveFocusedSyncLinkRangeEdits();
+});
+document.getElementById('workspace-media-split-focused-row-btn')?.addEventListener('click', async () => {
+  await splitFocusedSyncLinkAtPlayhead();
+});
+document.getElementById('workspace-media-merge-next-row-btn')?.addEventListener('click', async () => {
+  await mergeFocusedSyncLinkWithNext();
+});
+document.getElementById('workspace-media-nudge-left-btn')?.addEventListener('click', async () => {
+  await nudgeFocusedSyncLinkRange(-250);
+});
+document.getElementById('workspace-media-nudge-right-btn')?.addEventListener('click', async () => {
+  await nudgeFocusedSyncLinkRange(250);
+});
+document.getElementById('workspace-apply-diarization-btn')?.addEventListener('click', async () => {
+  await applyDiarizationCorrection();
+});
+document.getElementById('workspace-run-diarization-qa-btn')?.addEventListener('click', async () => {
+  await runDiarizationQaReview();
 });
 
   document.getElementById('save-transform-btn')?.addEventListener('click', async () => {
@@ -12539,16 +21443,19 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
 
   document.getElementById('report-select-all-btn')?.addEventListener('click', () => {
     state.compiledReportIncludedViews = getAllCompiledReportViews();
+    persistOutputWorkspaceState();
     renderCompiledReportControls();
   });
 
   document.getElementById('report-clear-all-btn')?.addEventListener('click', () => {
     state.compiledReportIncludedViews = getAllCompiledReportViews();
+    persistOutputWorkspaceState();
     renderCompiledReportControls();
   });
 
   document.getElementById('report-committee-pack-btn')?.addEventListener('click', () => {
     state.compiledReportIncludedViews = getDefaultCommitteePackViews();
+    persistOutputWorkspaceState();
     renderCompiledReportControls();
     if (state.selectedProjectId) {
       state.compiledReportPresets = [
@@ -12594,6 +21501,74 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
     renderCompiledReportPresets();
   });
 
+  document.getElementById('output-style-template-select')?.addEventListener('change', (event) => {
+    const next = String(event.target.value || 'classic');
+    state.compiledReportStyleTemplate = getOutputStyleTemplateDefinition(next).key;
+    persistOutputWorkspaceState();
+    applyOutputStyleTemplateToWorkspace();
+    renderAll();
+  });
+
+  document.getElementById('save-output-pack-btn')?.addEventListener('click', () => {
+    if (!state.selectedProjectId) {
+      window.alert('Select a project first.');
+      return;
+    }
+    const input = document.getElementById('output-pack-label');
+    const label = String(input?.value ?? '').trim() || `Output pack ${new Date().toLocaleString()}`;
+    const pack = buildOutputPackPayload(label);
+    state.outputPacks = [
+      pack,
+      ...state.outputPacks.filter((entry) => entry.label !== label)
+    ].slice(0, 25);
+    persistOutputPacks();
+    if (input) input.value = '';
+    renderOutputPackList();
+  });
+
+  document.getElementById('export-output-pack-btn')?.addEventListener('click', () => {
+    try {
+      const input = document.getElementById('output-pack-label');
+      const label = String(input?.value ?? '').trim() || 'Output pack';
+      exportOutputPackJson(buildOutputPackPayload(label));
+    } catch (err) {
+      window.alert(`Output pack export failed: ${err.message}`);
+    }
+  });
+
+  document.getElementById('import-output-pack-btn')?.addEventListener('click', () => {
+    const input = document.getElementById('output-pack-import-input');
+    input?.click();
+  });
+
+  document.getElementById('output-pack-import-input')?.addEventListener('change', async (event) => {
+    const input = event.target instanceof HTMLInputElement ? event.target : null;
+    const file = input?.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const payload = {
+        ...parsed,
+        id: parsed?.id || `output-pack-${Date.now()}`,
+        label: String(parsed?.label ?? file.name).replace(/\.json$/i, '').trim() || 'Imported output pack'
+      };
+      const applied = applyOutputPack(payload);
+      if (applied) {
+        state.outputPacks = [
+          payload,
+          ...state.outputPacks.filter((entry) => entry.id !== payload.id)
+        ].slice(0, 25);
+        persistOutputPacks();
+        renderOutputPackList();
+      }
+    } catch (err) {
+      window.alert(`Output pack import failed: ${err.message}`);
+    } finally {
+      if (input) input.value = '';
+    }
+  });
+
   document.getElementById('print-output-btn')?.addEventListener('click', () => {
     window.print();
   });
@@ -12602,6 +21577,7 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
     if (!state.selectedProjectId) { alert('Select a project first.'); return; }
     const fields = getSelectedValues(document.getElementById('reliability-fields'));
     const subscales = parseReliabilitySubscales(document.getElementById('reliability-subscales')?.value ?? '');
+    const stratifyField = document.getElementById('reliability-stratify-field')?.value?.trim() || '';
     if (fields.length < 2) {
       alert('Choose at least two numeric fields for reliability analysis.');
       return;
@@ -12612,7 +21588,8 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       recodes: state.selectedDatasetRecodes,
       analysis: getAnalysisOptionsPayload(),
       fields,
-      subscales
+      subscales,
+      stratifyField
     });
     state.reliabilityResult = env.data.reliability;
     setLastQuantAnalysis('reliability', {
@@ -12620,7 +21597,8 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       recodes: cloneJson(state.selectedDatasetRecodes),
       analysisOptions: getAnalysisOptionsPayload(),
       fields,
-      subscales
+      subscales,
+      stratifyField
     });
     renderReliability();
   });
@@ -12631,6 +21609,8 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
     const factorCount = Number(document.getElementById('factor-count')?.value || 0);
     const rotationValue = document.getElementById('factor-rotation')?.value;
     const rotation = rotationValue === 'varimax' || rotationValue === 'promax' ? rotationValue : 'none';
+    const extractionValue = document.getElementById('factor-extraction')?.value;
+    const extraction = extractionValue === 'principal_axis' ? 'principal_axis' : 'principal_components';
     if (fields.length < 2) {
       alert('Choose at least two numeric fields for factor analysis.');
       return;
@@ -12642,7 +21622,8 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       analysis: getAnalysisOptionsPayload(),
       fields,
       factorCount,
-      rotation
+      rotation,
+      extraction
     });
     state.factorAnalysisResult = env.data.factorAnalysis;
     setLastQuantAnalysis('factor_analysis', {
@@ -12651,9 +21632,124 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       analysisOptions: getAnalysisOptionsPayload(),
       fields,
       factorCount,
-      rotation
+      rotation,
+      extraction
     });
     renderFactorAnalysis();
+  });
+
+  document.getElementById('run-optimal-scaling-btn')?.addEventListener('click', async () => {
+    if (!state.selectedProjectId) { alert('Select a project first.'); return; }
+    const fields = getSelectedValues(document.getElementById('optimal-scaling-fields'));
+    const anchorField = document.getElementById('optimal-scaling-anchor-field')?.value || '';
+    const maxIterations = Number(document.getElementById('optimal-scaling-max-iterations')?.value || 20);
+    if (fields.length < 2) {
+      alert('Choose at least two categorical fields for categories / optimal scaling.');
+      return;
+    }
+    const env = await postJson(`${API_BASE}/optimal-scaling`, {
+      projectId: state.selectedProjectId,
+      filters: state.selectedDatasetFilters,
+      recodes: state.selectedDatasetRecodes,
+      analysis: getAnalysisOptionsPayload(),
+      fields,
+      anchorField: anchorField || undefined,
+      maxIterations
+    });
+    state.optimalScalingResult = env.data.optimalScaling;
+    setLastQuantAnalysis('optimal_scaling', {
+      filters: cloneJson(state.selectedDatasetFilters),
+      recodes: cloneJson(state.selectedDatasetRecodes),
+      analysisOptions: getAnalysisOptionsPayload(),
+      fields,
+      anchorField: anchorField || undefined,
+      maxIterations
+    });
+    renderAll();
+  });
+
+  document.getElementById('run-conjoint-analysis-btn')?.addEventListener('click', async () => {
+    if (!state.selectedProjectId) { alert('Select a project first.'); return; }
+    const profileField = document.getElementById('conjoint-profile-field')?.value || '';
+    const ratingField = document.getElementById('conjoint-rating-field')?.value || '';
+    const attributeFields = getSelectedValues(document.getElementById('conjoint-attribute-fields'));
+    const holdoutFraction = Number(document.getElementById('conjoint-holdout-fraction')?.value || 0.2);
+    if (!ratingField || attributeFields.length === 0) {
+      alert('Choose a rating field and at least one attribute field for conjoint analysis.');
+      return;
+    }
+    const env = await postJson(`${API_BASE}/conjoint-analysis`, {
+      projectId: state.selectedProjectId,
+      filters: state.selectedDatasetFilters,
+      recodes: state.selectedDatasetRecodes,
+      analysis: getAnalysisOptionsPayload(),
+      profileField: profileField || undefined,
+      ratingField,
+      attributeFields,
+      holdoutFraction
+    });
+    state.conjointResult = env.data.conjointAnalysis;
+    setLastQuantAnalysis('conjoint_analysis', {
+      filters: cloneJson(state.selectedDatasetFilters),
+      recodes: cloneJson(state.selectedDatasetRecodes),
+      analysisOptions: getAnalysisOptionsPayload(),
+      profileField: profileField || undefined,
+      ratingField,
+      attributeFields,
+      holdoutFraction
+    });
+    renderAll();
+  });
+
+  document.getElementById('run-direct-marketing-btn')?.addEventListener('click', async () => {
+    if (!state.selectedProjectId) { alert('Select a project first.'); return; }
+    const customerField = document.getElementById('direct-marketing-customer-field')?.value || '';
+    const responseField = document.getElementById('direct-marketing-response-field')?.value || '';
+    const recencyField = document.getElementById('direct-marketing-recency-field')?.value || '';
+    const frequencyField = document.getElementById('direct-marketing-frequency-field')?.value || '';
+    const monetaryField = document.getElementById('direct-marketing-monetary-field')?.value || '';
+    if (!responseField && !recencyField && !frequencyField && !monetaryField) {
+      alert('Choose at least one response/recency/frequency/monetary field.');
+      return;
+    }
+    const scoringWeights = {
+      recency: Number(document.getElementById('direct-marketing-weight-recency')?.value || 0.15),
+      frequency: Number(document.getElementById('direct-marketing-weight-frequency')?.value || 0.25),
+      monetary: Number(document.getElementById('direct-marketing-weight-monetary')?.value || 0.2),
+      response: Number(document.getElementById('direct-marketing-weight-response')?.value || 0.4)
+    };
+    const env = await postJson(`${API_BASE}/direct-marketing`, {
+      projectId: state.selectedProjectId,
+      filters: state.selectedDatasetFilters,
+      recodes: state.selectedDatasetRecodes,
+      analysis: getAnalysisOptionsPayload(),
+      customerField: customerField || undefined,
+      responseField: responseField || undefined,
+      recencyField: recencyField || undefined,
+      frequencyField: frequencyField || undefined,
+      monetaryField: monetaryField || undefined,
+      scoringWeights
+    });
+    state.directMarketingResult = env.data.directMarketing;
+    setLastQuantAnalysis('direct_marketing', {
+      filters: cloneJson(state.selectedDatasetFilters),
+      recodes: cloneJson(state.selectedDatasetRecodes),
+      analysisOptions: getAnalysisOptionsPayload(),
+      customerField: customerField || undefined,
+      responseField: responseField || undefined,
+      recencyField: recencyField || undefined,
+      frequencyField: frequencyField || undefined,
+      monetaryField: monetaryField || undefined,
+      scoringWeights
+    });
+    renderAll();
+  });
+
+  document.getElementById('conjoint-profile-field')?.addEventListener('change', () => {
+    renderConjointAnalysis();
+  });
+  document.getElementById('conjoint-rating-field')?.addEventListener('change', () => {
+    renderConjointAnalysis();
   });
 
   document.getElementById('run-forecasting-btn')?.addEventListener('click', async () => {
@@ -12661,9 +21757,11 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
     const timeField = document.getElementById('forecast-time-field')?.value;
     const valueField = document.getElementById('forecast-value-field')?.value;
     const horizon = Number(document.getElementById('forecast-horizon')?.value || 3);
-    const method = document.getElementById('forecast-method')?.value || 'linear_trend';
+    const method = document.getElementById('forecast-method')?.value || 'auto';
     const movingAverageWindow = Number(document.getElementById('forecast-window')?.value || 3);
     const smoothingAlpha = Number(document.getElementById('forecast-alpha')?.value || 0.35);
+    const smoothingBeta = Number(document.getElementById('forecast-beta')?.value || 0.2);
+    const dampingPhi = Number(document.getElementById('forecast-damping')?.value || 0.95);
     if (!timeField || !valueField || timeField === valueField) {
       alert('Choose different time/order and numeric value fields for forecasting.');
       return;
@@ -12678,7 +21776,9 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       horizon,
       method,
       movingAverageWindow,
-      smoothingAlpha
+      smoothingAlpha,
+      smoothingBeta,
+      dampingPhi
     });
     state.forecastingResult = env.data.forecast;
     setLastQuantAnalysis('forecasting', {
@@ -12690,7 +21790,9 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       horizon,
       method,
       movingAverageWindow,
-      smoothingAlpha
+      smoothingAlpha,
+      smoothingBeta,
+      dampingPhi
     });
     renderAll();
   });
@@ -12727,6 +21829,11 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
     const targetField = document.getElementById('decision-tree-target-field')?.value;
     const predictorFields = getSelectedValues(document.getElementById('decision-tree-predictor-fields'));
     const maxDepth = Number(document.getElementById('decision-tree-depth')?.value || 3);
+    const method = document.getElementById('decision-tree-method')?.value === 'random_forest' ? 'random_forest' : 'cart';
+    const criterion = document.getElementById('decision-tree-criterion')?.value === 'entropy' ? 'entropy' : 'gini';
+    const treeCount = Number(document.getElementById('decision-tree-count')?.value || 60);
+    const minSamplesLeaf = Number(document.getElementById('decision-tree-min-leaf')?.value || 2);
+    const featureSubsetCount = Number(document.getElementById('decision-tree-feature-subset')?.value || 0);
     if (!targetField || predictorFields.length === 0 || predictorFields.includes(targetField)) {
       alert('Choose a target field and different predictor fields for the decision tree.');
       return;
@@ -12738,7 +21845,12 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       analysis: getAnalysisOptionsPayload(),
       targetField,
       predictorFields,
-      maxDepth
+      maxDepth,
+      method,
+      criterion,
+      treeCount,
+      minSamplesLeaf,
+      featureSubsetCount
     });
     state.decisionTreeResult = env.data.decisionTree;
     setLastQuantAnalysis('decision_tree', {
@@ -12747,7 +21859,12 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       analysisOptions: getAnalysisOptionsPayload(),
       targetField,
       predictorFields,
-      maxDepth
+      maxDepth,
+      method,
+      criterion,
+      treeCount,
+      minSamplesLeaf,
+      featureSubsetCount
     });
     renderAll();
   });
@@ -12758,6 +21875,13 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
     const factorFields = getSelectedValues(document.getElementById('glm-factor-fields'));
     const covariateFields = getSelectedValues(document.getElementById('glm-covariate-fields'))
       .filter((field) => !factorFields.includes(field));
+    const family = document.getElementById('glm-family')?.value === 'binomial'
+      ? 'binomial'
+      : document.getElementById('glm-family')?.value === 'poisson'
+        ? 'poisson'
+        : 'gaussian';
+    const linkRaw = document.getElementById('glm-link')?.value;
+    const link = linkRaw === 'log' || linkRaw === 'logit' || linkRaw === 'identity' ? linkRaw : 'identity';
     if (!dependentField || (factorFields.length === 0 && covariateFields.length === 0)) {
       alert('Choose a dependent field and at least one factor or covariate.');
       return;
@@ -12773,7 +21897,9 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       analysis: getAnalysisOptionsPayload(),
       dependentField,
       factorFields,
-      covariateFields
+      covariateFields,
+      family,
+      link
     });
     state.generalLinearModelResult = env.data.generalLinearModel;
     setLastQuantAnalysis('general_linear_model', {
@@ -12782,7 +21908,9 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       analysisOptions: getAnalysisOptionsPayload(),
       dependentField,
       factorFields,
-      covariateFields
+      covariateFields,
+      family,
+      link
     });
     renderAll();
   });
@@ -12826,8 +21954,10 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
     const dependentField = document.getElementById('gee-dependent-field')?.value;
     const predictorFields = getSelectedValues(document.getElementById('gee-predictor-fields'));
     const clusterField = document.getElementById('gee-cluster-field')?.value;
-    const family = document.getElementById('gee-family')?.value === 'binomial' ? 'binomial' : 'gaussian';
-    const correlation = document.getElementById('gee-correlation')?.value === 'exchangeable' ? 'exchangeable' : 'independence';
+    const familyValue = document.getElementById('gee-family')?.value;
+    const family = familyValue === 'binomial' ? 'binomial' : familyValue === 'poisson' ? 'poisson' : 'gaussian';
+    const correlationValue = document.getElementById('gee-correlation')?.value;
+    const correlation = correlationValue === 'exchangeable' ? 'exchangeable' : correlationValue === 'ar1' ? 'ar1' : 'independence';
     if (!dependentField || !clusterField || predictorFields.length === 0) {
       alert('Choose dependent field, cluster field, and at least one predictor.');
       return;
@@ -12890,6 +22020,7 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
     const timeField = document.getElementById('survival-time-field')?.value;
     const eventField = document.getElementById('survival-event-field')?.value;
     const groupField = document.getElementById('survival-group-field')?.value || undefined;
+    const predictorFields = getSelectedValues(document.getElementById('survival-predictor-fields'));
     if (!timeField || !eventField || timeField === eventField) {
       alert('Choose different time and event fields.');
       return;
@@ -12901,7 +22032,8 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       analysis: getAnalysisOptionsPayload(),
       timeField,
       eventField,
-      groupField
+      groupField,
+      predictorFields
     });
     state.survivalAnalysisResult = env.data.survivalAnalysis;
     setLastQuantAnalysis('survival_analysis', {
@@ -12910,7 +22042,8 @@ document.getElementById('workspace-queue-transcription-btn')?.addEventListener('
       analysisOptions: getAnalysisOptionsPayload(),
       timeField,
       eventField,
-      groupField
+      groupField,
+      predictorFields
     });
     renderAll();
   });
@@ -13253,6 +22386,52 @@ document.getElementById('run-merge-review-btn')?.addEventListener('click', async
     document.getElementById('merge-review-summary').textContent = `Merge review failed: ${err.message}`;
   }
 });
+document.getElementById('merge-review-status-filter')?.addEventListener('change', async (event) => {
+  state.mergeReviewStatusFilter = event.target.value || 'open';
+  try {
+    await runMergeReview();
+  } catch (err) {
+    document.getElementById('merge-review-summary').textContent = `Merge review failed: ${err.message}`;
+  }
+});
+document.getElementById('create-coding-assignment-btn')?.addEventListener('click', async () => {
+  try {
+    await createCodingAssignmentTask();
+  } catch (err) {
+    document.getElementById('coding-assignment-summary').textContent = `Assignment create failed: ${err.message}`;
+  }
+});
+document.getElementById('coding-assignment-form')?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await createCodingAssignmentTask();
+  } catch (err) {
+    document.getElementById('coding-assignment-summary').textContent = `Assignment create failed: ${err.message}`;
+  }
+});
+document.getElementById('create-coding-calibration-btn')?.addEventListener('click', async () => {
+  try {
+    await createCodingCalibrationSession();
+  } catch (err) {
+    document.getElementById('coding-calibration-summary').textContent = `Calibration create failed: ${err.message}`;
+  }
+});
+document.getElementById('coding-calibration-form')?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await createCodingCalibrationSession();
+  } catch (err) {
+    document.getElementById('coding-calibration-summary').textContent = `Calibration create failed: ${err.message}`;
+  }
+});
+document.getElementById('save-merge-governance-btn')?.addEventListener('click', async () => {
+  try {
+    await saveMergeGovernancePolicy();
+    document.getElementById('merge-governance-summary').textContent = 'Merge governance policy updated.';
+  } catch (err) {
+    document.getElementById('merge-governance-summary').textContent = `Policy update failed: ${err.message}`;
+  }
+});
 
   document.getElementById('run-query-report-btn')?.addEventListener('click', async () => {
     try {
@@ -13267,11 +22446,20 @@ document.getElementById('run-merge-review-btn')?.addEventListener('click', async
     const label = document.getElementById('qual-query-label').value.trim();
     const mode = document.getElementById('qual-query-mode').value;
     if (!label) { alert('Enter a label for the qualitative query.'); return; }
+    const inputs = readQualitativeQueryInputs();
+    const basePayload = mode === 'compound_query_preset' || mode === 'compound_query' || mode === 'compound_workbench'
+      ? normalizeCompoundQueryConfig(inputs)
+      : inputs;
+    const queryPayload = {
+      ...basePayload,
+      ...normalizeQualitativeReportProfile(inputs),
+      ...normalizeSavedQualQueryControls(inputs)
+    };
     await postJson(`${API_BASE}/saved-qualitative-queries`, {
       projectId: state.selectedProjectId,
       label,
       mode,
-      query: readQualitativeQueryInputs()
+      query: queryPayload
     });
     document.getElementById('qual-query-label').value = '';
     await loadSelectedProjectData();
@@ -13283,6 +22471,73 @@ document.getElementById('run-merge-review-btn')?.addEventListener('click', async
       await importReferences();
     } catch (err) {
       document.getElementById('reference-import-result').textContent = `Reference import failed: ${err.message}`;
+    }
+  });
+  document.getElementById('save-reference-btn')?.addEventListener('click', async () => {
+    try {
+      await saveReferenceEditor();
+    } catch (err) {
+      document.getElementById('reference-editor-status').textContent = `Reference save failed: ${err.message}`;
+    }
+  });
+  document.getElementById('clear-reference-btn')?.addEventListener('click', () => {
+    clearReferenceEditor();
+  });
+  document.getElementById('export-references-btn')?.addEventListener('click', async () => {
+    try {
+      await exportReferences();
+    } catch (err) {
+      document.getElementById('reference-import-result').textContent = `Reference export failed: ${err.message}`;
+    }
+  });
+  document.getElementById('reference-collection-create-btn')?.addEventListener('click', async () => {
+    try {
+      await createReferenceCollection();
+    } catch (err) {
+      document.getElementById('reference-collection-status').textContent = `Collection create failed: ${err.message}`;
+    }
+  });
+  document.getElementById('reference-collection-add-btn')?.addEventListener('click', async () => {
+    try {
+      await addReferenceToCollection();
+      document.getElementById('reference-collection-status').textContent = 'Reference added to collection.';
+    } catch (err) {
+      document.getElementById('reference-collection-status').textContent = `Collection update failed: ${err.message}`;
+    }
+  });
+  document.getElementById('reference-link-add-btn')?.addEventListener('click', async () => {
+    try {
+      await addReferenceLink();
+      document.getElementById('reference-link-status').textContent = 'Reference link saved.';
+    } catch (err) {
+      document.getElementById('reference-link-status').textContent = `Reference link failed: ${err.message}`;
+    }
+  });
+  document.getElementById('reference-refresh-duplicates-btn')?.addEventListener('click', async () => {
+    try {
+      await refreshReferenceDuplicates();
+    } catch (err) {
+      document.getElementById('reference-import-result').textContent = `Duplicate refresh failed: ${err.message}`;
+    }
+  });
+  document.getElementById('reference-search-text')?.addEventListener('input', async () => {
+    await runReferenceFilters();
+  });
+  document.getElementById('reference-filter-format')?.addEventListener('change', async () => {
+    await runReferenceFilters();
+  });
+  document.getElementById('reference-filter-collection-id')?.addEventListener('change', async () => {
+    await runReferenceFilters();
+  });
+  document.getElementById('reference-link-target-type')?.addEventListener('change', () => {
+    renderReferenceLibrary();
+  });
+  document.getElementById('reference-editor-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      await saveReferenceEditor();
+    } catch (err) {
+      document.getElementById('reference-editor-status').textContent = `Reference save failed: ${err.message}`;
     }
   });
 
@@ -13328,29 +22583,99 @@ document.getElementById('run-merge-review-btn')?.addEventListener('click', async
     renderAll();
   });
 
+  document.getElementById('exact-test-type')?.addEventListener('change', () => {
+    renderExactTest();
+  });
+  document.getElementById('exact-row-field')?.addEventListener('change', () => {
+    renderExactTest();
+  });
+  document.getElementById('exact-column-field')?.addEventListener('change', () => {
+    renderExactTest();
+  });
+  document.getElementById('exact-binary-field')?.addEventListener('change', () => {
+    renderExactTest();
+  });
+  document.getElementById('exact-before-field')?.addEventListener('change', () => {
+    renderExactTest();
+  });
+  document.getElementById('exact-after-field')?.addEventListener('change', () => {
+    renderExactTest();
+  });
+  document.getElementById('exact-sign-before-field')?.addEventListener('change', () => {
+    renderExactTest();
+  });
+  document.getElementById('exact-sign-after-field')?.addEventListener('change', () => {
+    renderExactTest();
+  });
+
   document.getElementById('run-exact-test-btn')?.addEventListener('click', async () => {
     if (!state.selectedProjectId) { alert('Select a project first.'); return; }
-    const rowField = document.getElementById('exact-row-field')?.value;
-    const columnField = document.getElementById('exact-column-field')?.value;
-    if (!rowField || !columnField || rowField === columnField) {
-      alert('Choose two different fields for exact testing.');
-      return;
+    const testTypeValue = document.getElementById('exact-test-type')?.value;
+    const testType = ['binomial', 'mcnemar', 'sign'].includes(testTypeValue) ? testTypeValue : 'fisher_2x2';
+    const payload = {
+      testType,
+      rowField: undefined,
+      columnField: undefined,
+      binaryField: undefined,
+      successValue: undefined,
+      nullProportion: undefined,
+      beforeField: undefined,
+      afterField: undefined,
+      positiveValue: undefined
+    };
+    if (testType === 'fisher_2x2') {
+      const rowField = document.getElementById('exact-row-field')?.value;
+      const columnField = document.getElementById('exact-column-field')?.value;
+      if (!rowField || !columnField || rowField === columnField) {
+        alert('Choose two different fields for Fisher exact testing.');
+        return;
+      }
+      payload.rowField = rowField;
+      payload.columnField = columnField;
+    } else if (testType === 'binomial') {
+      const binaryField = document.getElementById('exact-binary-field')?.value;
+      if (!binaryField) {
+        alert('Choose a binary field for binomial exact testing.');
+        return;
+      }
+      payload.binaryField = binaryField;
+      payload.successValue = parseExactInputValue(document.getElementById('exact-success-value')?.value);
+      const nullProportion = Number(document.getElementById('exact-null-proportion')?.value || 0.5);
+      payload.nullProportion = Number.isFinite(nullProportion) ? nullProportion : 0.5;
+    } else if (testType === 'mcnemar') {
+      const beforeField = document.getElementById('exact-before-field')?.value;
+      const afterField = document.getElementById('exact-after-field')?.value;
+      if (!beforeField || !afterField || beforeField === afterField) {
+        alert('Choose two different paired fields for McNemar exact testing.');
+        return;
+      }
+      payload.beforeField = beforeField;
+      payload.afterField = afterField;
+      payload.positiveValue = parseExactInputValue(document.getElementById('exact-positive-value')?.value);
+    } else {
+      const beforeField = document.getElementById('exact-sign-before-field')?.value;
+      const afterField = document.getElementById('exact-sign-after-field')?.value;
+      if (!beforeField || !afterField || beforeField === afterField) {
+        alert('Choose two different paired numeric fields for sign testing.');
+        return;
+      }
+      payload.beforeField = beforeField;
+      payload.afterField = afterField;
     }
+
     const env = await postJson(`${API_BASE}/exact-tests`, {
       projectId: state.selectedProjectId,
       filters: state.selectedDatasetFilters,
       recodes: state.selectedDatasetRecodes,
       analysis: getAnalysisOptionsPayload(),
-      rowField,
-      columnField
+      ...payload
     });
     state.exactTestResult = env.data.exactTest;
     setLastQuantAnalysis('exact_test', {
       filters: cloneJson(state.selectedDatasetFilters),
       recodes: cloneJson(state.selectedDatasetRecodes),
       analysisOptions: getAnalysisOptionsPayload(),
-      rowField,
-      columnField
+      ...payload
     });
     renderAll();
   });
@@ -13506,9 +22831,17 @@ document.getElementById('run-merge-review-btn')?.addEventListener('click', async
 
   document.getElementById('export-query-report-word-btn')?.addEventListener('click', async () => {
     try {
-      await downloadReportPackage('query-report', 'docx');
+      await downloadReportPackage('query-report', 'docx', buildQueryReportParams());
     } catch (err) {
       window.alert(`Query report Word export failed: ${err.message}`);
+    }
+  });
+
+  document.getElementById('export-compound-workbench-word-btn')?.addEventListener('click', async () => {
+    try {
+      await downloadReportPackage('compound-workbench', 'docx', buildCompoundWorkbenchExportParams());
+    } catch (err) {
+      window.alert(`Compound workbench Word export failed: ${err.message}`);
     }
   });
 
@@ -13525,6 +22858,14 @@ document.getElementById('run-merge-review-btn')?.addEventListener('click', async
       await downloadReportPackage('framework-matrix', 'xlsx');
     } catch (err) {
       window.alert(`Framework Excel export failed: ${err.message}`);
+    }
+  });
+
+  document.getElementById('export-framework-pdf-btn')?.addEventListener('click', async () => {
+    try {
+      await downloadReportPackage('framework-matrix', 'pdf');
+    } catch (err) {
+      window.alert(`Framework PDF export failed: ${err.message}`);
     }
   });
 
@@ -13554,6 +22895,62 @@ document.getElementById('run-merge-review-btn')?.addEventListener('click', async
       window.alert(`Inter-rater Word export failed: ${err.message}`);
     }
   });
+
+  document.getElementById('export-merge-review-word-btn')?.addEventListener('click', async () => {
+    try {
+      const settings = getMergeReviewSettings();
+      await downloadReportPackage('merge-review', 'docx', {
+        minCoderCount: String(settings.minCoderCount),
+        minConfidenceSpread: String(settings.minConfidenceSpread),
+        maxRows: String(settings.maxRows)
+      });
+    } catch (err) {
+      window.alert(`Merge review Word export failed: ${err.message}`);
+    }
+  });
+
+  document.getElementById('export-merge-review-excel-btn')?.addEventListener('click', async () => {
+    try {
+      const settings = getMergeReviewSettings();
+      await downloadReportPackage('merge-review', 'xlsx', {
+        minCoderCount: String(settings.minCoderCount),
+        minConfidenceSpread: String(settings.minConfidenceSpread),
+        maxRows: String(settings.maxRows)
+      });
+    } catch (err) {
+      window.alert(`Merge review Excel export failed: ${err.message}`);
+    }
+  });
+
+  document.getElementById('export-committee-pack-word-btn')?.addEventListener('click', async () => {
+    try {
+      await downloadReportPackage('committee-review-pack', 'docx', buildCommitteePackParams());
+    } catch (err) {
+      window.alert(`Committee pack Word export failed: ${err.message}`);
+    }
+  });
+
+  document.getElementById('export-committee-pack-pdf-btn')?.addEventListener('click', async () => {
+    try {
+      await downloadReportPackage('committee-review-pack', 'pdf', buildCommitteePackParams());
+    } catch (err) {
+      window.alert(`Committee pack PDF export failed: ${err.message}`);
+    }
+  });
+
+  document.getElementById('export-committee-pack-json-btn')?.addEventListener('click', async () => {
+    try {
+      await downloadReportPackage('committee-review-pack', 'json', buildCommitteePackParams());
+    } catch (err) {
+      window.alert(`Committee pack JSON export failed: ${err.message}`);
+    }
+  });
+
+  ['committee-pack-label', 'committee-pack-style-template', 'committee-pack-appendix-mode', 'committee-pack-query-ids', 'committee-pack-appendix-row-limit']
+    .forEach((id) => {
+      document.getElementById(id)?.addEventListener('input', renderCommitteePackSummary);
+      document.getElementById(id)?.addEventListener('change', renderCommitteePackSummary);
+    });
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -13567,6 +22964,10 @@ async function refreshPage() {
   await loadRecentOfficeArtifacts();
   await loadExternalSqlProfiles();
   await loadExternalSqlImportJobs();
+  await loadOfficeConnectorProfiles();
+  await loadOfficeConnectorJobs();
+  await loadReferenceConnectorProfiles();
+  await loadReferenceConnectorJobs();
   if (state.selectedSqlProfileId) {
     await loadExternalSqlTables(state.selectedSqlProfileId);
   }

@@ -1,8 +1,9 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import dotenv from 'dotenv';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
@@ -31,13 +32,14 @@ import {
 } from '@mu/auth';
 import { buildEvidenceSummaryPrompt, scoreEvidenceCoverage } from '@mu/ai';
 import { buildCodeByCaseView, buildCodeClusters, buildCodeCodeMatrix, buildCodeCooccurrence, buildCodeHierarchy, buildCodingComparison, buildCompoundQuery, buildConceptMap, buildFrameworkMatrix, buildInterRaterSummary, buildMapVisualization, buildMatrixCoding, buildPatternAutocode, buildQualitativeQueryReport, buildSentimentAnalysis, buildTextSearch, buildWordCloud, buildWordFrequency, retrieveEvidence, buildEvidenceExport } from '@mu/qual-engine';
-import { analyzeBootstrap, analyzeClusterAnalysis, analyzeCompareMeans, analyzeComplexSamples, analyzeCorrelation, analyzeCrosstab, analyzeDecisionTree, analyzeExactTest, analyzeFactorAnalysis, analyzeForecast, analyzeGeneralizedEstimatingEquation, analyzeGeneralLinearModel, analyzeMissingValues, analyzeMixedModel, analyzeNeuralNetwork, analyzeNonparametricComparison, analyzePairedTTest, analyzeRegression, analyzeReliability, analyzeRepeatedMeasures, analyzeSurvivalAnalysis, analyzeTTest, buildCaseDataset, buildCustomTable, buildImputationPlan, describeDataset, runSyntax, transformDataset } from '@mu/quant-engine';
+import { analyzeBootstrap, analyzeClusterAnalysis, analyzeCompareMeans, analyzeComplexSamples, analyzeConjoint, analyzeCorrelation, analyzeCrosstab, analyzeDecisionTree, analyzeDirectMarketing, analyzeExactTest, analyzeFactorAnalysis, analyzeForecast, analyzeGeneralizedEstimatingEquation, analyzeGeneralLinearModel, analyzeMissingValues, analyzeMixedModel, analyzeNeuralNetwork, analyzeNonparametricComparison, analyzeOptimalScaling, analyzePairedTTest, analyzeRegression, analyzeReliability, analyzeRepeatedMeasures, analyzeSurvivalAnalysis, analyzeTTest, analyzeWithMultipleImputation, buildCaseDataset, buildCustomTable, buildImputationPlan, buildMultipleImputationPlan, describeDataset, runSyntax, transformDataset } from '@mu/quant-engine';
 import { fail, ok } from '@mu/shared-types';
 import { deleteProjectArtifacts, ensureDirectory, listProjectArtifacts, pruneProjectArtifacts, readStoredArtifact, resolveStorageRoot, writeProjectArtifact, writeProjectArtifactBytes } from '@mu/storage';
 import { formatAuditActionLabel } from '@mu/ui';
 import {
   buildAppendixReport,
   buildChatHistoryReport,
+  buildCommitteeReviewPackReport,
   buildCodeCodeMatrixReport,
   buildCodeCooccurrenceReport,
   buildEvidenceReport,
@@ -46,7 +48,9 @@ import {
   buildCodingComparisonReport,
   buildProjectCodebookReport,
   buildQualitativeQuerySummaryReport,
+  buildCompoundWorkbenchReport,
   buildFrameworkMatrixSummaryReport,
+  buildMergeReviewReport,
   buildInterRaterSummaryReport,
   renderAuditEventsXlsx,
   renderDatasetXlsx,
@@ -69,11 +73,25 @@ import {
   insertAuditEvent, listAuditEvents, getGovernancePolicy, updateGovernancePolicy,
   listProjectMessages, insertProjectMessage,
   listSavedAnalysisJobs, insertSavedAnalysisJob, deleteSavedAnalysisJob,
+  listDatasetFieldMetadata, replaceDatasetFieldMetadata, getProjectDatasetSettings, upsertProjectDatasetSettings,
   listExternalSqlProfiles, insertExternalSqlProfile, deleteExternalSqlProfile,
-  listExternalSqlImportJobs, insertExternalSqlImportJob, deleteExternalSqlImportJob, deleteCasesImportedBySqlJob,
+  listExternalSqlImportJobs, insertExternalSqlImportJob, deleteExternalSqlImportJob, deleteCasesImportedBySqlJob, deleteCasesImportedByOfficeFile,
   listDueExternalSqlImportJobs, updateExternalSqlImportJobRunState, updateExternalSqlImportJobSchedule,
+  listOfficeConnectorProfiles, insertOfficeConnectorProfile, deleteOfficeConnectorProfile,
+  listOfficeConnectorJobs, insertOfficeConnectorJob, deleteOfficeConnectorJob,
+  listDueOfficeConnectorJobs, updateOfficeConnectorJobSchedule, updateOfficeConnectorJobRunState,
+  listReferenceConnectorProfiles, insertReferenceConnectorProfile, deleteReferenceConnectorProfile,
+  listReferenceConnectorJobs, insertReferenceConnectorJob, deleteReferenceConnectorJob,
+  listDueReferenceConnectorJobs, updateReferenceConnectorJobSchedule, updateReferenceConnectorJobRunState,
   listSavedTransforms, insertSavedTransform, deleteSavedTransform,
   listSavedQualitativeQueries, insertSavedQualitativeQuery, deleteSavedQualitativeQuery,
+  listCodingAssignments, getCodingAssignment, insertCodingAssignment, updateCodingAssignment, deleteCodingAssignment,
+  listCodingCalibrationSessions, getCodingCalibrationSession, insertCodingCalibrationSession, updateCodingCalibrationSession,
+  getCodingConflictTriage, listCodingConflictTriages, upsertCodingConflictTriage,
+  getCodingMergeGovernancePolicy, upsertCodingMergeGovernancePolicy,
+  upsertCodingMergeApproval, listCodingMergeApprovals, markCodingMergeApprovalsUsed, revokeCodingMergeApproval,
+  insertCodingConflictResolution, listCodingConflictResolutions, listLatestCodingConflictResolutions, getCodingConflictResolution,
+  archiveCodeApplications, listArchivedCodeApplicationsByResolution, restoreArchivedCodeApplications,
   insertSource, listSources, updateSourceContent,
   insertCode, listCodes,
   insertVariable, listVariables,
@@ -82,19 +100,25 @@ import {
   insertAttribute, listAttributes,
   insertAnnotation, listAnnotations, updateAnnotation, deleteAnnotation,
   insertRelationship, listRelationships, updateRelationship, deleteRelationship,
-  insertProjectReference, listProjectReferences, deleteProjectReference,
+  insertProjectReference, listProjectReferences, getProjectReference, updateProjectReference, deleteProjectReference,
+  listProjectReferenceLinks, insertProjectReferenceLink, updateProjectReferenceLink, deleteProjectReferenceLink,
+  listProjectReferenceCollections, insertProjectReferenceCollection, updateProjectReferenceCollection, deleteProjectReferenceCollection,
+  listProjectReferenceCollectionItems, insertProjectReferenceCollectionItem, deleteProjectReferenceCollectionItem, removeReferenceFromCollection,
+  listProjectReferenceMergeEvents, insertProjectReferenceMergeEvent, mergeProjectReferences, listProjectReferenceDuplicateCandidates,
   insertTranscriptSyncLink, listTranscriptSyncLinks, updateTranscriptSyncLink, deleteTranscriptSyncLink, deleteTranscriptSyncLinksByMediaSource,
   insertTranscriptionJob, listTranscriptionJobs, updateTranscriptionJob,
-  insertSegment, listSegments,
-  insertCodeApplication, listCodeApplications,
+  insertSegment, listSegments, updateSegment, deleteSegment,
+  insertCodeApplication, listCodeApplications, deleteCodeApplication,
   listTraceLinks, deriveTraceLinks,
   getProjectSummary, getProjectActivity
 } from './db.js';
-import { parseImportedFile } from './imports.js';
-import { parseBibtexReferences, parseRisReferences } from './references.js';
+import { parseImportedFile, type ImportedFileDraft, type ImportedSpssMetadataDraft } from './imports.js';
+import { writeSpssBuffer } from './spss-bridge.js';
+import { parseBibtexReferences, parseCslJsonReferences, parseRisReferences, serializeBibtexReferences, serializeCslJsonReferences, serializeRisReferences } from './references.js';
 
 const apiModuleDir = path.dirname(fileURLToPath(import.meta.url));
 const runtimeRoot = process.cwd();
+const workspaceRoot = path.resolve(apiModuleDir, '../../..');
 
 for (const envPath of [
   path.resolve(runtimeRoot, '.env'),
@@ -113,6 +137,7 @@ declare module '@fastify/session' {
     username?: string;
     role?: 'student' | 'professor';
     lastActivityAt?: number;
+    sessionIssuedAt?: number;
     oidcState?: string;
     oidcCodeVerifier?: string;
   }
@@ -122,12 +147,30 @@ const server = Fastify({ logger: true });
 const isPortableMode = process.env.MU_PORTABLE === '1' || process.env.MU_PORTABLE === 'true';
 const shouldServeWeb = isPortableMode || process.env.MU_SERVE_WEB === '1' || process.env.MU_SERVE_WEB === 'true';
 let IDLE_TIMEOUT_MS = 90 * 60 * 1000;
+let SESSION_ABSOLUTE_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 const ACCOUNT_CLEANUP_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const SQL_IMPORT_SCHEDULER_INTERVAL_MS = 60 * 1000;
+const OFFICE_CONNECTOR_SCHEDULER_INTERVAL_MS = 60 * 1000;
+const REFERENCE_CONNECTOR_SCHEDULER_INTERVAL_MS = 60 * 1000;
 let LOGIN_THROTTLE_WINDOW_MS = 15 * 60 * 1000;
 let LOGIN_THROTTLE_MAX_FAILURES = 5;
 let AUDIT_EXPORT_MAX_ROWS = 2000;
 let BACKUP_RETENTION_DAYS = 30;
+let LOCAL_AUTH_ENABLED = true;
+let PASSWORD_MIN_LENGTH = 10;
+let PASSWORD_REQUIRE_UPPERCASE = false;
+let PASSWORD_REQUIRE_NUMBER = false;
+let PASSWORD_REQUIRE_SYMBOL = false;
+const AXION_SIDECAR_DEFAULT_URL = 'http://127.0.0.1:8765';
+const AXION_SIDECAR_STARTUP_TIMEOUT_MS = 8000;
+const AXION_SIDECAR_REQUEST_TIMEOUT_MS = 6000;
+const isAxionSidecarEnabled = ['1', 'true'].includes(String(process.env.MU_AXION_SIDECAR_ENABLED ?? '').toLowerCase());
+const isAxionSidecarAutostartEnabled = isAxionSidecarEnabled && !['0', 'false'].includes(String(process.env.MU_AXION_SIDECAR_AUTOSTART ?? '1').toLowerCase());
+const isAxionPrefilterEnabled = isAxionSidecarEnabled && !['0', 'false'].includes(String(process.env.MU_AXION_PREFILTER_ENABLED ?? '1').toLowerCase());
+const isAxionQeccGuardEnabled = isAxionSidecarEnabled && !['0', 'false'].includes(String(process.env.MU_AXION_QECC_GUARD_ENABLED ?? '1').toLowerCase());
+let axionSidecarChild: ChildProcess | null = null;
+let axionSidecarManagedByApi = false;
+let axionSidecarStartedAt: string | null = null;
 const isProduction = process.env.NODE_ENV === 'production';
 const failedLoginAttempts = new Map<string, { count: number; lockedUntil: number; windowStartedAt: number }>();
 
@@ -141,6 +184,11 @@ const ATTRIBUTE_TARGET_TYPES = new Set(['case', 'source'] as const);
 const ANNOTATION_TARGET_TYPES = new Set(['project', 'source', 'segment', 'code', 'case'] as const);
 const RELATIONSHIP_TARGET_TYPES = new Set(['source', 'segment', 'code', 'case'] as const);
 const RELATIONSHIP_TYPES = new Set(['see_also', 'supports', 'contradicts', 'follows_up'] as const);
+const REFERENCE_TARGET_TYPES = new Set(['source', 'segment', 'memo', 'code', 'case', 'annotation'] as const);
+const REFERENCE_SOURCE_FORMATS = new Set(['manual', 'ris', 'bibtex', 'csljson'] as const);
+const REFERENCE_COLLECTION_COLOR_TOKENS = new Set([
+  'blue', 'teal', 'green', 'amber', 'red', 'violet', 'slate'
+] as const);
 
 function parseSourceKind(value: unknown): 'document' | 'transcript' | 'audio' | 'video' | 'pdf' | 'dataset' | 'survey' {
   return typeof value === 'string' && SOURCE_KINDS.has(value as (typeof SOURCE_KINDS extends Set<infer T> ? T : never))
@@ -200,6 +248,257 @@ function parseRelationshipType(value: unknown): 'see_also' | 'supports' | 'contr
   return typeof value === 'string' && RELATIONSHIP_TYPES.has(value as (typeof RELATIONSHIP_TYPES extends Set<infer T> ? T : never))
     ? value as 'see_also' | 'supports' | 'contradicts' | 'follows_up'
     : 'see_also';
+}
+
+function parseReferenceTargetType(value: unknown): 'source' | 'segment' | 'memo' | 'code' | 'case' | 'annotation' {
+  return typeof value === 'string' && REFERENCE_TARGET_TYPES.has(value as (typeof REFERENCE_TARGET_TYPES extends Set<infer T> ? T : never))
+    ? value as 'source' | 'segment' | 'memo' | 'code' | 'case' | 'annotation'
+    : 'source';
+}
+
+function parseReferenceSourceFormat(value: unknown): 'manual' | 'ris' | 'bibtex' | 'csljson' {
+  return typeof value === 'string' && REFERENCE_SOURCE_FORMATS.has(value as (typeof REFERENCE_SOURCE_FORMATS extends Set<infer T> ? T : never))
+    ? value as 'manual' | 'ris' | 'bibtex' | 'csljson'
+    : 'manual';
+}
+
+function parseReferenceCollectionColorToken(value: unknown): 'blue' | 'teal' | 'green' | 'amber' | 'red' | 'violet' | 'slate' {
+  return typeof value === 'string' && REFERENCE_COLLECTION_COLOR_TOKENS.has(value as (typeof REFERENCE_COLLECTION_COLOR_TOKENS extends Set<infer T> ? T : never))
+    ? value as 'blue' | 'teal' | 'green' | 'amber' | 'red' | 'violet' | 'slate'
+    : 'blue';
+}
+
+function parseStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item ?? '').trim()).filter(Boolean);
+  }
+  if (typeof value === 'string' && value.trim()) {
+    return value
+      .split(/[;,]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function parseOptionalYear(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  const year = Math.trunc(parsed);
+  if (year < 1000 || year > 3000) return null;
+  return year;
+}
+
+function parseCodingAssignmentStatus(value: unknown): 'todo' | 'in_progress' | 'blocked' | 'done' {
+  return value === 'in_progress' || value === 'blocked' || value === 'done'
+    ? value
+    : 'todo';
+}
+
+function parseCodingAssignmentPriority(value: unknown): 'low' | 'normal' | 'high' {
+  return value === 'low' || value === 'high'
+    ? value
+    : 'normal';
+}
+
+function parseOptionalIsoDate(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return null;
+  return new Date(parsed).toISOString();
+}
+
+function parseProvidedIsoDate(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return null;
+  return new Date(parsed).toISOString();
+}
+
+function assertOptimisticTimestamp(
+  reply: FastifyReply,
+  options: {
+    expectedValue: unknown;
+    currentValue: string;
+    label: string;
+  }
+): boolean {
+  const expected = parseProvidedIsoDate(options.expectedValue);
+  if (expected === undefined) return true;
+  if (expected === null) {
+    reply.status(400).send(fail('INVALID', `${options.label} expected timestamp must be a valid ISO date when provided.`));
+    return false;
+  }
+  if (expected !== options.currentValue) {
+    reply.status(409).send(fail('CONFLICT', `${options.label} was updated by another user. Refresh and retry.`));
+    return false;
+  }
+  return true;
+}
+
+function parseMergeConflictStatusFilter(value: unknown): 'open' | 'resolved' | 'deferred' | 'reopened' | 'restored' | 'all' {
+  return value === 'resolved' || value === 'deferred' || value === 'reopened' || value === 'restored' || value === 'all'
+    ? value
+    : 'open';
+}
+
+function parseCodingCalibrationStatus(value: unknown): 'draft' | 'running' | 'completed' | 'archived' {
+  return value === 'running' || value === 'completed' || value === 'archived'
+    ? value
+    : 'draft';
+}
+
+function parseCodingConflictTriageStatus(value: unknown): 'open' | 'in_review' | 'ready_to_merge' | 'deferred' | 'escalated' | 'resolved' {
+  return value === 'in_review' || value === 'ready_to_merge' || value === 'deferred' || value === 'escalated' || value === 'resolved'
+    ? value
+    : 'open';
+}
+
+function parseCodingConflictTriageSeverity(value: unknown): 'low' | 'medium' | 'high' | 'critical' {
+  return value === 'low' || value === 'high' || value === 'critical'
+    ? value
+    : 'medium';
+}
+
+const AUDIO_UPLOAD_EXTENSIONS = new Set([
+  '.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.webm'
+]);
+const VIDEO_UPLOAD_EXTENSIONS = new Set([
+  '.mp4', '.mov', '.m4v', '.avi', '.mkv', '.webm'
+]);
+
+const EXTENSION_CONTENT_TYPE_OVERRIDES: Record<string, string> = {
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
+  '.ogg': 'audio/ogg',
+  '.opus': 'audio/opus',
+  '.webm': 'audio/webm',
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.m4v': 'video/x-m4v',
+  '.avi': 'video/x-msvideo',
+  '.mkv': 'video/x-matroska'
+};
+
+const OFFICE_CONNECTOR_DEFAULT_EXTENSIONS = ['.docx', '.xlsx', '.xls', '.csv', '.pdf', '.txt', '.md', '.sav', '.zsav'];
+const OFFICE_CONNECTOR_SUPPORTED_EXTENSIONS = new Set(OFFICE_CONNECTOR_DEFAULT_EXTENSIONS);
+const OFFICE_CONNECTOR_MAX_FILES = 5000;
+const REFERENCE_CONNECTOR_MAX_ROWS = 500;
+
+function inferContentTypeFromFilename(filename: string, fallback = 'application/octet-stream'): string {
+  const extension = path.extname(filename).toLowerCase();
+  return EXTENSION_CONTENT_TYPE_OVERRIDES[extension] ?? fallback;
+}
+
+function inferMediaUploadSpec(filename: string, mimetype: string): {
+  sourceKind: 'audio' | 'video';
+  contentType: string;
+  extension: string;
+} | null {
+  const extension = path.extname(filename).toLowerCase();
+  const normalizedMime = String(mimetype || '').toLowerCase();
+  const looksAudio = AUDIO_UPLOAD_EXTENSIONS.has(extension) || normalizedMime.startsWith('audio/');
+  const looksVideo = VIDEO_UPLOAD_EXTENSIONS.has(extension) || normalizedMime.startsWith('video/');
+  if (!looksAudio && !looksVideo) return null;
+  const sourceKind: 'audio' | 'video' = looksVideo ? 'video' : 'audio';
+  const contentType = inferContentTypeFromFilename(filename, normalizedMime || (sourceKind === 'video' ? 'video/mp4' : 'audio/mpeg'));
+  const normalizedExtension = extension.replace(/^\./, '') || (sourceKind === 'video' ? 'mp4' : 'mp3');
+  return { sourceKind, contentType, extension: normalizedExtension };
+}
+
+function parseArtifactReference(contentUrl: string | null | undefined): string | null {
+  const raw = typeof contentUrl === 'string' ? contentUrl.trim() : '';
+  if (!raw) return null;
+  const prefixes = ['artifact://', 'storage://'];
+  for (const prefix of prefixes) {
+    if (raw.toLowerCase().startsWith(prefix)) {
+      return raw.slice(prefix.length).replace(/^\/+/, '').replaceAll('\\', '/');
+    }
+  }
+  return null;
+}
+
+function inferFilenameFromSource(source: { id: string; title: string; contentType: string; contentUrl: string | null }): string {
+  const artifactPath = parseArtifactReference(source.contentUrl);
+  if (artifactPath) {
+    const base = path.basename(artifactPath).trim();
+    if (base) return base;
+  }
+  const fromUrl = typeof source.contentUrl === 'string'
+    ? (() => {
+      try {
+        const parsed = new URL(source.contentUrl);
+        return path.basename(parsed.pathname || '').trim();
+      } catch {
+        return '';
+      }
+    })()
+    : '';
+  if (fromUrl) return fromUrl;
+  const titleStem = source.title.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || source.id;
+  const extensionEntry = Object.entries(EXTENSION_CONTENT_TYPE_OVERRIDES)
+    .find(([, contentType]) => contentType.toLowerCase() === source.contentType.toLowerCase());
+  const extension = extensionEntry?.[0] ?? '.bin';
+  return `${titleStem}${extension}`;
+}
+
+async function resolveMediaSourceBytes(source: {
+  id: string;
+  contentType: string;
+  contentUrl: string | null;
+  title: string;
+}): Promise<{ bytes: Buffer; contentType: string; filename: string; origin: 'artifact' | 'remote' | 'local_file' }> {
+  const filename = inferFilenameFromSource(source);
+  const contentType = source.contentType || inferContentTypeFromFilename(filename);
+  const artifactPath = parseArtifactReference(source.contentUrl);
+  if (artifactPath) {
+    const bytes = await readStoredArtifact(artifactPath);
+    return { bytes, contentType, filename, origin: 'artifact' };
+  }
+
+  const urlValue = typeof source.contentUrl === 'string' ? source.contentUrl.trim() : '';
+  if (!urlValue) {
+    throw new Error('The selected media source does not include a media URL or artifact reference.');
+  }
+
+  if (/^https?:\/\//i.test(urlValue)) {
+    const response = await fetch(urlValue);
+    if (!response.ok) {
+      const bodyText = await response.text().catch(() => '');
+      throw new Error(`Unable to fetch media source URL (${response.status}). ${bodyText.slice(0, 240)}`.trim());
+    }
+    const remoteType = (response.headers.get('content-type') ?? '').split(';')[0]?.trim();
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length === 0) {
+      throw new Error('Fetched media source is empty.');
+    }
+    return {
+      bytes,
+      contentType: remoteType || contentType,
+      filename,
+      origin: 'remote'
+    };
+  }
+
+  if (/^[a-zA-Z]:[\\/]/.test(urlValue) || urlValue.startsWith('\\\\')) {
+    if (!existsSync(urlValue)) {
+      throw new Error('Local media file path was not found on disk.');
+    }
+    const bytes = await readFile(urlValue);
+    return {
+      bytes: Buffer.from(bytes),
+      contentType: inferContentTypeFromFilename(urlValue, contentType),
+      filename: path.basename(urlValue) || filename,
+      origin: 'local_file'
+    };
+  }
+
+  throw new Error('Unsupported media source URL. Use http(s), an artifact:// path, or a local file path.');
 }
 
 function resolveAllowedOrigins(): string[] {
@@ -269,9 +568,13 @@ await server.register(cors, {
   }
 });
 await server.register(fastifyCookie);
+const multipartFileSizeLimitBytes = Math.max(
+  25 * 1024 * 1024,
+  Number.parseInt(String(process.env.MU_UPLOAD_FILE_SIZE_LIMIT_MB ?? '250'), 10) * 1024 * 1024 || (250 * 1024 * 1024)
+);
 await server.register(fastifyMultipart, {
   limits: {
-    fileSize: 25 * 1024 * 1024,
+    fileSize: multipartFileSizeLimitBytes,
     files: 10
   }
 });
@@ -314,10 +617,21 @@ if (shouldServeWeb) {
 await initDatabase();
 const initialGovernancePolicy = await getGovernancePolicy();
 IDLE_TIMEOUT_MS = initialGovernancePolicy.idleTimeoutMinutes * 60 * 1000;
+SESSION_ABSOLUTE_TIMEOUT_MS = initialGovernancePolicy.sessionAbsoluteTimeoutMinutes * 60 * 1000;
 LOGIN_THROTTLE_WINDOW_MS = initialGovernancePolicy.loginThrottleWindowMinutes * 60 * 1000;
 LOGIN_THROTTLE_MAX_FAILURES = initialGovernancePolicy.loginThrottleMaxFailures;
 AUDIT_EXPORT_MAX_ROWS = initialGovernancePolicy.auditExportMaxRows;
 BACKUP_RETENTION_DAYS = initialGovernancePolicy.backupRetentionDays;
+LOCAL_AUTH_ENABLED = initialGovernancePolicy.localAuthEnabled;
+PASSWORD_MIN_LENGTH = initialGovernancePolicy.passwordMinLength;
+PASSWORD_REQUIRE_UPPERCASE = initialGovernancePolicy.passwordRequireUppercase;
+PASSWORD_REQUIRE_NUMBER = initialGovernancePolicy.passwordRequireNumber;
+PASSWORD_REQUIRE_SYMBOL = initialGovernancePolicy.passwordRequireSymbol;
+await ensureAxionSidecarStarted();
+
+server.addHook('onClose', async () => {
+  shutdownAxionSidecar();
+});
 
 function scheduleExpiredAccountCleanup(): void {
   const timer = setInterval(async () => {
@@ -337,6 +651,8 @@ function scheduleExpiredAccountCleanup(): void {
 scheduleExpiredAccountCleanup();
 
 let sqlImportSchedulerRunning = false;
+let officeConnectorSchedulerRunning = false;
+let referenceConnectorSchedulerRunning = false;
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 
@@ -347,6 +663,12 @@ async function assertAuth(request: FastifyRequest, reply: FastifyReply): Promise
     return null;
   }
   await deleteExpiredUsers();
+  const sessionIssuedAt = request.session.sessionIssuedAt ?? request.session.lastActivityAt ?? Date.now();
+  if (Date.now() - sessionIssuedAt > SESSION_ABSOLUTE_TIMEOUT_MS) {
+    await request.session.destroy();
+    await reply.status(401).send(fail('SESSION_EXPIRED', `Session expired after ${Math.round(SESSION_ABSOLUTE_TIMEOUT_MS / 60000)} minutes total duration.`));
+    return null;
+  }
   const lastActivityAt = request.session.lastActivityAt ?? Date.now();
   if (Date.now() - lastActivityAt > IDLE_TIMEOUT_MS) {
     await request.session.destroy();
@@ -366,6 +688,7 @@ function setSessionUser(request: FastifyRequest, user: { id: string; username: s
   request.session.userId = user.id;
   request.session.username = user.username;
   request.session.role = user.role;
+  request.session.sessionIssuedAt = Date.now();
   request.session.lastActivityAt = Date.now();
 }
 
@@ -389,6 +712,19 @@ async function assertProjectOwner(userId: string, projectId: string, reply: Fast
     return false;
   }
   return true;
+}
+
+async function assertProjectOwnerOrProfessor(request: FastifyRequest, userId: string, projectId: string, reply: FastifyReply): Promise<boolean> {
+  const membership = await getProjectMembership(userId, projectId);
+  if (!membership) {
+    await reply.status(403).send(fail('FORBIDDEN', 'You do not have access to this project.'));
+    return false;
+  }
+  if (membership.role === 'owner' || request.session.role === 'professor') {
+    return true;
+  }
+  await reply.status(403).send(fail('FORBIDDEN', 'Owner or professor access is required.'));
+  return false;
 }
 
 async function assertProjectExportAccess(request: FastifyRequest, userId: string, projectId: string, reply: FastifyReply): Promise<boolean> {
@@ -421,7 +757,203 @@ function parseIsoDate(value: unknown): string | undefined {
   return new Date(parsed).toISOString();
 }
 
-function validateDeploymentEnvironment(): Array<{ severity: 'error' | 'warning'; key: string; message: string }> {
+function validatePasswordAgainstPolicy(password: string): string | null {
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    return `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`;
+  }
+  if (PASSWORD_REQUIRE_UPPERCASE && !/[A-Z]/.test(password)) {
+    return 'Password must include at least one uppercase letter.';
+  }
+  if (PASSWORD_REQUIRE_NUMBER && !/\d/.test(password)) {
+    return 'Password must include at least one number.';
+  }
+  if (PASSWORD_REQUIRE_SYMBOL && !/[^\w\s]/.test(password)) {
+    return 'Password must include at least one symbol.';
+  }
+  return null;
+}
+
+type OidcReadinessSnapshot = {
+  enabled: boolean;
+  providerName: string;
+  issuerConfigured: boolean;
+  clientIdConfigured: boolean;
+  redirectUriConfigured: boolean;
+  expectedAudienceConfigured: boolean;
+  allowUserInfoFallback: boolean;
+  missingFields: string[];
+  redirectUriCheck: {
+    valid: boolean;
+    redirectOrigin: string | null;
+    appOrigin: string | null;
+    hostMatchesAppOrigin: boolean | null;
+    callbackPath: string | null;
+    message: string;
+  };
+  audienceCheck: {
+    mode: 'missing' | 'client_id_default' | 'explicit';
+    status: 'pass' | 'warn' | 'fail';
+    expectedAudience: string | null;
+    message: string;
+  };
+  discovery?: {
+    ok: boolean;
+    issuer?: string;
+    authorizationEndpoint?: string;
+    tokenEndpoint?: string;
+    userInfoEndpoint?: string | null;
+    jwksUri?: string | null;
+    issuerMatchesConfig?: boolean;
+    secureEndpoints?: boolean | null;
+    probeElapsedMs?: number;
+    errorCode?: 'timeout' | 'network' | 'response';
+    error?: string;
+  };
+};
+
+function normalizeOidcIssuer(value: string): string {
+  return value.trim().replace(/\/+$/, '');
+}
+
+function classifyOidcProbeError(message: string): 'timeout' | 'network' | 'response' {
+  const lowered = message.toLowerCase();
+  if (lowered.includes('timeout') || lowered.includes('aborted')) {
+    return 'timeout';
+  }
+  if (lowered.includes('status') || lowered.includes('missing required endpoints')) {
+    return 'response';
+  }
+  return 'network';
+}
+
+async function buildOidcReadiness(probe = false): Promise<OidcReadinessSnapshot> {
+  const missingFields: string[] = [];
+  if (!oidcConfig.issuer) missingFields.push('OIDC_ISSUER');
+  if (!oidcConfig.clientId) missingFields.push('OIDC_CLIENT_ID');
+  if (!oidcConfig.redirectUri) missingFields.push('OIDC_REDIRECT_URI');
+  if (!oidcConfig.expectedAudience) missingFields.push('OIDC_EXPECTED_AUDIENCE');
+  const configuredAppOrigin = (process.env.APP_ORIGIN ?? '').trim();
+  let redirectOrigin: string | null = null;
+  let callbackPath: string | null = null;
+  let redirectUriValid = true;
+  let hostMatchesAppOrigin: boolean | null = null;
+  let redirectMessage = 'Redirect URI not configured.';
+  if (oidcConfig.redirectUri) {
+    try {
+      const redirectUrl = new URL(oidcConfig.redirectUri);
+      redirectOrigin = redirectUrl.origin;
+      callbackPath = redirectUrl.pathname;
+      redirectMessage = `Redirect URI parses (${redirectUrl.origin}${redirectUrl.pathname}).`;
+      if (configuredAppOrigin) {
+        try {
+          const appOriginUrl = new URL(configuredAppOrigin);
+          hostMatchesAppOrigin = appOriginUrl.origin === redirectUrl.origin;
+          if (!hostMatchesAppOrigin) {
+            redirectMessage = `Redirect origin ${redirectUrl.origin} differs from APP_ORIGIN ${appOriginUrl.origin}.`;
+          }
+        } catch {
+          hostMatchesAppOrigin = null;
+          redirectMessage = 'APP_ORIGIN is invalid, so redirect host alignment cannot be verified.';
+        }
+      }
+    } catch {
+      redirectUriValid = false;
+      redirectMessage = 'OIDC_REDIRECT_URI is not a valid absolute URL.';
+    }
+  }
+
+  const explicitAudience = (process.env.OIDC_EXPECTED_AUDIENCE ?? '').trim();
+  const audienceValue = oidcConfig.expectedAudience?.trim() || '';
+  const audienceCheck: OidcReadinessSnapshot['audienceCheck'] = !audienceValue
+    ? {
+        mode: 'missing',
+        status: 'fail',
+        expectedAudience: null,
+        message: 'Expected audience is missing; set OIDC_EXPECTED_AUDIENCE for strict ID token checks.'
+      }
+    : explicitAudience
+      ? {
+          mode: 'explicit',
+          status: 'pass',
+          expectedAudience: audienceValue,
+          message: `Expected audience is explicitly configured as ${audienceValue}.`
+        }
+      : {
+          mode: 'client_id_default',
+          status: 'warn',
+          expectedAudience: audienceValue,
+          message: 'Expected audience currently defaults to OIDC_CLIENT_ID; set OIDC_EXPECTED_AUDIENCE explicitly for cutover.'
+        };
+
+  const readiness: OidcReadinessSnapshot = {
+    enabled: oidcConfig.enabled,
+    providerName: oidcConfig.providerName,
+    issuerConfigured: Boolean(oidcConfig.issuer),
+    clientIdConfigured: Boolean(oidcConfig.clientId),
+    redirectUriConfigured: Boolean(oidcConfig.redirectUri),
+    expectedAudienceConfigured: Boolean(oidcConfig.expectedAudience),
+    allowUserInfoFallback: oidcConfig.allowUserInfoFallback,
+    missingFields,
+    redirectUriCheck: {
+      valid: redirectUriValid,
+      redirectOrigin,
+      appOrigin: configuredAppOrigin || null,
+      hostMatchesAppOrigin,
+      callbackPath,
+      message: redirectMessage
+    },
+    audienceCheck
+  };
+  if (!probe || !oidcConfig.enabled) return readiness;
+  const probeStartedAt = Date.now();
+  try {
+    const metadata = await fetchOidcProviderMetadata(oidcConfig);
+    const endpointList = [
+      metadata.authorization_endpoint,
+      metadata.token_endpoint,
+      metadata.userinfo_endpoint,
+      metadata.jwks_uri
+    ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+    const secureEndpoints = endpointList.length > 0
+      ? endpointList.every((value) => {
+          try {
+            return new URL(value).protocol === 'https:';
+          } catch {
+            return false;
+          }
+        })
+      : null;
+    readiness.discovery = {
+      ok: true,
+      issuer: metadata.issuer,
+      authorizationEndpoint: metadata.authorization_endpoint,
+      tokenEndpoint: metadata.token_endpoint,
+      userInfoEndpoint: metadata.userinfo_endpoint ?? null,
+      jwksUri: metadata.jwks_uri ?? null,
+      issuerMatchesConfig: normalizeOidcIssuer(metadata.issuer) === normalizeOidcIssuer(oidcConfig.issuer),
+      secureEndpoints,
+      probeElapsedMs: Math.max(0, Date.now() - probeStartedAt)
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'OIDC discovery probe failed.';
+    readiness.discovery = {
+      ok: false,
+      error: message,
+      errorCode: classifyOidcProbeError(message),
+      probeElapsedMs: Math.max(0, Date.now() - probeStartedAt)
+    };
+  }
+  return readiness;
+}
+
+function validateDeploymentEnvironment(policy: {
+  localAuthEnabled: boolean;
+  passwordMinLength: number;
+  passwordRequireUppercase: boolean;
+  passwordRequireNumber: boolean;
+  passwordRequireSymbol: boolean;
+  sessionAbsoluteTimeoutMinutes: number;
+}): Array<{ severity: 'error' | 'warning'; key: string; message: string }> {
   const issues: Array<{ severity: 'error' | 'warning'; key: string; message: string }> = [];
   const sessionSecret = process.env.SESSION_SECRET ?? '';
   if (sessionSecret.length < 32 || sessionSecret.includes('change-this-secret-key')) {
@@ -442,6 +974,64 @@ function validateDeploymentEnvironment(): Array<{ severity: 'error' | 'warning';
   }
   if (oidcConfig.enabled && !process.env.OIDC_REDIRECT_URI) {
     issues.push({ severity: 'error', key: 'OIDC_REDIRECT_URI', message: 'OIDC redirect URI is required when OIDC is enabled.' });
+  }
+  if (oidcConfig.enabled && !oidcConfig.expectedAudience) {
+    issues.push({ severity: 'error', key: 'OIDC_EXPECTED_AUDIENCE', message: 'OIDC_EXPECTED_AUDIENCE (or OIDC_CLIENT_ID) is required for verified ID token audience checks.' });
+  }
+  if (oidcConfig.enabled && oidcConfig.redirectUri) {
+    try {
+      const redirectUrl = new URL(oidcConfig.redirectUri);
+      if ((process.env.APP_ORIGIN ?? '').trim()) {
+        try {
+          const appOriginUrl = new URL(String(process.env.APP_ORIGIN));
+          if (appOriginUrl.origin !== redirectUrl.origin) {
+            issues.push({
+              severity: isProduction ? 'error' : 'warning',
+              key: 'OIDC_REDIRECT_URI_ORIGIN',
+              message: `OIDC redirect origin (${redirectUrl.origin}) does not match APP_ORIGIN (${appOriginUrl.origin}).`
+            });
+          }
+        } catch {
+          issues.push({
+            severity: 'warning',
+            key: 'OIDC_REDIRECT_URI_ORIGIN',
+            message: 'APP_ORIGIN is invalid, so OIDC redirect host alignment could not be checked.'
+          });
+        }
+      }
+      if (redirectUrl.pathname !== '/auth/oidc/callback') {
+        issues.push({
+          severity: 'warning',
+          key: 'OIDC_REDIRECT_URI_PATH',
+          message: `OIDC redirect path is ${redirectUrl.pathname}; expected /auth/oidc/callback for standard MU deployment.`
+        });
+      }
+    } catch {
+      issues.push({
+        severity: 'error',
+        key: 'OIDC_REDIRECT_URI_FORMAT',
+        message: 'OIDC_REDIRECT_URI must be a valid absolute URL.'
+      });
+    }
+  }
+  if (oidcConfig.enabled && !(process.env.OIDC_EXPECTED_AUDIENCE ?? '').trim()) {
+    issues.push({
+      severity: 'warning',
+      key: 'OIDC_EXPECTED_AUDIENCE_EXPLICIT',
+      message: 'OIDC_EXPECTED_AUDIENCE is not explicitly set; it currently defaults to OIDC_CLIENT_ID.'
+    });
+  }
+  if (!policy.localAuthEnabled && !oidcConfig.enabled) {
+    issues.push({ severity: 'error', key: 'AUTH_MODE', message: 'Local auth is disabled by policy but OIDC is not configured. Users would be locked out.' });
+  }
+  if (policy.passwordMinLength < 10) {
+    issues.push({ severity: 'warning', key: 'PASSWORD_MIN_LENGTH', message: 'Password minimum length below 10 is weaker than recommended for production deployments.' });
+  }
+  if (!policy.passwordRequireUppercase || !policy.passwordRequireNumber || !policy.passwordRequireSymbol) {
+    issues.push({ severity: 'warning', key: 'PASSWORD_COMPLEXITY', message: 'Password complexity requirements are not fully enabled (uppercase, number, symbol).' });
+  }
+  if (policy.sessionAbsoluteTimeoutMinutes > 24 * 60) {
+    issues.push({ severity: 'warning', key: 'SESSION_ABSOLUTE_TIMEOUT', message: 'Absolute session timeout exceeds 24 hours. Consider shorter sessions for deployment security.' });
   }
   const storageRoot = resolveStorageRoot();
   if (!existsSync(storageRoot)) {
@@ -502,6 +1092,295 @@ function resolveSqlIntegrationStatus() {
     externalSqlHookEnabled: ['1', 'true'].includes(String(process.env.MU_SQL_HOOK_ENABLED ?? '').toLowerCase()),
     externalSqlConfigured: Boolean(externalUrl),
     activeMode: isPortableMode ? 'embedded-portable' : 'postgres-runtime'
+  };
+}
+
+function resolveTranscriptionIntegrationStatus() {
+  const openAiKey = process.env.OPENAI_API_KEY?.trim() || '';
+  const openAiBaseUrl = process.env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1';
+  const openAiModel = process.env.MU_TRANSCRIPTION_OPENAI_MODEL?.trim() || 'gpt-4o-mini-transcribe';
+  return {
+    providerReady: Boolean(openAiKey),
+    provider: 'openai',
+    model: openAiModel,
+    baseUrlConfigured: Boolean(openAiBaseUrl),
+    fallbackProvider: 'internal'
+  };
+}
+
+type SemParityStrategy = 'integration_boundary' | 'native';
+
+function resolveSemIntegrationStatus() {
+  const rawStrategy = String(process.env.MU_SEM_PARITY_STRATEGY ?? 'integration_boundary').trim().toLowerCase();
+  const strategy: SemParityStrategy = rawStrategy === 'native' ? 'native' : 'integration_boundary';
+  const provider = String(process.env.MU_SEM_PROVIDER ?? 'amos').trim().toLowerCase() || 'amos';
+  const bridgeEnabled = ['1', 'true'].includes(String(process.env.MU_SEM_HOOK_ENABLED ?? '').toLowerCase());
+  const configuredAmosPath = process.env.MU_AMOS_EXECUTABLE_PATH?.trim() || '';
+  const configuredBridgeScriptPath = process.env.MU_SEM_BRIDGE_SCRIPT_PATH?.trim() || 'services/spss/sem_bridge.py';
+  const amosExecutablePath = findFirstExistingPath([
+    configuredAmosPath,
+    'C:\\Program Files\\IBM\\SPSS\\Amos\\Amos.exe',
+    'C:\\Program Files (x86)\\IBM\\SPSS\\Amos\\Amos.exe'
+  ]);
+  const bridgeScriptPath = findFirstExistingPath([
+    path.resolve(runtimeRoot, configuredBridgeScriptPath),
+    path.resolve(workspaceRoot, configuredBridgeScriptPath)
+  ]);
+  return {
+    strategy,
+    provider,
+    nativeSemImplemented: false,
+    integrationBoundaryEnabled: strategy === 'integration_boundary',
+    bridgeEnabled,
+    amosExecutableConfigured: Boolean(configuredAmosPath),
+    amosExecutableFound: Boolean(amosExecutablePath),
+    bridgeScriptConfigured: Boolean(configuredBridgeScriptPath),
+    bridgeScriptFound: Boolean(bridgeScriptPath),
+    executionReady: bridgeEnabled && (Boolean(amosExecutablePath) || Boolean(bridgeScriptPath)),
+    note: strategy === 'native'
+      ? 'Native SEM execution is selected but not implemented yet; switch to integration_boundary for production today.'
+      : 'SEM/AMOS parity is handled through an explicit integration boundary so provider execution can be governed separately from the quant engine.'
+  };
+}
+
+function resolveAxionSidecarConfig() {
+  const sidecarUrl = process.env.MU_AXION_SIDECAR_URL?.trim() || AXION_SIDECAR_DEFAULT_URL;
+  const configuredScriptPath = process.env.MU_AXION_SIDECAR_SCRIPT_PATH?.trim() || 'services/axion/axion_sidecar.py';
+  const configuredGenomePath = process.env.MU_AXION_PARALLEL_CUBED_GENOME?.trim() || 'services/axion/parallel_cubed_region_genome.json';
+  const sidecarScriptPath = findFirstExistingPath([
+    path.resolve(runtimeRoot, configuredScriptPath),
+    path.resolve(workspaceRoot, configuredScriptPath)
+  ]) ?? path.resolve(workspaceRoot, configuredScriptPath);
+  const sidecarGenomePath = findFirstExistingPath([
+    path.resolve(runtimeRoot, configuredGenomePath),
+    path.resolve(workspaceRoot, configuredGenomePath)
+  ]) ?? path.resolve(workspaceRoot, configuredGenomePath);
+  const pythonCommand = process.env.MU_AXION_PYTHON_COMMAND?.trim() || 'py';
+  const pythonArgs = (process.env.MU_AXION_PYTHON_ARGS?.trim() || '-3.11')
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return {
+    sidecarUrl,
+    sidecarScriptPath,
+    sidecarGenomePath,
+    pythonCommand,
+    pythonArgs
+  };
+}
+
+function resolveAxionIntegrationStatusBase() {
+  const config = resolveAxionSidecarConfig();
+  return {
+    enabled: isAxionSidecarEnabled,
+    sidecarAutostart: isAxionSidecarAutostartEnabled,
+    prefilterEnabled: isAxionPrefilterEnabled,
+    qeccGuardEnabled: isAxionQeccGuardEnabled,
+    configuredSidecarUrl: config.sidecarUrl,
+    scriptFound: existsSync(config.sidecarScriptPath),
+    genomeFound: existsSync(config.sidecarGenomePath),
+    pythonCommand: config.pythonCommand,
+    managedProcessRunning: Boolean(axionSidecarChild && !axionSidecarChild.killed),
+    managedProcessStartedAt: axionSidecarStartedAt
+  };
+}
+
+async function axionSidecarRequest<T>(method: 'GET' | 'POST', endpointPath: string, payload?: unknown, timeoutMs = AXION_SIDECAR_REQUEST_TIMEOUT_MS): Promise<T | null> {
+  if (!isAxionSidecarEnabled) return null;
+  const { sidecarUrl } = resolveAxionSidecarConfig();
+  try {
+    const target = new URL(endpointPath, sidecarUrl).toString();
+    const response = await fetch(target, {
+      method,
+      headers: payload === undefined ? undefined : {
+        'Content-Type': 'application/json'
+      },
+      body: payload === undefined ? undefined : JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+    if (!response.ok) return null;
+    return await response.json() as T;
+  } catch {
+    return null;
+  }
+}
+
+async function waitForAxionSidecarReady(timeoutMs = AXION_SIDECAR_STARTUP_TIMEOUT_MS): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const health = await axionSidecarRequest<{ ok?: boolean }>('GET', '/health');
+    if (health?.ok) return true;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  return false;
+}
+
+async function ensureAxionSidecarStarted(): Promise<void> {
+  if (!isAxionSidecarEnabled || !isAxionSidecarAutostartEnabled) return;
+  const alreadyReachable = await waitForAxionSidecarReady(1500);
+  if (alreadyReachable) return;
+  if (axionSidecarChild && !axionSidecarChild.killed) return;
+
+  const config = resolveAxionSidecarConfig();
+  if (!existsSync(config.sidecarScriptPath)) {
+    server.log.warn({ path: config.sidecarScriptPath }, 'Axion sidecar script not found; sidecar was not started.');
+    return;
+  }
+  if (!existsSync(config.sidecarGenomePath)) {
+    server.log.warn({ path: config.sidecarGenomePath }, 'Axion genome file not found; sidecar was not started.');
+    return;
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(config.sidecarUrl);
+  } catch {
+    server.log.warn({ sidecarUrl: config.sidecarUrl }, 'Invalid MU_AXION_SIDECAR_URL; sidecar was not started.');
+    return;
+  }
+  const host = parsedUrl.hostname || '127.0.0.1';
+  const port = Number(parsedUrl.port || 8765);
+  if (!Number.isFinite(port) || port <= 0) {
+    server.log.warn({ sidecarUrl: config.sidecarUrl }, 'Invalid Axion sidecar port; sidecar was not started.');
+    return;
+  }
+
+  const child = spawn(config.pythonCommand, [
+    ...config.pythonArgs,
+    config.sidecarScriptPath,
+    '--host',
+    host,
+    '--port',
+    String(port),
+    '--genome',
+    config.sidecarGenomePath
+  ], {
+    cwd: runtimeRoot,
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  axionSidecarChild = child;
+  axionSidecarManagedByApi = true;
+  axionSidecarStartedAt = new Date().toISOString();
+  child.stdout?.on('data', (buffer) => {
+    server.log.info({ output: buffer.toString().trim() }, 'Axion sidecar');
+  });
+  child.stderr?.on('data', (buffer) => {
+    server.log.warn({ output: buffer.toString().trim() }, 'Axion sidecar stderr');
+  });
+  child.on('error', (error) => {
+    server.log.error({ error }, 'Axion sidecar process failed to start.');
+  });
+  child.on('exit', (code, signal) => {
+    server.log.warn({ code, signal }, 'Axion sidecar exited.');
+    axionSidecarChild = null;
+    axionSidecarManagedByApi = false;
+  });
+
+  const becameReady = await waitForAxionSidecarReady();
+  if (!becameReady) {
+    server.log.warn('Axion sidecar did not become ready within startup timeout.');
+  }
+}
+
+async function getAxionIntegrationStatus() {
+  const base = resolveAxionIntegrationStatusBase();
+  const health = await axionSidecarRequest<{ ok?: boolean; health?: unknown }>('GET', '/health', undefined, 2000);
+  const status = await axionSidecarRequest<{ ok?: boolean; status?: unknown }>('GET', '/status', undefined, 2000);
+  return {
+    ...base,
+    reachable: Boolean(health?.ok),
+    health: health?.health ?? null,
+    sidecarStatus: status?.status ?? null
+  };
+}
+
+function shutdownAxionSidecar(): void {
+  if (!axionSidecarManagedByApi) return;
+  if (!axionSidecarChild || axionSidecarChild.killed) return;
+  try {
+    axionSidecarChild.kill();
+  } catch {
+    // no-op
+  }
+  axionSidecarChild = null;
+}
+
+async function evaluateAxionQeccGuard(params: {
+  jobType: 'sql-import' | 'transcription' | 'report-export';
+  stage: string;
+  projectId: string;
+  retryCount?: number;
+  errorRate?: number;
+  durationSeconds?: number;
+  load?: number;
+  failedStage?: boolean;
+  metadata?: Record<string, unknown>;
+}): Promise<{
+  action: 'continue' | 'checkpoint' | 'rollback' | 'halt';
+  reason: string;
+  risk: number;
+  level: string;
+  recoveryState: string;
+  qecc: {
+    syndrome: number[];
+    pLogical: number;
+    pLogicalLimit: number;
+  } | null;
+}> {
+  if (!isAxionQeccGuardEnabled) {
+    return {
+      action: 'continue',
+      reason: 'axion qecc guard disabled',
+      risk: 0,
+      level: 'normal',
+      recoveryState: 'steady',
+      qecc: null
+    };
+  }
+  const result = await axionSidecarRequest<{
+    ok?: boolean;
+    result?: {
+      decision?: {
+        action?: 'continue' | 'checkpoint' | 'rollback' | 'halt';
+        reason?: string;
+        risk?: number;
+        level?: string;
+        recovery_state?: string;
+      };
+      qecc?: {
+        syndrome?: number[];
+        p_logical?: number;
+        p_logical_limit?: number;
+      };
+    };
+  }>('POST', '/qecc/guard', {
+    telemetry: {
+      jobType: params.jobType,
+      stage: params.stage,
+      projectId: params.projectId,
+      retryCount: params.retryCount ?? 0,
+      errorRate: params.errorRate ?? 0,
+      durationSeconds: params.durationSeconds ?? 0,
+      load: params.load ?? 0,
+      failedStage: params.failedStage === true,
+      ...(params.metadata ?? {})
+    }
+  }, 2500);
+  const decision = result?.result?.decision;
+  const qecc = result?.result?.qecc;
+  return {
+    action: decision?.action ?? 'continue',
+    reason: decision?.reason ?? 'qecc guard unavailable',
+    risk: typeof decision?.risk === 'number' ? decision.risk : 0,
+    level: decision?.level ?? 'normal',
+    recoveryState: decision?.recovery_state ?? 'steady',
+    qecc: qecc
+      ? {
+        syndrome: Array.isArray(qecc.syndrome) ? qecc.syndrome.map((bit) => Number(bit)).filter((bit) => Number.isFinite(bit)) : [],
+        pLogical: typeof qecc.p_logical === 'number' ? qecc.p_logical : 0,
+        pLogicalLimit: typeof qecc.p_logical_limit === 'number' ? qecc.p_logical_limit : 0
+      }
+      : null
   };
 }
 
@@ -1145,6 +2024,389 @@ function computeSqlImportScheduleNextRunAt(scheduleEnabled: boolean, scheduleInt
   return next.toISOString();
 }
 
+function parseJsonObject(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseJsonArray(value: string | null | undefined): unknown[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeOfficeConnectorExtensions(value: unknown): string[] {
+  const extensions = parseStringArray(value)
+    .map((item) => item.toLowerCase())
+    .map((item) => item.startsWith('.') ? item : `.${item}`)
+    .filter((item) => OFFICE_CONNECTOR_SUPPORTED_EXTENSIONS.has(item));
+  return extensions.length > 0 ? [...new Set(extensions)] : [...OFFICE_CONNECTOR_DEFAULT_EXTENSIONS];
+}
+
+function clampOfficeConnectorMaxFiles(value: unknown, fallback = 500): number {
+  return Math.min(OFFICE_CONNECTOR_MAX_FILES, Math.max(1, Number(value ?? fallback) || fallback));
+}
+
+function clampReferenceConnectorMaxRows(value: unknown, fallback = 50): number {
+  return Math.min(REFERENCE_CONNECTOR_MAX_ROWS, Math.max(1, Number(value ?? fallback) || fallback));
+}
+
+function parseReferenceConnectorProvider(value: unknown): 'crossref' | 'openalex' {
+  return value === 'openalex' ? 'openalex' : 'crossref';
+}
+
+function serializeOfficeConnectorProfile(profile: {
+  id: string;
+  projectId: string;
+  label: string;
+  rootPath: string;
+  includeSubdirectories: boolean;
+  allowedExtensionsJson: string;
+  createdAt: string;
+  updatedAt: string;
+}) {
+  return {
+    ...profile,
+    allowedExtensions: normalizeOfficeConnectorExtensions(parseJsonArray(profile.allowedExtensionsJson))
+  };
+}
+
+function serializeOfficeConnectorJob(job: {
+  id: string;
+  projectId: string;
+  profileId: string;
+  label: string;
+  syncOptionsJson: string;
+  scheduleEnabled: boolean;
+  scheduleIntervalMinutes: number | null;
+  scheduleNextRunAt: string | null;
+  lastRunAt: string | null;
+  lastRunStatus: 'success' | 'error' | null;
+  lastRunMessage: string | null;
+  lastRunStatsJson: string;
+  createdAt: string;
+  updatedAt: string;
+}) {
+  const syncOptionsRaw = parseJsonObject(job.syncOptionsJson);
+  const lastRunStats = parseJsonObject(job.lastRunStatsJson);
+  return {
+    ...job,
+    syncOptions: {
+      maxFiles: clampOfficeConnectorMaxFiles(syncOptionsRaw.maxFiles, 500),
+      forceResync: syncOptionsRaw.forceResync === true
+    },
+    lastRunStats
+  };
+}
+
+function serializeReferenceConnectorProfile(profile: {
+  id: string;
+  projectId: string;
+  label: string;
+  provider: 'crossref' | 'openalex';
+  settingsJson: string;
+  createdAt: string;
+  updatedAt: string;
+}) {
+  const settings = parseJsonObject(profile.settingsJson);
+  return {
+    ...profile,
+    settings: {
+      mailto: typeof settings.mailto === 'string' ? settings.mailto : '',
+      hasApiKey: typeof settings.apiKey === 'string' && settings.apiKey.trim().length > 0
+    }
+  };
+}
+
+function serializeReferenceConnectorJob(job: {
+  id: string;
+  projectId: string;
+  profileId: string;
+  label: string;
+  queryJson: string;
+  scheduleEnabled: boolean;
+  scheduleIntervalMinutes: number | null;
+  scheduleNextRunAt: string | null;
+  lastRunAt: string | null;
+  lastRunStatus: 'success' | 'error' | null;
+  lastRunMessage: string | null;
+  lastRunStatsJson: string;
+  createdAt: string;
+  updatedAt: string;
+}) {
+  const query = parseJsonObject(job.queryJson);
+  const lastRunStats = parseJsonObject(job.lastRunStatsJson);
+  return {
+    ...job,
+    query: {
+      text: typeof query.text === 'string' ? query.text : '',
+      maxRows: clampReferenceConnectorMaxRows(query.maxRows, 50),
+      skipDuplicates: query.skipDuplicates !== false
+    },
+    lastRunStats
+  };
+}
+
+type OfficeConnectorDiscoveredFile = {
+  absolutePath: string;
+  relativePath: string;
+  filename: string;
+  extension: string;
+  size: number;
+  mtimeMs: number;
+  modifiedAt: string;
+};
+
+async function collectOfficeConnectorFiles(params: {
+  rootPath: string;
+  includeSubdirectories: boolean;
+  allowedExtensions: string[];
+  maxFiles: number;
+}): Promise<OfficeConnectorDiscoveredFile[]> {
+  const resolvedRoot = path.resolve(params.rootPath);
+  let rootStats;
+  try {
+    rootStats = await stat(resolvedRoot);
+  } catch {
+    throw new Error(`Office connector root path was not found: ${resolvedRoot}`);
+  }
+  if (!rootStats.isDirectory()) {
+    throw new Error('Office connector root path must be a directory.');
+  }
+  const allowed = new Set(params.allowedExtensions.map((item) => item.toLowerCase()));
+  const queue = [resolvedRoot];
+  const files: OfficeConnectorDiscoveredFile[] = [];
+  while (queue.length > 0 && files.length < params.maxFiles) {
+    const currentDir = queue.shift();
+    if (!currentDir) continue;
+    const entries = await readdir(currentDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (files.length >= params.maxFiles) break;
+      const absolutePath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        if (params.includeSubdirectories) queue.push(absolutePath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const extension = path.extname(entry.name).toLowerCase();
+      if (!allowed.has(extension)) continue;
+      const fileStats = await stat(absolutePath);
+      const relativePath = path.relative(resolvedRoot, absolutePath).replaceAll('\\', '/');
+      files.push({
+        absolutePath,
+        relativePath,
+        filename: entry.name,
+        extension,
+        size: Number(fileStats.size ?? 0),
+        mtimeMs: Number(fileStats.mtimeMs ?? 0),
+        modifiedAt: fileStats.mtime.toISOString()
+      });
+    }
+  }
+  files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  return files;
+}
+
+function makeOfficeConnectorFileMarker(profileId: string, relativePath: string): string {
+  const normalizedPath = relativePath.replaceAll('\\', '/').replace(/^\/+/, '');
+  return `office-connector://${encodeURIComponent(profileId)}/${normalizedPath}`;
+}
+
+function makeOfficeConnectorCaseFileKey(profileId: string, relativePath: string): string {
+  const normalizedPath = relativePath.replaceAll('\\', '/').replace(/^\/+/, '');
+  return `${profileId}:${normalizedPath}`;
+}
+
+type ReferenceConnectorCandidate = {
+  provider: 'crossref' | 'openalex';
+  externalId: string;
+  title: string;
+  authors: string[];
+  year: number | null;
+  containerTitle: string;
+  publisher: string;
+  doi: string;
+  url: string;
+  abstractText: string;
+  keywords: string[];
+  referenceType: string;
+  raw: Record<string, unknown>;
+};
+
+function stripMarkup(value: string): string {
+  return value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function decodeOpenAlexAbstract(value: unknown): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+  const invertedIndex = value as Record<string, unknown>;
+  const positionedWords: Array<{ index: number; word: string }> = [];
+  for (const [word, positions] of Object.entries(invertedIndex)) {
+    if (!Array.isArray(positions)) continue;
+    for (const position of positions) {
+      const index = Number(position);
+      if (!Number.isFinite(index)) continue;
+      positionedWords.push({ index, word });
+    }
+  }
+  positionedWords.sort((a, b) => a.index - b.index);
+  return positionedWords.map((item) => item.word).join(' ').trim();
+}
+
+async function searchReferenceProvider(params: {
+  provider: 'crossref' | 'openalex';
+  queryText: string;
+  maxRows: number;
+  settings: Record<string, unknown>;
+}): Promise<ReferenceConnectorCandidate[]> {
+  const queryText = params.queryText.trim();
+  if (!queryText) {
+    throw new Error('Reference connector query text is required.');
+  }
+  if (params.provider === 'openalex') {
+    const query = new URLSearchParams({
+      search: queryText,
+      'per-page': String(params.maxRows)
+    });
+    if (typeof params.settings.mailto === 'string' && params.settings.mailto.trim()) {
+      query.set('mailto', params.settings.mailto.trim());
+    }
+    const response = await fetch(`https://api.openalex.org/works?${query.toString()}`, {
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!response.ok) {
+      throw new Error(`OpenAlex request failed (${response.status}).`);
+    }
+    const payload = await response.json() as {
+      results?: Array<Record<string, unknown>>;
+    };
+    const items = Array.isArray(payload.results) ? payload.results : [];
+    return items.map((item, index) => {
+      const authorships = Array.isArray(item.authorships) ? item.authorships : [];
+      const authors = authorships
+        .map((entry) => {
+          const author = (entry as { author?: { display_name?: unknown } }).author;
+          return typeof author?.display_name === 'string' ? author.display_name.trim() : '';
+        })
+        .filter(Boolean);
+      const concepts = Array.isArray(item.concepts) ? item.concepts : [];
+      const keywords = concepts
+        .slice(0, 8)
+        .map((concept) => typeof (concept as { display_name?: unknown }).display_name === 'string'
+          ? String((concept as { display_name?: unknown }).display_name).trim()
+          : '')
+        .filter(Boolean);
+      const ids = item.ids && typeof item.ids === 'object' && !Array.isArray(item.ids)
+        ? item.ids as Record<string, unknown>
+        : {};
+      const doiRaw = typeof ids.doi === 'string' ? ids.doi : '';
+      const doi = doiRaw.replace(/^https?:\/\/(dx\.)?doi\.org\//i, '').trim();
+      const primaryLocation = item.primary_location && typeof item.primary_location === 'object' && !Array.isArray(item.primary_location)
+        ? item.primary_location as Record<string, unknown>
+        : {};
+      const source = primaryLocation.source && typeof primaryLocation.source === 'object' && !Array.isArray(primaryLocation.source)
+        ? primaryLocation.source as Record<string, unknown>
+        : {};
+      const externalId = typeof item.id === 'string' && item.id.trim()
+        ? item.id.trim()
+        : `openalex-${index + 1}`;
+      return {
+        provider: 'openalex' as const,
+        externalId,
+        title: typeof item.title === 'string' ? item.title.trim() : 'Untitled reference',
+        authors,
+        year: Number.isFinite(Number(item.publication_year)) ? Number(item.publication_year) : null,
+        containerTitle: typeof source.display_name === 'string' ? source.display_name.trim() : '',
+        publisher: typeof source.host_organization_name === 'string' ? source.host_organization_name.trim() : '',
+        doi,
+        url: typeof primaryLocation.landing_page_url === 'string' && primaryLocation.landing_page_url.trim()
+          ? primaryLocation.landing_page_url.trim()
+          : (typeof ids.openalex === 'string' ? ids.openalex.trim() : ''),
+        abstractText: decodeOpenAlexAbstract(item.abstract_inverted_index),
+        keywords,
+        referenceType: typeof item.type === 'string' && item.type.trim() ? item.type.trim() : 'article',
+        raw: item
+      };
+    });
+  }
+
+  const query = new URLSearchParams({
+    'query.bibliographic': queryText,
+    rows: String(params.maxRows),
+    select: 'DOI,title,author,issued,container-title,publisher,URL,abstract,type,subject'
+  });
+  if (typeof params.settings.mailto === 'string' && params.settings.mailto.trim()) {
+    query.set('mailto', params.settings.mailto.trim());
+  }
+  const response = await fetch(`https://api.crossref.org/works?${query.toString()}`, {
+    signal: AbortSignal.timeout(15000)
+  });
+  if (!response.ok) {
+    throw new Error(`Crossref request failed (${response.status}).`);
+  }
+  const payload = await response.json() as {
+    message?: { items?: Array<Record<string, unknown>> };
+  };
+  const items = Array.isArray(payload.message?.items) ? payload.message.items : [];
+  return items.map((item, index) => {
+    const authors = Array.isArray(item.author)
+      ? item.author
+        .map((entry) => {
+          const given = typeof (entry as { given?: unknown }).given === 'string'
+            ? String((entry as { given?: unknown }).given).trim()
+            : '';
+          const family = typeof (entry as { family?: unknown }).family === 'string'
+            ? String((entry as { family?: unknown }).family).trim()
+            : '';
+          return `${given} ${family}`.trim();
+        })
+        .filter(Boolean)
+      : [];
+    const issued = item.issued && typeof item.issued === 'object' && !Array.isArray(item.issued)
+      ? item.issued as { 'date-parts'?: unknown }
+      : {};
+    const dateParts = Array.isArray(issued['date-parts']) && Array.isArray(issued['date-parts'][0])
+      ? issued['date-parts'][0] as unknown[]
+      : [];
+    const year = Number.isFinite(Number(dateParts[0])) ? Number(dateParts[0]) : null;
+    const containerTitle = Array.isArray(item['container-title'])
+      ? String(item['container-title'][0] ?? '').trim()
+      : '';
+    const keywords = Array.isArray(item.subject)
+      ? item.subject.map((entry) => String(entry ?? '').trim()).filter(Boolean)
+      : [];
+    const doi = typeof item.DOI === 'string' ? item.DOI.trim() : '';
+    const url = typeof item.URL === 'string' ? item.URL.trim() : '';
+    const externalId = doi || url || `crossref-${index + 1}`;
+    return {
+      provider: 'crossref' as const,
+      externalId,
+      title: Array.isArray(item.title) ? String(item.title[0] ?? '').trim() || 'Untitled reference' : 'Untitled reference',
+      authors,
+      year,
+      containerTitle,
+      publisher: typeof item.publisher === 'string' ? item.publisher.trim() : '',
+      doi,
+      url,
+      abstractText: typeof item.abstract === 'string' ? stripMarkup(item.abstract) : '',
+      keywords,
+      referenceType: typeof item.type === 'string' && item.type.trim() ? item.type.trim() : 'article',
+      raw: item
+    };
+  });
+}
+
 async function recordAuditEvent(params: {
   request: FastifyRequest;
   projectId: string;
@@ -1258,9 +2520,52 @@ async function runDueExternalSqlImportJobs(): Promise<void> {
   try {
     const dueJobs = await listDueExternalSqlImportJobs(new Date().toISOString(), 10);
     for (const job of dueJobs) {
+      const startedAtMs = Date.now();
+      const preGuard = await evaluateAxionQeccGuard({
+        jobType: 'sql-import',
+        stage: 'scheduled_pre_run',
+        projectId: job.projectId,
+        retryCount: job.lastRunStatus === 'error' ? 1 : 0,
+        load: Math.min(1, dueJobs.length / 10),
+        metadata: {
+          scheduled: true,
+          jobId: job.id
+        }
+      });
+      if (preGuard.action === 'halt') {
+        const message = `QECC guard blocked scheduled SQL import (${preGuard.reason}).`;
+        await settleExternalSqlImportJobRun({
+          job,
+          status: 'error',
+          message
+        });
+        await recordSystemAuditEvent({
+          projectId: job.projectId,
+          action: 'sql_import_job.qecc_guard_halt',
+          entityType: 'external_sql_import_job',
+          entityId: job.id,
+          details: {
+            stage: 'scheduled_pre_run',
+            decision: preGuard
+          }
+        });
+        continue;
+      }
       try {
         const { imported, profileLabel } = await executeExternalSqlImportJob(job);
         const successMessage = `Imported ${imported.casesCreated} case rows and replaced ${imported.removedPriorCases} prior rows.`;
+        const durationSeconds = Math.max(0, (Date.now() - startedAtMs) / 1000);
+        const postGuard = await evaluateAxionQeccGuard({
+          jobType: 'sql-import',
+          stage: 'scheduled_post_run',
+          projectId: job.projectId,
+          durationSeconds,
+          load: Math.min(1, dueJobs.length / 10),
+          metadata: {
+            scheduled: true,
+            jobId: job.id
+          }
+        });
         await settleExternalSqlImportJobRun({
           job,
           status: 'success',
@@ -1275,22 +2580,37 @@ async function runDueExternalSqlImportJobs(): Promise<void> {
             label: job.label,
             profileLabel,
             maxRows: job.maxRows,
+            qeccGuard: postGuard,
             ...imported
           }
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unable to refresh the SQL import job.';
+        const durationSeconds = Math.max(0, (Date.now() - startedAtMs) / 1000);
+        const failGuard = await evaluateAxionQeccGuard({
+          jobType: 'sql-import',
+          stage: 'scheduled_failed',
+          projectId: job.projectId,
+          durationSeconds,
+          errorRate: 1,
+          failedStage: true,
+          load: Math.min(1, dueJobs.length / 10),
+          metadata: {
+            scheduled: true,
+            jobId: job.id
+          }
+        });
         await settleExternalSqlImportJobRun({
           job,
           status: 'error',
-          message
+          message: failGuard.action === 'halt' ? `${message} (QECC halt: ${failGuard.reason})` : message
         });
         await recordSystemAuditEvent({
           projectId: job.projectId,
           action: 'sql_import_job.run_scheduled_failed',
           entityType: 'external_sql_import_job',
           entityId: job.id,
-          details: { label: job.label, message }
+          details: { label: job.label, message, qeccGuard: failGuard }
         });
         server.log.error({ jobId: job.id, error }, 'Scheduled SQL import refresh failed.');
       }
@@ -1313,8 +2633,607 @@ function scheduleExternalSqlImportJobRunner(): void {
 
 scheduleExternalSqlImportJobRunner();
 
+type OfficeConnectorRunStats = {
+  scannedCount: number;
+  changedCount: number;
+  skippedUnchangedCount: number;
+  importedCount: number;
+  updatedSourceCount: number;
+  tabularFilesImported: number;
+  caseRowsImported: number;
+  removedPriorCases: number;
+  errorCount: number;
+  snapshot: Record<string, string>;
+  importedItems: Array<Record<string, unknown>>;
+  errors: Array<Record<string, unknown>>;
+};
+
+function defaultOfficeConnectorRunStats(): OfficeConnectorRunStats {
+  return {
+    scannedCount: 0,
+    changedCount: 0,
+    skippedUnchangedCount: 0,
+    importedCount: 0,
+    updatedSourceCount: 0,
+    tabularFilesImported: 0,
+    caseRowsImported: 0,
+    removedPriorCases: 0,
+    errorCount: 0,
+    snapshot: {},
+    importedItems: [],
+    errors: []
+  };
+}
+
+function parseOfficeConnectorRunStats(value: string | null | undefined): OfficeConnectorRunStats {
+  const parsed = parseJsonObject(value);
+  return {
+    scannedCount: Number(parsed.scannedCount ?? 0) || 0,
+    changedCount: Number(parsed.changedCount ?? 0) || 0,
+    skippedUnchangedCount: Number(parsed.skippedUnchangedCount ?? 0) || 0,
+    importedCount: Number(parsed.importedCount ?? 0) || 0,
+    updatedSourceCount: Number(parsed.updatedSourceCount ?? 0) || 0,
+    tabularFilesImported: Number(parsed.tabularFilesImported ?? 0) || 0,
+    caseRowsImported: Number(parsed.caseRowsImported ?? 0) || 0,
+    removedPriorCases: Number(parsed.removedPriorCases ?? 0) || 0,
+    errorCount: Number(parsed.errorCount ?? 0) || 0,
+    snapshot: parsed.snapshot && typeof parsed.snapshot === 'object' && !Array.isArray(parsed.snapshot)
+      ? Object.fromEntries(Object.entries(parsed.snapshot as Record<string, unknown>).map(([key, item]) => [key, String(item ?? '')]))
+      : {},
+    importedItems: Array.isArray(parsed.importedItems) ? parsed.importedItems.filter((item) => item && typeof item === 'object') as Array<Record<string, unknown>> : [],
+    errors: Array.isArray(parsed.errors) ? parsed.errors.filter((item) => item && typeof item === 'object') as Array<Record<string, unknown>> : []
+  };
+}
+
+async function importParsedOfficeConnectorDraft(params: {
+  projectId: string;
+  profileId: string;
+  relativePath: string;
+  parsed: ImportedFileDraft;
+  sourceByMarker: Map<string, { id: string; contentUrl: string | null }>;
+}): Promise<Record<string, unknown>> {
+  const marker = makeOfficeConnectorFileMarker(params.profileId, params.relativePath);
+  if (params.parsed.kind === 'source') {
+    const timestamp = new Date().toISOString();
+    const existing = params.sourceByMarker.get(marker);
+    if (existing) {
+      await updateSourceContent({
+        id: existing.id,
+        projectId: params.projectId,
+        title: params.parsed.title,
+        contentType: params.parsed.contentType,
+        contentUrl: marker,
+        contentText: params.parsed.contentText,
+        updatedAt: timestamp
+      });
+      const priorSegments = await listSegments(params.projectId, existing.id);
+      for (const segment of priorSegments) {
+        await deleteSegment(segment.id, params.projectId);
+      }
+      let segmentsCreated = 0;
+      for (const segmentDraft of params.parsed.segments ?? []) {
+        const segment = createSegment({
+          id: `segment-${randomUUID()}`,
+          projectId: params.projectId,
+          sourceId: existing.id,
+          kind: segmentDraft.kind,
+          anchor: segmentDraft.anchor,
+          text: segmentDraft.text
+        });
+        await insertSegment(segment);
+        segmentsCreated += 1;
+      }
+      return {
+        importedAs: 'source_updated',
+        sourceId: existing.id,
+        title: params.parsed.title,
+        sourceKind: params.parsed.sourceKind,
+        segmentsCreated,
+        relativePath: params.relativePath
+      };
+    }
+
+    const source = createSource({
+      id: `source-${randomUUID()}`,
+      projectId: params.projectId,
+      kind: params.parsed.sourceKind,
+      title: params.parsed.title,
+      language: 'en',
+      contentType: params.parsed.contentType,
+      contentUrl: marker,
+      contentText: params.parsed.contentText
+    });
+    await insertSource(source);
+    params.sourceByMarker.set(marker, { id: source.id, contentUrl: marker });
+    let segmentsCreated = 0;
+    for (const segmentDraft of params.parsed.segments ?? []) {
+      const segment = createSegment({
+        id: `segment-${randomUUID()}`,
+        projectId: params.projectId,
+        sourceId: source.id,
+        kind: segmentDraft.kind,
+        anchor: segmentDraft.anchor,
+        text: segmentDraft.text
+      });
+      await insertSegment(segment);
+      segmentsCreated += 1;
+    }
+    return {
+      importedAs: 'source_created',
+      sourceId: source.id,
+      title: source.title,
+      sourceKind: source.kind,
+      segmentsCreated,
+      relativePath: params.relativePath
+    };
+  }
+
+  const fileKey = makeOfficeConnectorCaseFileKey(params.profileId, params.relativePath);
+  const removedPriorCases = await deleteCasesImportedByOfficeFile(params.projectId, fileKey);
+  let casesCreated = 0;
+  let attributesCreated = 0;
+  for (const row of params.parsed.rows) {
+    const caseEntity = createCase({
+      id: `case-${randomUUID()}`,
+      projectId: params.projectId,
+      label: row.caseLabel,
+      sourceIds: []
+    });
+    await insertCase(caseEntity);
+    casesCreated += 1;
+    for (const attributeDraft of row.attributes) {
+      const attribute = createAttribute({
+        id: `attribute-${randomUUID()}`,
+        projectId: params.projectId,
+        targetType: 'case',
+        targetId: caseEntity.id,
+        name: attributeDraft.name,
+        value: attributeDraft.value
+      });
+      await insertAttribute(attribute);
+      attributesCreated += 1;
+    }
+    const markerAttributes: Array<{ name: string; value: string }> = [
+      { name: '_office_connector_file_key', value: fileKey },
+      { name: '_office_connector_profile_id', value: params.profileId },
+      { name: '_office_connector_relative_path', value: params.relativePath.replaceAll('\\', '/') }
+    ];
+    for (const markerAttribute of markerAttributes) {
+      const attribute = createAttribute({
+        id: `attribute-${randomUUID()}`,
+        projectId: params.projectId,
+        targetType: 'case',
+        targetId: caseEntity.id,
+        name: markerAttribute.name,
+        value: markerAttribute.value
+      });
+      await insertAttribute(attribute);
+      attributesCreated += 1;
+    }
+  }
+
+  if (params.parsed.spssMetadata) {
+    await persistImportedSpssMetadata(params.projectId, params.parsed.spssMetadata);
+  }
+
+  return {
+    importedAs: 'tabular',
+    relativePath: params.relativePath,
+    caseLabelField: params.parsed.caseLabelField,
+    sheetName: params.parsed.sheetName,
+    casesCreated,
+    attributesCreated,
+    removedPriorCases
+  };
+}
+
+async function executeOfficeConnectorJob(job: {
+  id: string;
+  projectId: string;
+  profileId: string;
+  label: string;
+  syncOptionsJson: string;
+  scheduleEnabled: boolean;
+  scheduleIntervalMinutes: number | null;
+  lastRunStatsJson?: string;
+}, overrides?: {
+  maxFiles?: number;
+  forceResync?: boolean;
+}): Promise<{ profileLabel: string; stats: OfficeConnectorRunStats; }> {
+  const profile = (await listOfficeConnectorProfiles(job.projectId)).find((item) => item.id === job.profileId);
+  if (!profile) {
+    throw new Error('Office connector profile for this job was not found.');
+  }
+  const syncOptionsRaw = parseJsonObject(job.syncOptionsJson);
+  const maxFiles = clampOfficeConnectorMaxFiles(overrides?.maxFiles ?? syncOptionsRaw.maxFiles, 500);
+  const forceResync = overrides?.forceResync === true || syncOptionsRaw.forceResync === true;
+  const allowedExtensions = normalizeOfficeConnectorExtensions(parseJsonArray(profile.allowedExtensionsJson));
+  const discoveredFiles = await collectOfficeConnectorFiles({
+    rootPath: profile.rootPath,
+    includeSubdirectories: profile.includeSubdirectories,
+    allowedExtensions,
+    maxFiles
+  });
+  const previousStats = parseOfficeConnectorRunStats(job.lastRunStatsJson);
+  const previousSnapshot = forceResync ? {} : previousStats.snapshot;
+  const nextSnapshot: Record<string, string> = {};
+  const stats = defaultOfficeConnectorRunStats();
+  stats.scannedCount = discoveredFiles.length;
+  const sources = await listSources(job.projectId);
+  const sourceByMarker = new Map(
+    sources
+      .filter((source) => typeof source.contentUrl === 'string' && source.contentUrl.startsWith('office-connector://'))
+      .map((source) => [source.contentUrl as string, { id: source.id, contentUrl: source.contentUrl }])
+  );
+  for (const file of discoveredFiles) {
+    const fileSignature = `${Math.round(file.mtimeMs)}:${file.size}`;
+    nextSnapshot[file.relativePath] = fileSignature;
+    if (!forceResync && previousSnapshot[file.relativePath] === fileSignature) {
+      stats.skippedUnchangedCount += 1;
+      continue;
+    }
+    stats.changedCount += 1;
+    try {
+      const buffer = await readFile(file.absolutePath);
+      const parsed = await parseImportedFile(file.filename, '', buffer);
+      const imported = await importParsedOfficeConnectorDraft({
+        projectId: job.projectId,
+        profileId: profile.id,
+        relativePath: file.relativePath,
+        parsed,
+        sourceByMarker
+      });
+      stats.importedItems.push({
+        filename: file.filename,
+        relativePath: file.relativePath,
+        ...imported
+      });
+      stats.importedCount += 1;
+      if (imported.importedAs === 'source_updated') {
+        stats.updatedSourceCount += 1;
+      }
+      if (imported.importedAs === 'tabular') {
+        stats.tabularFilesImported += 1;
+        stats.caseRowsImported += Number(imported.casesCreated ?? 0) || 0;
+        stats.removedPriorCases += Number(imported.removedPriorCases ?? 0) || 0;
+      }
+    } catch (error) {
+      stats.errorCount += 1;
+      stats.errors.push({
+        filename: file.filename,
+        relativePath: file.relativePath,
+        message: error instanceof Error ? error.message : 'Office connector import failed.'
+      });
+    }
+  }
+  stats.snapshot = nextSnapshot;
+  return { profileLabel: profile.label, stats };
+}
+
+async function settleOfficeConnectorJobRun(params: {
+  job: {
+    id: string;
+    projectId: string;
+    scheduleEnabled: boolean;
+    scheduleIntervalMinutes: number | null;
+  };
+  status: 'success' | 'error';
+  message: string;
+  stats: OfficeConnectorRunStats;
+  ranAt?: string;
+}): Promise<void> {
+  const ranAt = params.ranAt ?? new Date().toISOString();
+  await updateOfficeConnectorJobRunState({
+    id: params.job.id,
+    projectId: params.job.projectId,
+    updatedAt: ranAt,
+    lastRunAt: ranAt,
+    lastRunStatus: params.status,
+    lastRunMessage: params.message,
+    lastRunStatsJson: JSON.stringify(params.stats),
+    scheduleNextRunAt: computeSqlImportScheduleNextRunAt(
+      params.job.scheduleEnabled,
+      params.job.scheduleIntervalMinutes,
+      ranAt
+    )
+  });
+}
+
+async function runDueOfficeConnectorJobs(): Promise<void> {
+  if (officeConnectorSchedulerRunning) return;
+  officeConnectorSchedulerRunning = true;
+  try {
+    const dueJobs = await listDueOfficeConnectorJobs(new Date().toISOString(), 8);
+    for (const job of dueJobs) {
+      try {
+        const { profileLabel, stats } = await executeOfficeConnectorJob(job);
+        const message = `Synced ${stats.importedCount} file(s); ${stats.skippedUnchangedCount} unchanged; ${stats.errorCount} error(s).`;
+        await settleOfficeConnectorJobRun({
+          job,
+          status: stats.errorCount > 0 ? 'error' : 'success',
+          message,
+          stats
+        });
+        await recordSystemAuditEvent({
+          projectId: job.projectId,
+          action: 'office_connector_job.run_scheduled',
+          entityType: 'office_connector_job',
+          entityId: job.id,
+          details: {
+            label: job.label,
+            profileLabel,
+            ...stats
+          }
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to run the Office connector sync job.';
+        const stats = defaultOfficeConnectorRunStats();
+        stats.errorCount = 1;
+        stats.errors.push({ message });
+        await settleOfficeConnectorJobRun({
+          job,
+          status: 'error',
+          message,
+          stats
+        });
+        await recordSystemAuditEvent({
+          projectId: job.projectId,
+          action: 'office_connector_job.run_scheduled_failed',
+          entityType: 'office_connector_job',
+          entityId: job.id,
+          details: { label: job.label, message }
+        });
+        server.log.error({ jobId: job.id, error }, 'Scheduled Office connector sync failed.');
+      }
+    }
+  } finally {
+    officeConnectorSchedulerRunning = false;
+  }
+}
+
+function scheduleOfficeConnectorJobRunner(): void {
+  const timer = setInterval(async () => {
+    try {
+      await runDueOfficeConnectorJobs();
+    } catch (error) {
+      server.log.error(error, 'Scheduled Office connector runner failed.');
+    }
+  }, OFFICE_CONNECTOR_SCHEDULER_INTERVAL_MS);
+  timer.unref();
+}
+
+async function importReferenceConnectorCandidates(params: {
+  projectId: string;
+  provider: 'crossref' | 'openalex';
+  candidates: ReferenceConnectorCandidate[];
+  skipDuplicates: boolean;
+}): Promise<{
+  imported: Array<{ id: string; title: string; externalId: string }>;
+  skipped: Array<{ title: string; reason: string; externalId: string }>;
+}> {
+  const existing = params.skipDuplicates ? await listProjectReferences(params.projectId) : [];
+  const imported: Array<{ id: string; title: string; externalId: string }> = [];
+  const skipped: Array<{ title: string; reason: string; externalId: string }> = [];
+  const timestamp = new Date().toISOString();
+  for (const candidate of params.candidates) {
+    const title = candidate.title.trim() || 'Untitled reference';
+    const draft = {
+      title,
+      authors: candidate.authors,
+      year: candidate.year,
+      doi: candidate.doi
+    };
+    if (params.skipDuplicates) {
+      const duplicate = existing.find((row) => referencesLikelyDuplicate(row, draft));
+      if (duplicate) {
+        skipped.push({
+          title,
+          externalId: candidate.externalId,
+          reason: `Duplicate of ${duplicate.id}`
+        });
+        continue;
+      }
+    }
+    const reference = await insertProjectReference({
+      id: `reference-${randomUUID()}`,
+      projectId: params.projectId,
+      sourceFormat: 'manual',
+      referenceType: candidate.referenceType || 'article',
+      title,
+      authors: candidate.authors,
+      year: candidate.year,
+      containerTitle: candidate.containerTitle,
+      publisher: candidate.publisher,
+      doi: candidate.doi,
+      url: candidate.url,
+      abstractText: candidate.abstractText,
+      keywords: candidate.keywords,
+      rawText: JSON.stringify({
+        provider: params.provider,
+        externalId: candidate.externalId,
+        raw: candidate.raw
+      }),
+      relatedSourceId: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    existing.push(reference);
+    imported.push({
+      id: reference.id,
+      title: reference.title,
+      externalId: candidate.externalId
+    });
+  }
+  return { imported, skipped };
+}
+
+async function executeReferenceConnectorJob(job: {
+  id: string;
+  projectId: string;
+  profileId: string;
+  label: string;
+  queryJson: string;
+  scheduleEnabled: boolean;
+  scheduleIntervalMinutes: number | null;
+}): Promise<{
+  profileLabel: string;
+  provider: 'crossref' | 'openalex';
+  queryText: string;
+  maxRows: number;
+  skipDuplicates: boolean;
+  fetchedCount: number;
+  importedCount: number;
+  skippedCount: number;
+  imported: Array<{ id: string; title: string; externalId: string }>;
+  skipped: Array<{ title: string; reason: string; externalId: string }>;
+}> {
+  const profile = (await listReferenceConnectorProfiles(job.projectId)).find((item) => item.id === job.profileId);
+  if (!profile) {
+    throw new Error('Reference connector profile for this job was not found.');
+  }
+  const query = parseJsonObject(job.queryJson);
+  const queryText = typeof query.text === 'string' ? query.text.trim() : '';
+  const maxRows = clampReferenceConnectorMaxRows(query.maxRows, 50);
+  const skipDuplicates = query.skipDuplicates !== false;
+  if (!queryText) {
+    throw new Error('Reference connector query text is required.');
+  }
+  const settings = parseJsonObject(profile.settingsJson);
+  const candidates = await searchReferenceProvider({
+    provider: profile.provider,
+    queryText,
+    maxRows,
+    settings
+  });
+  const result = await importReferenceConnectorCandidates({
+    projectId: job.projectId,
+    provider: profile.provider,
+    candidates,
+    skipDuplicates
+  });
+  return {
+    profileLabel: profile.label,
+    provider: profile.provider,
+    queryText,
+    maxRows,
+    skipDuplicates,
+    fetchedCount: candidates.length,
+    importedCount: result.imported.length,
+    skippedCount: result.skipped.length,
+    imported: result.imported,
+    skipped: result.skipped
+  };
+}
+
+async function settleReferenceConnectorJobRun(params: {
+  job: {
+    id: string;
+    projectId: string;
+    scheduleEnabled: boolean;
+    scheduleIntervalMinutes: number | null;
+  };
+  status: 'success' | 'error';
+  message: string;
+  stats: Record<string, unknown>;
+  ranAt?: string;
+}): Promise<void> {
+  const ranAt = params.ranAt ?? new Date().toISOString();
+  await updateReferenceConnectorJobRunState({
+    id: params.job.id,
+    projectId: params.job.projectId,
+    updatedAt: ranAt,
+    lastRunAt: ranAt,
+    lastRunStatus: params.status,
+    lastRunMessage: params.message,
+    lastRunStatsJson: JSON.stringify(params.stats),
+    scheduleNextRunAt: computeSqlImportScheduleNextRunAt(
+      params.job.scheduleEnabled,
+      params.job.scheduleIntervalMinutes,
+      ranAt
+    )
+  });
+}
+
+async function runDueReferenceConnectorJobs(): Promise<void> {
+  if (referenceConnectorSchedulerRunning) return;
+  referenceConnectorSchedulerRunning = true;
+  try {
+    const dueJobs = await listDueReferenceConnectorJobs(new Date().toISOString(), 8);
+    for (const job of dueJobs) {
+      try {
+        const result = await executeReferenceConnectorJob(job);
+        const status: 'success' | 'error' = result.importedCount > 0 || result.skippedCount >= 0 ? 'success' : 'error';
+        const message = `Fetched ${result.fetchedCount} record(s), imported ${result.importedCount}, skipped ${result.skippedCount}.`;
+        await settleReferenceConnectorJobRun({
+          job,
+          status,
+          message,
+          stats: result
+        });
+        await recordSystemAuditEvent({
+          projectId: job.projectId,
+          action: 'reference_connector_job.run_scheduled',
+          entityType: 'reference_connector_job',
+          entityId: job.id,
+          details: result
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to run the reference connector sync job.';
+        await settleReferenceConnectorJobRun({
+          job,
+          status: 'error',
+          message,
+          stats: { error: message }
+        });
+        await recordSystemAuditEvent({
+          projectId: job.projectId,
+          action: 'reference_connector_job.run_scheduled_failed',
+          entityType: 'reference_connector_job',
+          entityId: job.id,
+          details: { label: job.label, message }
+        });
+        server.log.error({ jobId: job.id, error }, 'Scheduled reference connector sync failed.');
+      }
+    }
+  } finally {
+    referenceConnectorSchedulerRunning = false;
+  }
+}
+
+function scheduleReferenceConnectorJobRunner(): void {
+  const timer = setInterval(async () => {
+    try {
+      await runDueReferenceConnectorJobs();
+    } catch (error) {
+      server.log.error(error, 'Scheduled reference connector runner failed.');
+    }
+  }, REFERENCE_CONNECTOR_SCHEDULER_INTERVAL_MS);
+  timer.unref();
+}
+
+scheduleOfficeConnectorJobRunner();
+scheduleReferenceConnectorJobRunner();
+
 async function buildQualitativeProjectPayload(projectId: string) {
-  const [summary, sources, segments, codes, cases, memos, attributes, annotations, relationships, references, transcriptSyncLinks, transcriptionJobs, codeApplications] = await Promise.all([
+  const [
+    summary,
+    sources,
+    segments,
+    codes,
+    cases,
+    memos,
+    attributes,
+    annotations,
+    relationships,
+    references,
+    referenceLinks,
+    referenceCollections,
+    referenceCollectionItems,
+    referenceMergeEvents,
+    transcriptSyncLinks,
+    transcriptionJobs,
+    codeApplications
+  ] = await Promise.all([
       getProjectSummary(projectId),
       listSources(projectId),
       listSegments(projectId),
@@ -1325,6 +3244,10 @@ async function buildQualitativeProjectPayload(projectId: string) {
       listAnnotations(projectId),
       listRelationships(projectId),
       listProjectReferences(projectId),
+      listProjectReferenceLinks(projectId),
+      listProjectReferenceCollections(projectId),
+      listProjectReferenceCollectionItems(projectId),
+      listProjectReferenceMergeEvents(projectId),
       listTranscriptSyncLinks(projectId),
       listTranscriptionJobs(projectId),
       listCodeApplications(projectId)
@@ -1341,6 +3264,10 @@ async function buildQualitativeProjectPayload(projectId: string) {
     annotations,
     relationships,
     references,
+    referenceLinks,
+    referenceCollections,
+    referenceCollectionItems,
+    referenceMergeEvents,
     transcriptSyncLinks,
     transcriptionJobs,
     codeApplications
@@ -1348,7 +3275,23 @@ async function buildQualitativeProjectPayload(projectId: string) {
 }
 
 async function buildProjectBackupSnapshot(projectId: string) {
-  const [qualitative, variables, traceLinks, members, savedTransforms, savedAnalysisJobs, savedQualQueries, auditEvents, projectMessages] = await Promise.all([
+  const [
+    qualitative,
+    variables,
+    traceLinks,
+    members,
+    savedTransforms,
+    savedAnalysisJobs,
+    savedQualQueries,
+    codingAssignments,
+    codingConflictResolutions,
+    codingConflictTriages,
+    codingCalibrationSessions,
+    mergeGovernancePolicy,
+    mergeApprovals,
+    auditEvents,
+    projectMessages
+  ] = await Promise.all([
     buildQualitativeProjectPayload(projectId),
     listVariables(projectId),
     listTraceLinks(projectId),
@@ -1356,12 +3299,18 @@ async function buildProjectBackupSnapshot(projectId: string) {
     listSavedTransforms(projectId),
     listSavedAnalysisJobs(projectId),
     listSavedQualitativeQueries(projectId),
+    listCodingAssignments(projectId),
+    listCodingConflictResolutions(projectId, { limit: 5000 }),
+    listCodingConflictTriages(projectId, { limit: 5000 }),
+    listCodingCalibrationSessions(projectId, { limit: 2000 }),
+    getCodingMergeGovernancePolicy(projectId),
+    listCodingMergeApprovals(projectId, { limit: 5000, includeUsed: true, includeRevoked: true }),
     listAuditEvents(projectId, { limit: AUDIT_EXPORT_MAX_ROWS }),
     listProjectMessages(projectId, 1000)
   ]);
 
   return {
-    version: 1,
+    version: 3,
     exportedAt: new Date().toISOString(),
     project: qualitative.project,
     members,
@@ -1374,6 +3323,10 @@ async function buildProjectBackupSnapshot(projectId: string) {
     annotations: qualitative.annotations,
     relationships: qualitative.relationships,
     references: qualitative.references,
+    referenceLinks: qualitative.referenceLinks,
+    referenceCollections: qualitative.referenceCollections,
+    referenceCollectionItems: qualitative.referenceCollectionItems,
+    referenceMergeEvents: qualitative.referenceMergeEvents,
     transcriptSyncLinks: qualitative.transcriptSyncLinks,
     transcriptionJobs: qualitative.transcriptionJobs,
     segments: qualitative.segments,
@@ -1382,6 +3335,12 @@ async function buildProjectBackupSnapshot(projectId: string) {
     savedTransforms,
     savedAnalysisJobs,
     savedQualitativeQueries: savedQualQueries,
+    codingAssignments,
+    codingConflictResolutions,
+    codingConflictTriages,
+    codingCalibrationSessions,
+    mergeGovernancePolicy,
+    mergeApprovals,
     auditEvents,
     projectMessages
   };
@@ -1438,6 +3397,15 @@ async function restoreBackupSnapshot(params: {
   const caseIdMap = new Map<string, string>();
   const segmentIdMap = new Map<string, string>();
   const variableIdMap = new Map<string, string>();
+  const memoIdMap = new Map<string, string>();
+  const annotationIdMap = new Map<string, string>();
+  const referenceIdMap = new Map<string, string>();
+  const referenceCollectionIdMap = new Map<string, string>();
+  const resolveUserIdByUsername = async (usernameRaw: unknown): Promise<string | null> => {
+    if (!(typeof usernameRaw === 'string' && usernameRaw.trim())) return null;
+    const found = await findUserByUsername(normalizeMuUsername(usernameRaw));
+    return found?.user.id ?? null;
+  };
 
   for (const source of Array.isArray(snapshot.sources) ? snapshot.sources : []) {
     const id = `source-${randomUUID()}`;
@@ -1569,8 +3537,10 @@ async function restoreBackupSnapshot(params: {
               ? restoredProjectId
               : String(memo.targetId);
     if (!mappedTargetId) continue;
+    const memoId = `memo-${randomUUID()}`;
+    memoIdMap.set(String(memo.id), memoId);
     await insertMemo(createMemo({
-      id: `memo-${randomUUID()}`,
+      id: memoId,
       projectId: restoredProjectId,
       targetType: memo.targetType,
       targetId: mappedTargetId,
@@ -1592,8 +3562,10 @@ async function restoreBackupSnapshot(params: {
             ? caseIdMap.get(String(annotation.targetId))
             : restoredProjectId;
     if (!mappedTargetId) continue;
+    const annotationId = `annotation-${randomUUID()}`;
+    annotationIdMap.set(String(annotation.id), annotationId);
     await insertAnnotation(createAnnotation({
-      id: `annotation-${randomUUID()}`,
+      id: annotationId,
       projectId: restoredProjectId,
       targetType: parseAnnotationTargetType(annotation.targetType),
       targetId: mappedTargetId,
@@ -1638,10 +3610,12 @@ async function restoreBackupSnapshot(params: {
     }
 
     for (const reference of Array.isArray(snapshot.references) ? snapshot.references : []) {
+      const referenceId = `reference-${randomUUID()}`;
+      referenceIdMap.set(String(reference.id), referenceId);
       await insertProjectReference({
-        id: `reference-${randomUUID()}`,
+        id: referenceId,
         projectId: restoredProjectId,
-        sourceFormat: reference.sourceFormat === 'ris' || reference.sourceFormat === 'bibtex' ? reference.sourceFormat : 'manual',
+        sourceFormat: parseReferenceSourceFormat(reference.sourceFormat),
         referenceType: typeof reference.referenceType === 'string' ? reference.referenceType : 'article',
         title: typeof reference.title === 'string' ? reference.title : '',
         authors: Array.isArray(reference.authors) ? reference.authors.map((item: unknown) => String(item)) : [],
@@ -1659,42 +3633,123 @@ async function restoreBackupSnapshot(params: {
       });
     }
 
-    for (const syncLink of Array.isArray(snapshot.transcriptSyncLinks) ? snapshot.transcriptSyncLinks : []) {
-    const mediaSourceId = sourceIdMap.get(String(syncLink.mediaSourceId));
-    const transcriptSourceId = sourceIdMap.get(String(syncLink.transcriptSourceId));
-    const segmentId = syncLink.segmentId ? (segmentIdMap.get(String(syncLink.segmentId)) ?? null) : null;
-    if (!mediaSourceId || !transcriptSourceId) continue;
-    await insertTranscriptSyncLink({
-      id: `sync-${randomUUID()}`,
-      projectId: restoredProjectId,
-      mediaSourceId,
-      transcriptSourceId,
-      segmentId,
-      startMs: typeof syncLink.startMs === 'number' ? syncLink.startMs : 0,
-      endMs: typeof syncLink.endMs === 'number' ? syncLink.endMs : 0,
-      transcriptText: typeof syncLink.transcriptText === 'string' ? syncLink.transcriptText : '',
-      createdAt: timestamp,
-      updatedAt: timestamp
-    });
-  }
+    for (const collection of Array.isArray(snapshot.referenceCollections) ? snapshot.referenceCollections : []) {
+      const collectionId = `reference-collection-${randomUUID()}`;
+      referenceCollectionIdMap.set(String(collection.id), collectionId);
+      await insertProjectReferenceCollection({
+        id: collectionId,
+        projectId: restoredProjectId,
+        name: typeof collection.name === 'string' ? collection.name : 'Restored collection',
+        description: typeof collection.description === 'string' ? collection.description : '',
+        colorToken: parseReferenceCollectionColorToken(collection.colorToken),
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+    }
 
-  for (const job of Array.isArray(snapshot.transcriptionJobs) ? snapshot.transcriptionJobs : []) {
-    const mediaSourceId = sourceIdMap.get(String(job.mediaSourceId));
-    const outputSourceId = job.outputSourceId ? (sourceIdMap.get(String(job.outputSourceId)) ?? null) : null;
-    if (!mediaSourceId) continue;
-    await insertTranscriptionJob({
-      id: `transcription-${randomUUID()}`,
-      projectId: restoredProjectId,
-      mediaSourceId,
-      outputSourceId,
-      status: job.status === 'running' || job.status === 'completed' || job.status === 'failed' ? job.status : 'queued',
-      mode: 'segment_assembly',
-      note: typeof job.note === 'string' ? job.note : '',
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      completedAt: typeof job.completedAt === 'string' ? job.completedAt : null
-    });
-  }
+    for (const item of Array.isArray(snapshot.referenceCollectionItems) ? snapshot.referenceCollectionItems : []) {
+      const collectionId = referenceCollectionIdMap.get(String(item.collectionId));
+      const referenceId = referenceIdMap.get(String(item.referenceId));
+      if (!collectionId || !referenceId) continue;
+      await insertProjectReferenceCollectionItem({
+        id: `reference-collection-item-${randomUUID()}`,
+        projectId: restoredProjectId,
+        collectionId,
+        referenceId,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+    }
+
+    for (const link of Array.isArray(snapshot.referenceLinks) ? snapshot.referenceLinks : []) {
+      const referenceId = referenceIdMap.get(String(link.referenceId));
+      if (!referenceId) continue;
+      const targetType = parseReferenceTargetType(link.targetType);
+      const mappedTargetId = targetType === 'source'
+        ? sourceIdMap.get(String(link.targetId))
+        : targetType === 'segment'
+          ? segmentIdMap.get(String(link.targetId))
+          : targetType === 'memo'
+            ? memoIdMap.get(String(link.targetId))
+            : targetType === 'code'
+              ? codeIdMap.get(String(link.targetId))
+              : targetType === 'case'
+                ? caseIdMap.get(String(link.targetId))
+                : annotationIdMap.get(String(link.targetId));
+      if (!mappedTargetId) continue;
+      await insertProjectReferenceLink({
+        id: `reference-link-${randomUUID()}`,
+        projectId: restoredProjectId,
+        referenceId,
+        targetType,
+        targetId: mappedTargetId,
+        note: typeof link.note === 'string' ? link.note : '',
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+    }
+
+    for (const event of Array.isArray(snapshot.referenceMergeEvents) ? snapshot.referenceMergeEvents : []) {
+      const primaryReferenceId = referenceIdMap.get(String(event.primaryReferenceId)) ?? String(event.primaryReferenceId ?? '').trim();
+      const mergedReferenceId = referenceIdMap.get(String(event.mergedReferenceId)) ?? String(event.mergedReferenceId ?? '').trim();
+      if (!primaryReferenceId || !mergedReferenceId) continue;
+      await insertProjectReferenceMergeEvent({
+        id: `reference-merge-${randomUUID()}`,
+        projectId: restoredProjectId,
+        primaryReferenceId,
+        mergedReferenceId,
+        reason: typeof event.reason === 'string' ? event.reason : '',
+        mergedSnapshotJson: typeof event.mergedSnapshotJson === 'string' ? event.mergedSnapshotJson : '{}',
+        createdByUserId: null,
+        createdByUsername: typeof event.createdByUsername === 'string' ? event.createdByUsername : params.username,
+        createdAt: timestamp
+      });
+    }
+
+    for (const syncLink of Array.isArray(snapshot.transcriptSyncLinks) ? snapshot.transcriptSyncLinks : []) {
+      const mediaSourceId = sourceIdMap.get(String(syncLink.mediaSourceId));
+      const transcriptSourceId = sourceIdMap.get(String(syncLink.transcriptSourceId));
+      const segmentId = syncLink.segmentId ? (segmentIdMap.get(String(syncLink.segmentId)) ?? null) : null;
+      if (!mediaSourceId || !transcriptSourceId) continue;
+      await insertTranscriptSyncLink({
+        id: `sync-${randomUUID()}`,
+        projectId: restoredProjectId,
+        mediaSourceId,
+        transcriptSourceId,
+        segmentId,
+        startMs: typeof syncLink.startMs === 'number' ? syncLink.startMs : 0,
+        endMs: typeof syncLink.endMs === 'number' ? syncLink.endMs : 0,
+        transcriptText: typeof syncLink.transcriptText === 'string' ? syncLink.transcriptText : '',
+        speakerLabel: typeof syncLink.speakerLabel === 'string' ? syncLink.speakerLabel : '',
+        confidence: typeof syncLink.confidence === 'number' && Number.isFinite(syncLink.confidence) ? syncLink.confidence : null,
+        syncScore: typeof syncLink.syncScore === 'number' && Number.isFinite(syncLink.syncScore) ? syncLink.syncScore : null,
+        tokenTimelineJson: typeof syncLink.tokenTimelineJson === 'string' ? syncLink.tokenTimelineJson : '[]',
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+    }
+
+    for (const job of Array.isArray(snapshot.transcriptionJobs) ? snapshot.transcriptionJobs : []) {
+      const mediaSourceId = sourceIdMap.get(String(job.mediaSourceId));
+      const outputSourceId = job.outputSourceId ? (sourceIdMap.get(String(job.outputSourceId)) ?? null) : null;
+      if (!mediaSourceId) continue;
+      await insertTranscriptionJob({
+        id: `transcription-${randomUUID()}`,
+        projectId: restoredProjectId,
+        mediaSourceId,
+        outputSourceId,
+        status: job.status === 'running' || job.status === 'completed' || job.status === 'failed' ? job.status : 'queued',
+        mode: job.mode === 'timeline_chunked' || job.mode === 'hybrid' ? job.mode : 'segment_assembly',
+        note: typeof job.note === 'string' ? job.note : '',
+        pipelineJson: typeof job.pipelineJson === 'string' ? job.pipelineJson : '{}',
+        progressPercent: typeof job.progressPercent === 'number' && Number.isFinite(job.progressPercent) ? Math.max(0, Math.min(100, Math.round(job.progressPercent))) : 100,
+        startedAt: typeof job.startedAt === 'string' ? job.startedAt : null,
+        errorMessage: typeof job.errorMessage === 'string' ? job.errorMessage : null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        completedAt: typeof job.completedAt === 'string' ? job.completedAt : null
+      });
+    }
 
   for (const transform of Array.isArray(snapshot.savedTransforms) ? snapshot.savedTransforms : []) {
     await insertSavedTransform({
@@ -1731,6 +3786,164 @@ async function restoreBackupSnapshot(params: {
       queryJson: typeof query.queryJson === 'string' ? query.queryJson : '{}',
       createdAt: timestamp,
       updatedAt: timestamp
+    });
+  }
+
+  for (const assignment of Array.isArray(snapshot.codingAssignments) ? snapshot.codingAssignments : []) {
+    const sourceId = assignment.sourceId ? (sourceIdMap.get(String(assignment.sourceId)) ?? null) : null;
+    const codeId = assignment.codeId ? (codeIdMap.get(String(assignment.codeId)) ?? null) : null;
+    const caseId = assignment.caseId ? (caseIdMap.get(String(assignment.caseId)) ?? null) : null;
+    const assigneeUserId = await resolveUserIdByUsername(assignment.assigneeUsername);
+    await insertCodingAssignment({
+      id: `assignment-${randomUUID()}`,
+      projectId: restoredProjectId,
+      title: typeof assignment.title === 'string' ? assignment.title : 'Restored assignment',
+      description: typeof assignment.description === 'string' ? assignment.description : '',
+      sourceId,
+      codeId,
+      caseId,
+      assigneeUserId,
+      assigneeUsername: typeof assignment.assigneeUsername === 'string' ? assignment.assigneeUsername : null,
+      status: parseCodingAssignmentStatus(assignment.status),
+      priority: parseCodingAssignmentPriority(assignment.priority),
+      dueAt: parseOptionalIsoDate(assignment.dueAt),
+      createdByUserId: null,
+      createdByUsername: typeof assignment.createdByUsername === 'string' ? assignment.createdByUsername : params.username,
+      createdAt: parseIsoDate(assignment.createdAt) ?? timestamp,
+      updatedAt: parseIsoDate(assignment.updatedAt) ?? timestamp,
+      completedAt: parseOptionalIsoDate(assignment.completedAt)
+    });
+  }
+
+  for (const entry of Array.isArray(snapshot.codingConflictResolutions) ? snapshot.codingConflictResolutions : []) {
+    const segmentId = segmentIdMap.get(String(entry.segmentId));
+    const codeId = codeIdMap.get(String(entry.codeId));
+    if (!segmentId || !codeId) continue;
+    await insertCodingConflictResolution({
+      id: `merge-resolution-${randomUUID()}`,
+      projectId: restoredProjectId,
+      segmentId,
+      codeId,
+      status: entry.status === 'deferred' || entry.status === 'reopened' || entry.status === 'restored' ? entry.status : 'resolved',
+      keepMode: typeof entry.keepMode === 'string' ? entry.keepMode : null,
+      keepApplicationId: null,
+      keepCoderId: typeof entry.keepCoderId === 'string' ? entry.keepCoderId : null,
+      removedApplicationIdsJson: typeof entry.removedApplicationIdsJson === 'string' ? entry.removedApplicationIdsJson : '[]',
+      removedCount: typeof entry.removedCount === 'number' ? entry.removedCount : 0,
+      resolutionNote: typeof entry.resolutionNote === 'string' ? entry.resolutionNote : '',
+      actorUserId: null,
+      actorUsername: typeof entry.actorUsername === 'string' ? entry.actorUsername : params.username,
+      metadataJson: typeof entry.metadataJson === 'string' ? entry.metadataJson : '{}',
+      createdAt: parseIsoDate(entry.createdAt) ?? timestamp
+    });
+  }
+
+  for (const triage of Array.isArray(snapshot.codingConflictTriages) ? snapshot.codingConflictTriages : []) {
+    const segmentId = segmentIdMap.get(String(triage.segmentId));
+    const codeId = codeIdMap.get(String(triage.codeId));
+    if (!segmentId || !codeId) continue;
+    const assigneeUserId = await resolveUserIdByUsername(triage.assigneeUsername);
+    const reviewerUserId = await resolveUserIdByUsername(triage.reviewerUsername);
+    await upsertCodingConflictTriage({
+      id: `triage-${randomUUID()}`,
+      projectId: restoredProjectId,
+      segmentId,
+      codeId,
+      status: parseCodingConflictTriageStatus(triage.status),
+      severity: parseCodingConflictTriageSeverity(triage.severity),
+      assigneeUserId,
+      assigneeUsername: typeof triage.assigneeUsername === 'string' ? triage.assigneeUsername : null,
+      reviewerUserId,
+      reviewerUsername: typeof triage.reviewerUsername === 'string' ? triage.reviewerUsername : null,
+      dueAt: parseOptionalIsoDate(triage.dueAt),
+      triageNote: typeof triage.triageNote === 'string' ? triage.triageNote : '',
+      labelsJson: typeof triage.labelsJson === 'string' ? triage.labelsJson : '[]',
+      metadataJson: typeof triage.metadataJson === 'string' ? triage.metadataJson : '{}',
+      createdByUserId: null,
+      createdByUsername: typeof triage.createdByUsername === 'string' ? triage.createdByUsername : params.username,
+      createdAt: parseIsoDate(triage.createdAt) ?? timestamp,
+      updatedAt: parseIsoDate(triage.updatedAt) ?? timestamp
+    });
+  }
+
+  for (const calibration of Array.isArray(snapshot.codingCalibrationSessions) ? snapshot.codingCalibrationSessions : []) {
+    const targetCodeId = calibration.targetCodeId ? (codeIdMap.get(String(calibration.targetCodeId)) ?? null) : null;
+    const mappedSampleSegments = Array.isArray(calibration.sampleSegmentIds)
+      ? calibration.sampleSegmentIds
+        .map((segmentId: unknown) => segmentIdMap.get(String(segmentId)))
+        .filter((value: unknown): value is string => Boolean(value))
+      : (() => {
+        if (typeof calibration.sampleSegmentIdsJson !== 'string') return [];
+        try {
+          const parsed = JSON.parse(calibration.sampleSegmentIdsJson);
+          return Array.isArray(parsed)
+            ? parsed.map((segmentId: unknown) => segmentIdMap.get(String(segmentId))).filter((value: unknown): value is string => typeof value === 'string' && value.length > 0)
+            : [];
+        } catch {
+          return [];
+        }
+      })();
+    await insertCodingCalibrationSession({
+      id: `calibration-${randomUUID()}`,
+      projectId: restoredProjectId,
+      label: typeof calibration.label === 'string' ? calibration.label : 'Restored calibration session',
+      scopeJson: typeof calibration.scopeJson === 'string'
+        ? calibration.scopeJson
+        : JSON.stringify(typeof calibration.scope === 'object' && calibration.scope ? calibration.scope : {}),
+      targetCodeId,
+      coderAId: typeof calibration.coderAId === 'string' ? calibration.coderAId : null,
+      coderBId: typeof calibration.coderBId === 'string' ? calibration.coderBId : null,
+      sampleSegmentIdsJson: JSON.stringify(mappedSampleSegments),
+      status: parseCodingCalibrationStatus(calibration.status),
+      targetAgreement: parseOptionalBoundedNumber(calibration.targetAgreement, 0, 1) ?? 0.8,
+      targetKappa: parseOptionalBoundedNumber(calibration.targetKappa, -1, 1) ?? 0.7,
+      minSamples: parsePositiveInteger(calibration.minSamples, 25, 5, 500),
+      latestResultJson: typeof calibration.latestResultJson === 'string'
+        ? calibration.latestResultJson
+        : JSON.stringify(typeof calibration.latestResult === 'object' && calibration.latestResult ? calibration.latestResult : {}),
+      createdByUserId: null,
+      createdByUsername: typeof calibration.createdByUsername === 'string' ? calibration.createdByUsername : params.username,
+      createdAt: parseIsoDate(calibration.createdAt) ?? timestamp,
+      updatedAt: parseIsoDate(calibration.updatedAt) ?? timestamp,
+      completedAt: parseOptionalIsoDate(calibration.completedAt)
+    });
+  }
+
+  const snapshotMergePolicy = typeof snapshot.mergeGovernancePolicy === 'object' && snapshot.mergeGovernancePolicy
+    ? snapshot.mergeGovernancePolicy
+    : null;
+  if (snapshotMergePolicy) {
+    await upsertCodingMergeGovernancePolicy({
+      projectId: restoredProjectId,
+      requireResolutionNote: parseBooleanFlag((snapshotMergePolicy as Record<string, unknown>).requireResolutionNote, true),
+      restrictResolutionToOwnerOrProfessor: parseBooleanFlag((snapshotMergePolicy as Record<string, unknown>).restrictResolutionToOwnerOrProfessor, true),
+      requireSecondReviewerForHighRisk: parseBooleanFlag((snapshotMergePolicy as Record<string, unknown>).requireSecondReviewerForHighRisk, true),
+      highRiskMinCoderCount: parsePositiveInteger((snapshotMergePolicy as Record<string, unknown>).highRiskMinCoderCount, 3, 1, 20),
+      highRiskMinConfidenceSpread: parseOptionalBoundedNumber((snapshotMergePolicy as Record<string, unknown>).highRiskMinConfidenceSpread, 0, 1) ?? 0.35,
+      requiredApprovalCountForHighRisk: parsePositiveInteger((snapshotMergePolicy as Record<string, unknown>).requiredApprovalCountForHighRisk, 1, 1, 5),
+      approvalExpiryHours: parsePositiveInteger((snapshotMergePolicy as Record<string, unknown>).approvalExpiryHours, 168, 1, 720),
+      defaultTriageSlaHours: parsePositiveInteger((snapshotMergePolicy as Record<string, unknown>).defaultTriageSlaHours, 72, 1, 720),
+      updatedAt: timestamp,
+      updatedByUserId: null
+    });
+  }
+
+  for (const approval of Array.isArray(snapshot.mergeApprovals) ? snapshot.mergeApprovals : []) {
+    const segmentId = segmentIdMap.get(String(approval.segmentId));
+    const codeId = codeIdMap.get(String(approval.codeId));
+    if (!segmentId || !codeId) continue;
+    const approverUserId = await resolveUserIdByUsername(approval.approvedByUsername);
+    await upsertCodingMergeApproval({
+      id: `approval-${randomUUID()}`,
+      projectId: restoredProjectId,
+      segmentId,
+      codeId,
+      approvedByUserId: approverUserId,
+      approvedByUsername: typeof approval.approvedByUsername === 'string' ? approval.approvedByUsername : params.username,
+      note: typeof approval.note === 'string' ? approval.note : '',
+      createdAt: parseIsoDate(approval.createdAt) ?? timestamp,
+      usedAt: parseOptionalIsoDate(approval.usedAt),
+      revokedAt: parseOptionalIsoDate(approval.revokedAt)
     });
   }
 
@@ -1829,28 +4042,783 @@ function parseEvidenceQuery(query: Partial<{
   };
 }
 
-function parseTextSearchMode(value: unknown): 'contains' | 'phrase' | 'whole_word' {
-  return value === 'phrase' || value === 'whole_word' ? value : 'contains';
+type ParsedEvidenceQuery = ReturnType<typeof parseEvidenceQuery>;
+type QualitativeProjectPayload = Awaited<ReturnType<typeof buildQualitativeProjectPayload>>;
+
+function chooseAxionPrefilterSeedRegion(query: ParsedEvidenceQuery): 'logic' | 'memory' | 'emotion' {
+  if (query.codeId || query.coCodeId || query.coderId) return 'logic';
+  if (query.memoOnly) return 'emotion';
+  return 'memory';
+}
+
+function shouldRunAxionPrefilter(query: ParsedEvidenceQuery, segmentCount: number): boolean {
+  if (!isAxionPrefilterEnabled || !isAxionSidecarEnabled) return false;
+  if (segmentCount < 120) return false;
+  return Boolean(
+    query.searchText
+    || query.codeId
+    || query.coCodeId
+    || query.sourceId
+    || query.sourceKind
+    || query.segmentKind
+    || query.caseId
+    || query.coderId
+    || query.memoOnly
+  );
+}
+
+async function applyAxionPrefilterToQualitativePayload(
+  payload: QualitativeProjectPayload,
+  query: ParsedEvidenceQuery,
+  options?: {
+    searchTextHint?: string;
+    preferredMaxRows?: number;
+  }
+): Promise<{
+  payload: QualitativeProjectPayload;
+  prefilter: {
+    applied: boolean;
+    enabled: boolean;
+    candidateCount: number;
+    totalSegments: number;
+    seedRegion: string;
+    reason?: string;
+    durationMs?: number;
+  };
+}> {
+  const totalSegments = payload.segments.length;
+  const seedRegion = chooseAxionPrefilterSeedRegion(query);
+  if (!shouldRunAxionPrefilter(query, totalSegments)) {
+    return {
+      payload,
+      prefilter: {
+        applied: false,
+        enabled: isAxionPrefilterEnabled,
+        candidateCount: totalSegments,
+        totalSegments,
+        seedRegion,
+        reason: 'prefilter_not_required'
+      }
+    };
+  }
+
+  const codeCountsBySegmentId = new Map<string, number>();
+  for (const item of payload.codeApplications) {
+    codeCountsBySegmentId.set(item.segmentId, (codeCountsBySegmentId.get(item.segmentId) ?? 0) + 1);
+  }
+  const queryText = query.searchText
+    ?? options?.searchTextHint
+    ?? query.codeId
+    ?? query.coCodeId
+    ?? query.sourceId
+    ?? query.caseId
+    ?? '';
+  const preferredMaxRows = Math.max(50, Math.min(5000, Number(options?.preferredMaxRows ?? 400)));
+  const topK = Math.min(
+    totalSegments,
+    Math.max(preferredMaxRows * 3, Math.round(totalSegments * (query.searchText ? 0.45 : 0.7)))
+  );
+  const prefilterResponse = await axionSidecarRequest<{
+    ok?: boolean;
+    result?: {
+      candidateSegmentIds?: string[];
+      durationMs?: number;
+    };
+  }>('POST', '/parallel-cubed/prefilter', {
+    query: queryText,
+    seedRegion,
+    topK,
+    minScore: Number(process.env.MU_AXION_PREFILTER_MIN_SCORE ?? 0.08),
+    feedback: 0.0,
+    entropy: query.memoOnly ? 0.2 : 0.08,
+    confidence: 0.82,
+    segments: payload.segments.map((segment) => ({
+      id: segment.id,
+      sourceId: segment.sourceId,
+      kind: segment.kind,
+      text: segment.text,
+      codeCount: codeCountsBySegmentId.get(segment.id) ?? 0
+    }))
+  });
+
+  const candidateIds = prefilterResponse?.result?.candidateSegmentIds
+    ?.map((item) => String(item ?? '').trim())
+    .filter(Boolean) ?? [];
+  if (candidateIds.length === 0 || candidateIds.length >= totalSegments) {
+    return {
+      payload,
+      prefilter: {
+        applied: false,
+        enabled: isAxionPrefilterEnabled,
+        candidateCount: totalSegments,
+        totalSegments,
+        seedRegion,
+        reason: candidateIds.length === 0 ? 'no_candidates' : 'no_reduction',
+        durationMs: prefilterResponse?.result?.durationMs
+      }
+    };
+  }
+
+  const candidateSet = new Set(candidateIds);
+  const filteredSegments = payload.segments.filter((segment) => candidateSet.has(segment.id));
+  const segmentIdSet = new Set(filteredSegments.map((segment) => segment.id));
+  const filteredCodeApplications = payload.codeApplications.filter((application) => segmentIdSet.has(application.segmentId));
+  const sourceIdSet = new Set(filteredSegments.map((segment) => segment.sourceId));
+  const filteredSources = payload.sources.filter((source) => sourceIdSet.has(source.id));
+
+  const caseIdFromCodeApplicationSet = new Set(filteredCodeApplications.map((application) => application.caseId).filter((value): value is string => Boolean(value)));
+  const filteredCases = payload.cases.filter((caseEntity) => {
+    if (caseIdFromCodeApplicationSet.has(caseEntity.id)) return true;
+    return caseEntity.sourceIds.some((sourceId) => sourceIdSet.has(sourceId));
+  });
+  const caseIdSet = new Set(filteredCases.map((caseEntity) => caseEntity.id));
+  const filteredAttributes = payload.attributes.filter((attribute) => {
+    if (attribute.targetType === 'source') return sourceIdSet.has(attribute.targetId);
+    if (attribute.targetType === 'case') return caseIdSet.has(attribute.targetId);
+    return true;
+  });
+  const filteredMemos = payload.memos.filter((memo) => {
+    if (memo.targetType === 'segment') return segmentIdSet.has(memo.targetId);
+    if (memo.targetType === 'source') return sourceIdSet.has(memo.targetId);
+    if (memo.targetType === 'case') return caseIdSet.has(memo.targetId);
+    return true;
+  });
+  const filteredAnnotations = payload.annotations.filter((annotation) => {
+    if (annotation.targetType === 'segment') return segmentIdSet.has(annotation.targetId);
+    if (annotation.targetType === 'source') return sourceIdSet.has(annotation.targetId);
+    if (annotation.targetType === 'case') return caseIdSet.has(annotation.targetId);
+    return true;
+  });
+  const filteredRelationships = payload.relationships.filter((relationship) => {
+    if (relationship.leftTargetType === 'segment' && !segmentIdSet.has(relationship.leftTargetId)) return false;
+    if (relationship.rightTargetType === 'segment' && !segmentIdSet.has(relationship.rightTargetId)) return false;
+    if (relationship.leftTargetType === 'source' && !sourceIdSet.has(relationship.leftTargetId)) return false;
+    if (relationship.rightTargetType === 'source' && !sourceIdSet.has(relationship.rightTargetId)) return false;
+    if (relationship.leftTargetType === 'case' && !caseIdSet.has(relationship.leftTargetId)) return false;
+    if (relationship.rightTargetType === 'case' && !caseIdSet.has(relationship.rightTargetId)) return false;
+    return true;
+  });
+  const filteredTranscriptSyncLinks = payload.transcriptSyncLinks.filter((link) => {
+    if (link.segmentId && !segmentIdSet.has(link.segmentId)) return false;
+    if (!sourceIdSet.has(link.mediaSourceId)) return false;
+    if (!sourceIdSet.has(link.transcriptSourceId)) return false;
+    return true;
+  });
+
+  return {
+    payload: {
+      ...payload,
+      sources: filteredSources,
+      segments: filteredSegments,
+      codeApplications: filteredCodeApplications,
+      cases: filteredCases,
+      memos: filteredMemos,
+      attributes: filteredAttributes,
+      annotations: filteredAnnotations,
+      relationships: filteredRelationships,
+      transcriptSyncLinks: filteredTranscriptSyncLinks
+    },
+    prefilter: {
+      applied: true,
+      enabled: isAxionPrefilterEnabled,
+      candidateCount: filteredSegments.length,
+      totalSegments,
+      seedRegion,
+      durationMs: prefilterResponse?.result?.durationMs
+    }
+  };
+}
+
+function parseTextSearchMode(value: unknown): 'contains' | 'phrase' | 'whole_word' | 'wildcard' | 'regex' | 'fuzzy' {
+  return value === 'phrase'
+    || value === 'whole_word'
+    || value === 'wildcard'
+    || value === 'regex'
+    || value === 'fuzzy'
+    ? value
+    : 'contains';
+}
+
+function parseTextSearchLinguisticMode(value: unknown): 'none' | 'stem' | 'lemma' {
+  return value === 'stem' || value === 'lemma' ? value : 'none';
+}
+
+function parsePatternAutocodeMatchMode(value: unknown): 'contains' | 'phrase' | 'whole_word' {
+  return value === 'contains' || value === 'whole_word' ? value : 'phrase';
+}
+
+function parseTextSearchCodingScope(value: unknown): 'all' | 'coded_only' | 'uncoded_only' {
+  return value === 'coded_only' || value === 'uncoded_only' ? value : 'all';
+}
+
+function parseTextSearchSortBy(value: unknown): 'hits_desc' | 'source' | 'segment' {
+  return value === 'source' || value === 'segment' ? value : 'hits_desc';
 }
 
 function parseCompoundQueryClauses(value: unknown): Array<{
   field: 'text' | 'code' | 'case' | 'source' | 'coder' | 'memo' | 'source_kind' | 'segment_kind';
-  operator: 'contains' | 'equals' | 'whole_word' | 'phrase' | 'present';
+  operator: 'contains' | 'equals' | 'whole_word' | 'phrase' | 'present' | 'starts_with' | 'ends_with' | 'wildcard' | 'regex' | 'fuzzy' | 'near';
   value?: string;
+  enabled?: boolean;
+  negate?: boolean;
+  linguisticMode?: 'none' | 'stem' | 'lemma';
+  fuzzyDistance?: number;
+  proximityWithin?: number;
+  proximityOrdered?: boolean;
 }> {
   if (!Array.isArray(value)) return [];
   const validFields = new Set(['text', 'code', 'case', 'source', 'coder', 'memo', 'source_kind', 'segment_kind']);
-  const validOperators = new Set(['contains', 'equals', 'whole_word', 'phrase', 'present']);
+  const validOperators = new Set(['contains', 'equals', 'whole_word', 'phrase', 'present', 'starts_with', 'ends_with', 'wildcard', 'regex', 'fuzzy', 'near']);
   return value.flatMap((item) => {
     const field = typeof item?.field === 'string' && validFields.has(item.field) ? item.field as 'text' | 'code' | 'case' | 'source' | 'coder' | 'memo' | 'source_kind' | 'segment_kind' : null;
-    const operator = typeof item?.operator === 'string' && validOperators.has(item.operator) ? item.operator as 'contains' | 'equals' | 'whole_word' | 'phrase' | 'present' : null;
+    const operator = typeof item?.operator === 'string' && validOperators.has(item.operator) ? item.operator as 'contains' | 'equals' | 'whole_word' | 'phrase' | 'present' | 'starts_with' | 'ends_with' | 'wildcard' | 'regex' | 'fuzzy' | 'near' : null;
     if (!field || !operator) return [];
     return [{
       field,
       operator,
-      value: typeof item?.value === 'string' && item.value.trim() ? item.value.trim() : undefined
+      value: typeof item?.value === 'string' && item.value.trim() ? item.value.trim() : undefined,
+      enabled: item?.enabled === false || item?.enabled === 'false' ? false : true,
+      negate: item?.negate === true || item?.negate === 'true',
+      linguisticMode: parseTextSearchLinguisticMode(item?.linguisticMode),
+      fuzzyDistance: parsePositiveInteger(item?.fuzzyDistance, 1, 1, 3),
+      proximityWithin: parsePositiveInteger(item?.proximityWithin, 6, 0, 60),
+      proximityOrdered: item?.proximityOrdered === true || item?.proximityOrdered === 'true'
     }];
   });
+}
+
+type ParsedCompoundClause = ReturnType<typeof parseCompoundQueryClauses>[number];
+
+function parseCompoundOperator(value: unknown): 'all' | 'any' | 'none' {
+  return value === 'all' || value === 'none' ? value : 'any';
+}
+
+function parseCompoundWorkbenchDefinition(value: unknown): {
+  groupOperator: 'all' | 'any' | 'none';
+  minGroupsMatched: number | null;
+  groups: Array<{
+    id: string;
+    label: string;
+    enabled: boolean;
+    operator: 'all' | 'any' | 'none';
+    minClausesMatched: number | null;
+    clauses: ParsedCompoundClause[];
+  }>;
+} {
+  const body = typeof value === 'object' && value ? value as Record<string, unknown> : {};
+  const rawMinGroupsMatched = body.minGroupsMatched === null || body.minGroupsMatched === undefined || body.minGroupsMatched === ''
+    ? null
+    : parsePositiveInteger(body.minGroupsMatched, 1, 1, 25);
+  const groupsRaw = Array.isArray(body.groups) ? body.groups : [];
+  const groups = groupsRaw.flatMap((group, index) => {
+    if (!group || typeof group !== 'object') return [];
+    const mapped = group as Record<string, unknown>;
+    const clauses = parseCompoundQueryClauses(mapped.clauses)
+      .filter((clause) => clause.enabled !== false);
+    if (clauses.length === 0) return [];
+    const minClausesMatched = mapped.minClausesMatched === null || mapped.minClausesMatched === undefined || mapped.minClausesMatched === ''
+      ? null
+      : Math.min(clauses.length, parsePositiveInteger(mapped.minClausesMatched, 1, 1, 25));
+    return [{
+      id: typeof mapped.id === 'string' && mapped.id.trim() ? mapped.id.trim() : `group_${index + 1}`,
+      label: typeof mapped.label === 'string' && mapped.label.trim() ? mapped.label.trim() : `Group ${index + 1}`,
+      enabled: mapped.enabled !== false && mapped.enabled !== 'false',
+      operator: parseCompoundOperator(mapped.operator),
+      minClausesMatched,
+      clauses
+    }];
+  });
+  const groupOperator = parseCompoundOperator(body.groupOperator);
+  const minGroupsMatched = groupOperator === 'none' || groups.length === 0 || rawMinGroupsMatched === null
+    ? null
+    : Math.min(groups.length, rawMinGroupsMatched);
+  return {
+    groupOperator,
+    minGroupsMatched,
+    groups
+  };
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function stemToken(value: string): string {
+  const token = value.toLowerCase();
+  if (token.length <= 3) return token;
+  if (token.endsWith('ies') && token.length > 4) return `${token.slice(0, -3)}y`;
+  if (token.endsWith('ing') && token.length > 5) return token.slice(0, -3);
+  if (token.endsWith('ed') && token.length > 4) return token.slice(0, -2);
+  if (token.endsWith('ly') && token.length > 4) return token.slice(0, -2);
+  if (token.endsWith('es') && token.length > 4) return token.slice(0, -2);
+  if (token.endsWith('s') && token.length > 3) return token.slice(0, -1);
+  return token;
+}
+
+const LEMMA_LOOKUP = new Map<string, string>([
+  ['children', 'child'],
+  ['men', 'man'],
+  ['women', 'woman'],
+  ['better', 'good'],
+  ['best', 'good'],
+  ['worse', 'bad'],
+  ['worst', 'bad'],
+  ['went', 'go'],
+  ['gone', 'go'],
+  ['did', 'do'],
+  ['done', 'do'],
+  ['was', 'be'],
+  ['were', 'be'],
+  ['has', 'have'],
+  ['had', 'have']
+]);
+
+function normalizeSearchToken(token: string, linguisticMode: 'none' | 'stem' | 'lemma'): string {
+  const lower = token.toLowerCase();
+  if (linguisticMode === 'lemma') return LEMMA_LOOKUP.get(lower) ?? stemToken(lower);
+  if (linguisticMode === 'stem') return stemToken(lower);
+  return lower;
+}
+
+function tokenizeForSearch(
+  text: string,
+  caseSensitive: boolean,
+  linguisticMode: 'none' | 'stem' | 'lemma'
+): Array<{ token: string; start: number; end: number }> {
+  const regex = /[A-Za-z0-9][A-Za-z0-9'_-]*/g;
+  const results: Array<{ token: string; start: number; end: number }> = [];
+  for (const match of text.matchAll(regex)) {
+    const raw = match[0];
+    const start = match.index ?? 0;
+    const baseToken = caseSensitive ? raw : raw.toLowerCase();
+    results.push({
+      token: linguisticMode === 'none' ? baseToken : normalizeSearchToken(baseToken, linguisticMode),
+      start,
+      end: start + raw.length
+    });
+  }
+  return results;
+}
+
+function findTokenSequenceRanges(
+  targetTokens: Array<{ token: string; start: number; end: number }>,
+  needleTokens: string[]
+): Array<{ start: number; end: number }> {
+  if (needleTokens.length === 0 || targetTokens.length < needleTokens.length) return [];
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (let index = 0; index <= targetTokens.length - needleTokens.length; index += 1) {
+    let matches = true;
+    for (let offset = 0; offset < needleTokens.length; offset += 1) {
+      if (targetTokens[index + offset]?.token !== needleTokens[offset]) {
+        matches = false;
+        break;
+      }
+    }
+    if (!matches) continue;
+    ranges.push({
+      start: targetTokens[index]!.start,
+      end: targetTokens[index + needleTokens.length - 1]!.end
+    });
+  }
+  return ranges;
+}
+
+function findTokenSequenceIndexes(
+  targetTokens: string[],
+  needleTokens: string[]
+): Array<{ start: number; end: number }> {
+  if (needleTokens.length === 0 || targetTokens.length < needleTokens.length) return [];
+  const indexes: Array<{ start: number; end: number }> = [];
+  for (let index = 0; index <= targetTokens.length - needleTokens.length; index += 1) {
+    let matches = true;
+    for (let offset = 0; offset < needleTokens.length; offset += 1) {
+      if (targetTokens[index + offset] !== needleTokens[offset]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      indexes.push({ start: index, end: index + needleTokens.length - 1 });
+    }
+  }
+  return indexes;
+}
+
+function buildWildcardRegex(pattern: string, caseSensitive: boolean): RegExp {
+  const escaped = pattern
+    .split('')
+    .map((char) => {
+      if (char === '*') return '.*';
+      if (char === '?') return '.';
+      return escapeRegex(char);
+    })
+    .join('');
+  return new RegExp(escaped, caseSensitive ? 'g' : 'gi');
+}
+
+function levenshteinDistance(left: string, right: string, maxDistance: number): number {
+  if (left === right) return 0;
+  if (Math.abs(left.length - right.length) > maxDistance) return maxDistance + 1;
+  const previous = new Array(right.length + 1).fill(0).map((_, index) => index);
+  const current = new Array(right.length + 1).fill(0);
+  for (let row = 1; row <= left.length; row += 1) {
+    current[0] = row;
+    let minRowValue = current[0];
+    for (let column = 1; column <= right.length; column += 1) {
+      const substitution = left[row - 1] === right[column - 1] ? 0 : 1;
+      current[column] = Math.min(
+        previous[column] + 1,
+        current[column - 1] + 1,
+        previous[column - 1] + substitution
+      );
+      minRowValue = Math.min(minRowValue, current[column]!);
+    }
+    if (minRowValue > maxDistance) return maxDistance + 1;
+    for (let column = 0; column <= right.length; column += 1) {
+      previous[column] = current[column]!;
+    }
+  }
+  return previous[right.length] ?? maxDistance + 1;
+}
+
+function findFuzzyRanges(params: {
+  text: string;
+  searchText: string;
+  caseSensitive: boolean;
+  linguisticMode: 'none' | 'stem' | 'lemma';
+  fuzzyDistance: number;
+}): Array<{ start: number; end: number }> {
+  const fuzzyDistance = parsePositiveInteger(params.fuzzyDistance, 1, 1, 3);
+  const targetTokens = tokenizeForSearch(params.text, params.caseSensitive, params.linguisticMode);
+  const needleTokens = tokenizeForSearch(params.searchText, params.caseSensitive, params.linguisticMode)
+    .map((token) => token.token);
+  if (needleTokens.length === 0 || targetTokens.length === 0) return [];
+  return targetTokens
+    .filter((token) => needleTokens.some((needle) => levenshteinDistance(token.token, needle, fuzzyDistance) <= fuzzyDistance))
+    .map((token) => ({ start: token.start, end: token.end }));
+}
+
+function parseProximityPair(value: string): { left: string; right: string } | null {
+  const normalized = value.trim();
+  if (!normalized) return null;
+  const splitByPipe = normalized.split(/\s*\|\s*/);
+  if (splitByPipe.length === 2 && splitByPipe.every(Boolean)) {
+    return { left: splitByPipe[0]!, right: splitByPipe[1]! };
+  }
+  const splitByDoubleColon = normalized.split(/\s*::\s*/);
+  if (splitByDoubleColon.length === 2 && splitByDoubleColon.every(Boolean)) {
+    return { left: splitByDoubleColon[0]!, right: splitByDoubleColon[1]! };
+  }
+  const nearMatch = normalized.match(/^(.+?)\s+(?:near|~)\s+(.+)$/i);
+  if (nearMatch?.[1] && nearMatch?.[2]) {
+    return { left: nearMatch[1].trim(), right: nearMatch[2].trim() };
+  }
+  return null;
+}
+
+function matchesProximity(params: {
+  target: string;
+  value: string;
+  caseSensitive: boolean;
+  linguisticMode: 'none' | 'stem' | 'lemma';
+  proximityWithin: number;
+  proximityOrdered: boolean;
+}): boolean {
+  const pair = parseProximityPair(params.value);
+  if (!pair) return false;
+  const targetTokens = tokenizeForSearch(params.target, params.caseSensitive, params.linguisticMode).map((token) => token.token);
+  const leftNeedles = tokenizeForSearch(pair.left, params.caseSensitive, params.linguisticMode).map((token) => token.token);
+  const rightNeedles = tokenizeForSearch(pair.right, params.caseSensitive, params.linguisticMode).map((token) => token.token);
+  if (targetTokens.length === 0 || leftNeedles.length === 0 || rightNeedles.length === 0) return false;
+  const within = parsePositiveInteger(params.proximityWithin, 6, 0, 60);
+  const leftIndexes = findTokenSequenceIndexes(targetTokens, leftNeedles);
+  const rightIndexes = findTokenSequenceIndexes(targetTokens, rightNeedles);
+  for (const left of leftIndexes) {
+    for (const right of rightIndexes) {
+      if (params.proximityOrdered && right.start <= left.end) continue;
+      const gap = right.start > left.end
+        ? right.start - left.end - 1
+        : left.start - right.end - 1;
+      if (gap <= within) return true;
+    }
+  }
+  return false;
+}
+
+function matchesCompoundToken(
+  value: string,
+  operator: ParsedCompoundClause['operator'],
+  target: string,
+  caseSensitive: boolean,
+  options?: {
+    linguisticMode?: 'none' | 'stem' | 'lemma';
+    fuzzyDistance?: number;
+    proximityWithin?: number;
+    proximityOrdered?: boolean;
+  }
+): boolean {
+  const linguisticMode = options?.linguisticMode ?? 'none';
+  const fuzzyDistance = parsePositiveInteger(options?.fuzzyDistance, 1, 1, 3);
+  const proximityWithin = parsePositiveInteger(options?.proximityWithin, 6, 0, 60);
+  const proximityOrdered = options?.proximityOrdered === true;
+  const normalizedValue = caseSensitive ? value.trim() : value.trim().toLowerCase();
+  const normalizedTarget = caseSensitive ? target.trim() : target.trim().toLowerCase();
+  if (operator === 'present') return normalizedTarget.length > 0;
+  if (!normalizedValue) return false;
+  if (operator === 'equals') return normalizedTarget === normalizedValue;
+  if (operator === 'starts_with') return normalizedTarget.startsWith(normalizedValue);
+  if (operator === 'ends_with') return normalizedTarget.endsWith(normalizedValue);
+  if (operator === 'whole_word') {
+    if (linguisticMode !== 'none') {
+      const targetTokens = tokenizeForSearch(target, caseSensitive, linguisticMode).map((token) => token.token);
+      const needleTokens = tokenizeForSearch(value, caseSensitive, linguisticMode).map((token) => token.token);
+      return needleTokens.length > 0 && findTokenSequenceIndexes(targetTokens, needleTokens).length > 0;
+    }
+    return new RegExp(`\\b${escapeRegex(normalizedValue)}\\b`, caseSensitive ? '' : 'i').test(target);
+  }
+  if (operator === 'wildcard') {
+    return buildWildcardRegex(normalizedValue, caseSensitive).test(normalizedTarget);
+  }
+  if (operator === 'regex') {
+    try {
+      return new RegExp(value, caseSensitive ? '' : 'i').test(target);
+    } catch {
+      return false;
+    }
+  }
+  if (operator === 'fuzzy') {
+    return findFuzzyRanges({
+      text: target,
+      searchText: value,
+      caseSensitive,
+      linguisticMode,
+      fuzzyDistance
+    }).length > 0;
+  }
+  if (operator === 'near') {
+    return matchesProximity({
+      target,
+      value,
+      caseSensitive,
+      linguisticMode,
+      proximityWithin,
+      proximityOrdered
+    });
+  }
+  if (linguisticMode !== 'none') {
+    const targetTokens = tokenizeForSearch(target, caseSensitive, linguisticMode);
+    const needleTokens = tokenizeForSearch(value, caseSensitive, linguisticMode).map((token) => token.token);
+    return findTokenSequenceRanges(targetTokens, needleTokens).length > 0;
+  }
+  return normalizedTarget.includes(normalizedValue);
+}
+
+function matchesCompoundClause(
+  match: {
+    segment: { id: string; sourceId: string; kind: string; text: string };
+    source: { id: string; title: string | null; kind: string } | null;
+    applications: Array<{ codeId: string; coderId: string }>;
+    cases: Array<{ id: string; label: string }>;
+    memos: Array<{ title: string; body: string }>;
+  },
+  clause: ParsedCompoundClause,
+  caseSensitive: boolean
+): boolean {
+  const value = String(clause.value ?? '').trim();
+  const matchOptions = {
+    linguisticMode: clause.linguisticMode ?? 'none',
+    fuzzyDistance: clause.fuzzyDistance,
+    proximityWithin: clause.proximityWithin,
+    proximityOrdered: clause.proximityOrdered
+  };
+  const normalizedOperator: ParsedCompoundClause['operator'] = clause.operator === 'phrase' ? 'contains' : clause.operator;
+  switch (clause.field) {
+    case 'text':
+      return matchesCompoundToken(value, normalizedOperator, match.segment.text, caseSensitive, matchOptions);
+    case 'code':
+      return match.applications.some((application) => matchesCompoundToken(value, normalizedOperator, application.codeId, caseSensitive, matchOptions));
+    case 'case':
+      return match.cases.some((caseEntity) =>
+        matchesCompoundToken(value, normalizedOperator, caseEntity.id, caseSensitive, matchOptions)
+        || matchesCompoundToken(value, normalizedOperator, caseEntity.label, caseSensitive, matchOptions)
+      );
+    case 'source':
+      return matchesCompoundToken(value, normalizedOperator, match.segment.sourceId, caseSensitive, matchOptions)
+        || matchesCompoundToken(value, normalizedOperator, match.source?.title ?? '', caseSensitive, matchOptions);
+    case 'coder':
+      return match.applications.some((application) => matchesCompoundToken(value, normalizedOperator, application.coderId, caseSensitive, matchOptions));
+    case 'memo':
+      if (clause.operator === 'present') return match.memos.length > 0;
+      return match.memos.some((memo) =>
+        matchesCompoundToken(value, normalizedOperator, memo.title, caseSensitive, matchOptions)
+        || matchesCompoundToken(value, normalizedOperator, memo.body, caseSensitive, matchOptions)
+      );
+    case 'source_kind':
+      return matchesCompoundToken(value, normalizedOperator, match.source?.kind ?? '', caseSensitive, matchOptions);
+    case 'segment_kind':
+      return matchesCompoundToken(value, normalizedOperator, match.segment.kind, caseSensitive, matchOptions);
+    default:
+      return false;
+  }
+}
+
+function evaluateCompoundClauseGroup(
+  match: {
+    segment: { id: string; sourceId: string; kind: string; text: string };
+    source: { id: string; title: string | null; kind: string } | null;
+    applications: Array<{ codeId: string; coderId: string }>;
+    cases: Array<{ id: string; label: string }>;
+    memos: Array<{ title: string; body: string }>;
+  },
+  group: {
+    operator: 'all' | 'any' | 'none';
+    minClausesMatched: number | null;
+    clauses: ParsedCompoundClause[];
+  },
+  caseSensitive: boolean
+): {
+  passed: boolean;
+  operatorMatched: boolean;
+  thresholdMatched: boolean;
+  matchedClauses: number;
+  totalClauses: number;
+  clauseMatches: boolean[];
+} {
+  const checks = group.clauses.map((clause) => {
+    const matched = matchesCompoundClause(match, clause, caseSensitive);
+    return clause.negate ? !matched : matched;
+  });
+  const operatorMatched = group.operator === 'all'
+    ? checks.every(Boolean)
+    : group.operator === 'none'
+      ? checks.every((entry) => !entry)
+      : checks.some(Boolean);
+  const matchedClauses = checks.filter(Boolean).length;
+  const totalClauses = checks.length;
+  const threshold = group.minClausesMatched === null
+    ? null
+    : Math.min(totalClauses, Math.max(1, group.minClausesMatched));
+  const thresholdMatched = threshold === null ? true : matchedClauses >= threshold;
+  return {
+    passed: operatorMatched && thresholdMatched,
+    operatorMatched,
+    thresholdMatched,
+    matchedClauses,
+    totalClauses,
+    clauseMatches: checks
+  };
+}
+
+function buildCompoundWorkbenchQuery(params: {
+  scopeQuery: ReturnType<typeof parseEvidenceQuery>;
+  groupOperator: 'all' | 'any' | 'none';
+  minGroupsMatched: number | null;
+  groups: Array<{
+    id: string;
+    label: string;
+    enabled: boolean;
+    operator: 'all' | 'any' | 'none';
+    minClausesMatched: number | null;
+    clauses: ParsedCompoundClause[];
+  }>;
+  caseSensitive: boolean;
+  maxRows: number;
+  sources: Awaited<ReturnType<typeof buildQualitativeProjectPayload>>['sources'];
+  segments: Awaited<ReturnType<typeof buildQualitativeProjectPayload>>['segments'];
+  applications: Awaited<ReturnType<typeof buildQualitativeProjectPayload>>['codeApplications'];
+  cases: Awaited<ReturnType<typeof buildQualitativeProjectPayload>>['cases'];
+  memos: Awaited<ReturnType<typeof buildQualitativeProjectPayload>>['memos'];
+}) {
+  const activeGroups = params.groups.filter((group) => group.enabled !== false && group.clauses.length > 0);
+  if (activeGroups.length === 0) {
+    throw new Error('At least one enabled workbench group with valid clauses is required.');
+  }
+  const scopedMatches = retrieveEvidence({
+    query: {
+      ...params.scopeQuery,
+      searchText: undefined
+    },
+    sources: params.sources,
+    segments: params.segments,
+    applications: params.applications,
+    cases: params.cases,
+    memos: params.memos
+  });
+
+  const matchGroupMap = new Map<string, boolean[]>();
+  const matchGroupClauseMap = new Map<string, number[]>();
+  const matchGroupClauseTotalMap = new Map<string, number[]>();
+  const groupBreakdown = activeGroups.map((group) => ({
+    id: group.id,
+    label: group.label,
+    operator: group.operator,
+    minClausesMatched: group.minClausesMatched,
+    clauseCount: group.clauses.length,
+    operatorMatchCount: 0,
+    matchCount: 0,
+    matchedClausesTotal: 0,
+    maxMatchedClauses: 0
+  }));
+  const matchedItems = scopedMatches.filter((match) => {
+    const groupEvaluations = activeGroups.map((group, index) => {
+      const evaluation = evaluateCompoundClauseGroup(match as any, group, params.caseSensitive);
+      if (evaluation.operatorMatched) groupBreakdown[index]!.operatorMatchCount += 1;
+      if (evaluation.passed) groupBreakdown[index]!.matchCount += 1;
+      groupBreakdown[index]!.matchedClausesTotal += evaluation.matchedClauses;
+      groupBreakdown[index]!.maxMatchedClauses = Math.max(groupBreakdown[index]!.maxMatchedClauses, evaluation.matchedClauses);
+      return evaluation;
+    });
+    const groupPasses = groupEvaluations.map((evaluation) => evaluation.passed);
+    const groupMatchedCount = groupPasses.filter(Boolean).length;
+    matchGroupMap.set(match.segment.id, groupPasses);
+    matchGroupClauseMap.set(match.segment.id, groupEvaluations.map((evaluation) => evaluation.matchedClauses));
+    matchGroupClauseTotalMap.set(match.segment.id, groupEvaluations.map((evaluation) => evaluation.totalClauses));
+    const operatorPass = params.groupOperator === 'all'
+      ? groupPasses.every(Boolean)
+      : params.groupOperator === 'none'
+        ? groupPasses.every((entry) => !entry)
+        : groupPasses.some(Boolean);
+    const thresholdPass = params.minGroupsMatched === null
+      ? true
+      : groupMatchedCount >= params.minGroupsMatched;
+    return operatorPass && thresholdPass;
+  });
+  const items = matchedItems.slice(0, params.maxRows);
+  return {
+    mode: 'workbench',
+    operator: params.groupOperator,
+    minGroupsMatched: params.minGroupsMatched,
+    caseSensitive: params.caseSensitive,
+    maxRows: params.maxRows,
+    scopedCount: scopedMatches.length,
+    matchCount: matchedItems.length,
+    returnedCount: items.length,
+    sourceCount: new Set(matchedItems.map((item) => item.segment.sourceId)).size,
+    caseCount: new Set(matchedItems.flatMap((item) => item.cases.map((caseEntity) => caseEntity.id))).size,
+    groupCount: activeGroups.length,
+    clauseCount: activeGroups.reduce((total, group) => total + group.clauses.length, 0),
+    groupBreakdown: groupBreakdown.map((group) => ({
+      id: group.id,
+      label: group.label,
+      operator: group.operator,
+      minClausesMatched: group.minClausesMatched,
+      clauseCount: group.clauseCount,
+      operatorMatchCount: group.operatorMatchCount,
+      matchCount: group.matchCount,
+      avgMatchedClauses: scopedMatches.length > 0 ? group.matchedClausesTotal / scopedMatches.length : 0,
+      maxMatchedClauses: group.maxMatchedClauses
+    })),
+    items,
+    itemGroupMatches: Object.fromEntries(
+      items.map((item) => [item.segment.id, (matchGroupMap.get(item.segment.id) ?? []).map((entry) => Boolean(entry))])
+    ),
+    itemGroupClauseMatches: Object.fromEntries(
+      items.map((item) => [item.segment.id, (matchGroupClauseMap.get(item.segment.id) ?? []).map((entry) => Number(entry))])
+    ),
+    itemGroupClauseTotals: Object.fromEntries(
+      items.map((item) => [item.segment.id, (matchGroupClauseTotalMap.get(item.segment.id) ?? []).map((entry) => Number(entry))])
+    )
+  };
 }
 
 function formatEvidenceFilterLabels(query: ReturnType<typeof parseEvidenceQuery>): string[] {
@@ -1900,10 +4868,485 @@ function parseOptionalBoundedNumber(value: unknown, min: number, max: number): n
   return Math.min(max, Math.max(min, parsed));
 }
 
+function parseBooleanFlag(value: unknown, fallback: boolean): boolean {
+  if (value === true || value === 'true' || value === '1') return true;
+  if (value === false || value === 'false' || value === '0') return false;
+  return fallback;
+}
+
+function parseQualitativeReportOptions(value: Partial<{
+  reportTopSources: string | number;
+  reportTopCases: string | number;
+  reportTopCodes: string | number;
+  reportExcerptLimit: string | number;
+  reportIncludeSources: string | boolean;
+  reportIncludeCases: string | boolean;
+  reportIncludeExcerpts: string | boolean;
+  reportSortBy: string;
+}>): {
+  topSources: number;
+  topCases: number;
+  topCodes: number;
+  excerptLimit: number;
+  includeSourceCoverage: boolean;
+  includeCaseCoverage: boolean;
+  includeExcerptRows: boolean;
+  sortBy: 'match_count' | 'memo_count';
+} {
+  return {
+    topSources: parsePositiveInteger(value.reportTopSources, 20, 1, 500),
+    topCases: parsePositiveInteger(value.reportTopCases, 20, 1, 500),
+    topCodes: parsePositiveInteger(value.reportTopCodes, 5, 1, 25),
+    excerptLimit: parsePositiveInteger(value.reportExcerptLimit, 60, 1, 500),
+    includeSourceCoverage: parseBooleanFlag(value.reportIncludeSources, true),
+    includeCaseCoverage: parseBooleanFlag(value.reportIncludeCases, true),
+    includeExcerptRows: parseBooleanFlag(value.reportIncludeExcerpts, true),
+    sortBy: value.reportSortBy === 'memo_count' ? 'memo_count' : 'match_count'
+  };
+}
+
+function parseMapVisualizationMetric(value: unknown): 'evidence_count' | 'case_count' | 'segment_count' {
+  return value === 'case_count' || value === 'segment_count'
+    ? value
+    : 'evidence_count';
+}
+
+function parseMapVisualizationNormalization(value: unknown): 'raw' | 'within_scope_pct' | 'log_scaled' {
+  return value === 'within_scope_pct' || value === 'log_scaled'
+    ? value
+    : 'raw';
+}
+
+function parseMapVisualizationOptions(value: Partial<{
+  mapLocationField: unknown;
+  mapMetric: unknown;
+  mapNormalization: unknown;
+  mapMinCount: unknown;
+  mapMaxPoints: unknown;
+}>): {
+  locationField?: string;
+  metric: 'evidence_count' | 'case_count' | 'segment_count';
+  normalization: 'raw' | 'within_scope_pct' | 'log_scaled';
+  minCount: number;
+  maxPoints: number;
+} {
+  return {
+    locationField: typeof value.mapLocationField === 'string' && value.mapLocationField.trim()
+      ? value.mapLocationField.trim()
+      : undefined,
+    metric: parseMapVisualizationMetric(value.mapMetric),
+    normalization: parseMapVisualizationNormalization(value.mapNormalization),
+    minCount: parsePositiveInteger(value.mapMinCount, 1, 1, 100000),
+    maxPoints: parsePositiveInteger(value.mapMaxPoints, 150, 1, 500)
+  };
+}
+
+function parseConceptNodeSizeMode(value: unknown): 'applications' | 'weighted_degree' | 'degree' {
+  return value === 'weighted_degree' || value === 'degree'
+    ? value
+    : 'applications';
+}
+
+function parseConceptMapOptions(value: Partial<{
+  conceptMinLinkWeight: unknown;
+  conceptMaxLinks: unknown;
+  conceptMinNodeSize: unknown;
+  conceptIncludeCooccurrence: unknown;
+  conceptIncludeRelationships: unknown;
+  conceptNodeSizeMode: unknown;
+}>): {
+  minLinkWeight: number;
+  maxLinks: number;
+  minNodeSize: number;
+  includeCooccurrenceLinks: boolean;
+  includeRelationshipLinks: boolean;
+  nodeSizeMode: 'applications' | 'weighted_degree' | 'degree';
+} {
+  return {
+    minLinkWeight: parseOptionalBoundedNumber(value.conceptMinLinkWeight, 0, 100000) ?? 1,
+    maxLinks: parsePositiveInteger(value.conceptMaxLinks, 250, 1, 1000),
+    minNodeSize: parseOptionalBoundedNumber(value.conceptMinNodeSize, 0, 100000) ?? 0,
+    includeCooccurrenceLinks: parseBooleanFlag(value.conceptIncludeCooccurrence, true),
+    includeRelationshipLinks: parseBooleanFlag(value.conceptIncludeRelationships, true),
+    nodeSizeMode: parseConceptNodeSizeMode(value.conceptNodeSizeMode)
+  };
+}
+
+type StructuredReportStyleTemplate = 'standard' | 'committee' | 'review_board';
+
+function parseStructuredReportStyleTemplate(value: unknown): StructuredReportStyleTemplate {
+  return value === 'committee' || value === 'review_board'
+    ? value
+    : 'standard';
+}
+
+function parseCommitteeAppendixMode(value: unknown): 'standard' | 'expanded' {
+  return value === 'expanded' ? 'expanded' : 'standard';
+}
+
+function parseSavedQueryJsonObject(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'string' || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
 function averageNullable(values: Array<number | null | undefined>): number | null {
   const usable = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
   if (!usable.length) return null;
   return usable.reduce((total, value) => total + value, 0) / usable.length;
+}
+
+function normalizeTokenTimeline(value: unknown): Array<{
+  token: string;
+  startMs: number;
+  endMs: number;
+  confidence: number | null;
+  speakerLabel: string | null;
+}> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      const token = typeof entry?.token === 'string' ? entry.token.trim() : '';
+      if (!token) return null;
+      const startMs = parsePositiveInteger(entry?.startMs, 0, 0, Number.MAX_SAFE_INTEGER);
+      const endMs = parsePositiveInteger(entry?.endMs, startMs, 0, Number.MAX_SAFE_INTEGER);
+      const confidence = parseOptionalBoundedNumber(entry?.confidence, 0, 1);
+      const speakerLabel = typeof entry?.speakerLabel === 'string' && entry.speakerLabel.trim() ? entry.speakerLabel.trim() : null;
+      return {
+        token,
+        startMs,
+        endMs: Math.max(startMs, endMs),
+        confidence,
+        speakerLabel
+      };
+    })
+    .filter((entry): entry is { token: string; startMs: number; endMs: number; confidence: number | null; speakerLabel: string | null } => Boolean(entry));
+}
+
+type TranscriptionProvider = 'internal' | 'openai';
+
+type ParsedTranscriptionPipelineConfig = {
+  language: string;
+  diarization: boolean;
+  punctuation: boolean;
+  chunkSeconds: number;
+  confidenceThreshold: number;
+  speakerStrategy: 'single' | 'alternating' | 'content_based';
+  provider: TranscriptionProvider;
+  providerModel: string;
+  providerPrompt: string;
+};
+
+type TranscriptionSyncEntry = {
+  segmentId: string | null;
+  startMs: number;
+  endMs: number;
+  transcriptText: string;
+  speakerLabel: string;
+  confidence: number;
+  syncScore: number;
+  tokenTimeline: Array<{ token: string; startMs: number; endMs: number; confidence: number; speakerLabel: string }>;
+};
+
+type TranscriptionDraftResult = {
+  transcriptBody: string;
+  syncEntries: TranscriptionSyncEntry[];
+  modeStats: Record<string, unknown>;
+};
+
+function parseTranscriptionPipelineConfig(value: unknown): ParsedTranscriptionPipelineConfig {
+  const config = typeof value === 'object' && value ? value as Record<string, unknown> : {};
+  const language = typeof config.language === 'string' && config.language.trim() ? config.language.trim() : 'en';
+  const diarization = config.diarization !== false;
+  const punctuation = config.punctuation !== false;
+  const chunkSeconds = parsePositiveInteger(config.chunkSeconds, 12, 3, 120);
+  const confidenceThreshold = parseOptionalBoundedNumber(config.confidenceThreshold, 0, 1) ?? 0.55;
+  const speakerStrategy = config.speakerStrategy === 'single' || config.speakerStrategy === 'content_based'
+    ? config.speakerStrategy
+    : 'alternating';
+  const provider = config.provider === 'openai' ? 'openai' : 'internal';
+  const providerModel = typeof config.providerModel === 'string' && config.providerModel.trim()
+    ? config.providerModel.trim()
+    : (process.env.MU_TRANSCRIPTION_OPENAI_MODEL?.trim() || 'gpt-4o-mini-transcribe');
+  const providerPrompt = typeof config.providerPrompt === 'string' ? config.providerPrompt.trim() : '';
+  return {
+    language,
+    diarization,
+    punctuation,
+    chunkSeconds,
+    confidenceThreshold,
+    speakerStrategy,
+    provider,
+    providerModel,
+    providerPrompt
+  };
+}
+
+function normalizeConfidence(value: unknown, fallback = 0.75): number {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+  if (!Number.isFinite(parsed)) return Math.max(0, Math.min(1, fallback));
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function resolveOpenAiTranscriptionEndpoint(): string {
+  const base = process.env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1';
+  return `${base.replace(/\/+$/, '')}/audio/transcriptions`;
+}
+
+function findBestSegmentIdForTranscriptionWindow(
+  entry: { startMs: number; endMs: number },
+  segments: Array<{ id: string; anchor: { startMs: number; endMs: number } }>
+): string | null {
+  const startMs = Math.max(0, entry.startMs);
+  const endMs = Math.max(startMs, entry.endMs);
+  let bestId: string | null = null;
+  let bestOverlap = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  const midpoint = startMs + Math.floor((endMs - startMs) / 2);
+  for (const segment of segments) {
+    const segmentStart = Math.max(0, Math.round(segment.anchor.startMs));
+    const segmentEnd = Math.max(segmentStart, Math.round(segment.anchor.endMs));
+    const overlap = Math.max(0, Math.min(endMs, segmentEnd) - Math.max(startMs, segmentStart));
+    const distance = midpoint < segmentStart ? (segmentStart - midpoint) : midpoint > segmentEnd ? (midpoint - segmentEnd) : 0;
+    if (overlap > bestOverlap || (overlap === bestOverlap && distance < bestDistance)) {
+      bestId = segment.id;
+      bestOverlap = overlap;
+      bestDistance = distance;
+    }
+  }
+  return bestId;
+}
+
+async function runOpenAiTranscription(params: {
+  media: { bytes: Buffer; contentType: string; filename: string; origin: 'artifact' | 'remote' | 'local_file' };
+  mediaTitle: string;
+  mode: 'segment_assembly' | 'timeline_chunked' | 'hybrid';
+  pipeline: ParsedTranscriptionPipelineConfig;
+  timeSegments: Array<{ id: string; anchor: { startMs: number; endMs: number }; text: string }>;
+}): Promise<TranscriptionDraftResult> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY is required for provider-grade transcription.');
+  }
+  const endpoint = resolveOpenAiTranscriptionEndpoint();
+  const mediaType = params.media.contentType || inferContentTypeFromFilename(params.media.filename);
+  const form = new FormData();
+  const mediaBlob = new Blob([Uint8Array.from(params.media.bytes)], { type: mediaType });
+  form.set('file', mediaBlob, params.media.filename);
+  form.set('model', params.pipeline.providerModel || 'gpt-4o-mini-transcribe');
+  form.set('response_format', 'verbose_json');
+  if (params.pipeline.language) form.set('language', params.pipeline.language);
+  if (params.pipeline.providerPrompt) form.set('prompt', params.pipeline.providerPrompt);
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: form
+  });
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`OpenAI transcription failed (${response.status}). ${errorText.slice(0, 300)}`.trim());
+  }
+
+  const payload = await response.json() as Record<string, unknown>;
+  const toMs = (value: unknown, fallback = 0): number => {
+    const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+    if (!Number.isFinite(numeric)) return fallback;
+    return Math.max(0, Math.round(numeric * 1000));
+  };
+
+  const parsedWords = (Array.isArray(payload.words) ? payload.words : [])
+    .map((wordEntry) => {
+      const token = typeof wordEntry?.word === 'string'
+        ? wordEntry.word.trim()
+        : typeof wordEntry?.token === 'string'
+          ? wordEntry.token.trim()
+          : '';
+      if (!token) return null;
+      const startMs = toMs(wordEntry?.start, 0);
+      const endMs = Math.max(startMs, toMs(wordEntry?.end, startMs));
+      const confidence = normalizeConfidence(
+        wordEntry?.confidence ?? wordEntry?.probability ?? wordEntry?.score,
+        0.74
+      );
+      return {
+        token,
+        startMs,
+        endMs,
+        confidence
+      };
+    })
+    .filter((entry): entry is { token: string; startMs: number; endMs: number; confidence: number } => Boolean(entry));
+
+  const parsedSegments = (Array.isArray(payload.segments) ? payload.segments : [])
+    .map((segmentEntry, index) => {
+      const startMs = toMs(segmentEntry?.start, index * (params.pipeline.chunkSeconds * 1000));
+      const endMs = Math.max(startMs + 250, toMs(segmentEntry?.end, startMs + (params.pipeline.chunkSeconds * 1000)));
+      const text = typeof segmentEntry?.text === 'string' ? segmentEntry.text.trim() : '';
+      if (!text) return null;
+      const segmentWords = parsedWords.filter((word) => word.startMs >= startMs && word.endMs <= endMs);
+      const wordConfidence = segmentWords.length > 0
+        ? segmentWords.reduce((total, word) => total + word.confidence, 0) / segmentWords.length
+        : null;
+      const segmentConfidence = normalizeConfidence(
+        segmentEntry?.confidence ?? segmentEntry?.score ?? (typeof segmentEntry?.no_speech_prob === 'number' ? 1 - segmentEntry.no_speech_prob : null),
+        wordConfidence ?? 0.8
+      );
+      const speakerLabel = params.pipeline.diarization
+        ? chooseSpeakerLabel(params.pipeline.speakerStrategy, index, text)
+        : 'Speaker 1';
+      const tokenTimeline = segmentWords.length > 0
+        ? segmentWords.map((word) => ({
+          token: word.token,
+          startMs: word.startMs,
+          endMs: word.endMs,
+          confidence: word.confidence,
+          speakerLabel
+        }))
+        : buildTokenTimeline({ text, startMs, endMs, speakerLabel, confidence: segmentConfidence });
+      return {
+        startMs,
+        endMs,
+        transcriptText: text,
+        confidence: segmentConfidence,
+        speakerLabel,
+        tokenTimeline
+      };
+    })
+    .filter((entry): entry is {
+      startMs: number;
+      endMs: number;
+      transcriptText: string;
+      confidence: number;
+      speakerLabel: string;
+      tokenTimeline: Array<{ token: string; startMs: number; endMs: number; confidence: number; speakerLabel: string }>;
+    } => Boolean(entry));
+
+  const chunkMs = Math.max(3000, params.pipeline.chunkSeconds * 1000);
+  const entriesFromWords = () => {
+    if (parsedWords.length === 0) return [];
+    const grouped = new Map<number, typeof parsedWords>();
+    for (const word of parsedWords) {
+      const bucket = Math.floor(word.startMs / chunkMs);
+      if (!grouped.has(bucket)) grouped.set(bucket, []);
+      grouped.get(bucket)?.push(word);
+    }
+    return [...grouped.entries()]
+      .sort((left, right) => left[0] - right[0])
+      .map(([bucket, words], index) => {
+        const startMs = bucket * chunkMs;
+        const endMs = Math.max(startMs + 250, words[words.length - 1]?.endMs ?? (startMs + chunkMs));
+        const transcriptText = words.map((word) => word.token).join(' ').trim();
+        const confidence = words.length > 0
+          ? words.reduce((total, word) => total + word.confidence, 0) / words.length
+          : 0.7;
+        const speakerLabel = params.pipeline.diarization
+          ? chooseSpeakerLabel(params.pipeline.speakerStrategy, index, transcriptText)
+          : 'Speaker 1';
+        return {
+          startMs,
+          endMs,
+          transcriptText,
+          confidence,
+          speakerLabel,
+          tokenTimeline: words.map((word) => ({
+            token: word.token,
+            startMs: word.startMs,
+            endMs: word.endMs,
+            confidence: word.confidence,
+            speakerLabel
+          }))
+        };
+      });
+  };
+
+  let entries = parsedSegments.length > 0 ? parsedSegments : entriesFromWords();
+  if (entries.length === 0) {
+    const text = typeof payload.text === 'string' ? payload.text.trim() : '';
+    if (text) {
+      const fallbackDurationMs = Math.max(chunkMs, Math.round((text.split(/\s+/).length / 2.5) * 1000));
+      const speakerLabel = params.pipeline.diarization
+        ? chooseSpeakerLabel(params.pipeline.speakerStrategy, 0, text)
+        : 'Speaker 1';
+      const confidence = 0.7;
+      entries = [{
+        startMs: 0,
+        endMs: fallbackDurationMs,
+        transcriptText: text,
+        confidence,
+        speakerLabel,
+        tokenTimeline: buildTokenTimeline({ text, startMs: 0, endMs: fallbackDurationMs, speakerLabel, confidence })
+      }];
+    }
+  }
+  if (entries.length === 0) {
+    throw new Error('The transcription provider returned no transcript text for this media source.');
+  }
+
+  const sortedTimeSegments = [...params.timeSegments]
+    .map((segment) => ({
+      id: segment.id,
+      anchor: {
+        startMs: Number(segment.anchor.startMs ?? 0),
+        endMs: Number(segment.anchor.endMs ?? 0)
+      },
+      text: segment.text
+    }))
+    .filter((segment) => segment.anchor.endMs > segment.anchor.startMs)
+    .sort((left, right) => left.anchor.startMs - right.anchor.startMs);
+
+  const acceptedEntries: TranscriptionSyncEntry[] = entries
+    .map((entry) => {
+      const confidence = normalizeConfidence(entry.confidence, 0.75);
+      const linkedSegmentId = sortedTimeSegments.length > 0
+        ? findBestSegmentIdForTranscriptionWindow(entry, sortedTimeSegments)
+        : null;
+      if (confidence < params.pipeline.confidenceThreshold && !linkedSegmentId) {
+        return null;
+      }
+      return {
+        segmentId: linkedSegmentId,
+        startMs: Math.max(0, Math.round(entry.startMs)),
+        endMs: Math.max(Math.round(entry.startMs), Math.round(entry.endMs)),
+        transcriptText: entry.transcriptText.trim(),
+        speakerLabel: entry.speakerLabel,
+        confidence,
+        syncScore: linkedSegmentId ? 0.95 : 0.7,
+        tokenTimeline: entry.tokenTimeline
+      };
+    })
+    .filter((entry): entry is TranscriptionSyncEntry => Boolean(entry))
+    .sort((left, right) => left.startMs - right.startMs);
+
+  if (acceptedEntries.length === 0) {
+    throw new Error('All provider transcript segments were filtered out by the confidence threshold.');
+  }
+
+  const transcriptBody = acceptedEntries
+    .map((entry) => `[${(entry.startMs / 1000).toFixed(1)}s - ${(entry.endMs / 1000).toFixed(1)}s] ${entry.speakerLabel}: ${entry.transcriptText}`)
+    .join('\n');
+  const generatedCoverageMs = acceptedEntries.reduce((total, entry) => total + Math.max(0, entry.endMs - entry.startMs), 0);
+  const tokenCount = acceptedEntries.reduce((total, entry) => total + entry.tokenTimeline.length, 0);
+  return {
+    transcriptBody,
+    syncEntries: acceptedEntries,
+    modeStats: {
+      mode: params.mode,
+      provider: 'openai',
+      providerModel: params.pipeline.providerModel || null,
+      language: params.pipeline.language,
+      sourceOrigin: params.media.origin,
+      generatedEntryCount: acceptedEntries.length,
+      generatedCoverageMs,
+      tokenCount
+    }
+  };
 }
 
 function applyCodingComparisonFilters(
@@ -1986,6 +5429,14 @@ function formatSegmentAnchorForEvidence(segment: { kind: string; anchor: any }):
   return 'Unspecified anchor';
 }
 
+function summarizeText(value: unknown, maxLength = 180): string {
+  const normalized = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, Math.max(1, maxLength - 1))}…`
+    : normalized;
+}
+
 function enrichEvidenceBundleWithContext(params: {
   bundle: ReturnType<typeof buildEvidenceExport>;
   segments: Array<{ id: string; kind: string; anchor: any }>;
@@ -2066,13 +5517,51 @@ function enrichEvidenceBundleWithContext(params: {
 function buildMediaTimeline(params: {
   sourceId: string;
   segments: Array<{ id: string; sourceId: string; kind: string; anchor: any; text: string }>;
-  syncLinks: Array<{ id: string; mediaSourceId: string; transcriptSourceId: string; segmentId: string | null; startMs: number; endMs: number; transcriptText: string }>;
-  sources: Array<{ id: string; title: string }>;
+  syncLinks: Array<{
+    id: string;
+    mediaSourceId: string;
+    transcriptSourceId: string;
+    segmentId: string | null;
+    startMs: number;
+    endMs: number;
+    transcriptText: string;
+    speakerLabel: string;
+    confidence: number | null;
+    syncScore: number | null;
+    tokenTimelineJson: string;
+  }>;
+  sources: Array<{ id: string; title: string; kind: string }>;
+  applications: Array<{ segmentId: string; codeId: string; coderId: string }>;
 }) {
   const sourceTitleById = new Map(params.sources.map((source) => [source.id, source.title]));
+  const sourceKindById = new Map(params.sources.map((source) => [source.id, source.kind]));
   const normalizeMs = (value: unknown): number => {
     if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
     return Math.max(0, Math.round(value));
+  };
+  const parseTokenTimeline = (rawValue: unknown): Array<{ token: string; startMs: number; endMs: number; confidence: number | null; speakerLabel: string | null }> => {
+    if (typeof rawValue !== 'string' || !rawValue.trim()) return [];
+    try {
+      const parsed = JSON.parse(rawValue);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((item) => {
+          const token = typeof item?.token === 'string' ? item.token.trim() : '';
+          if (!token) return null;
+          const startMs = normalizeMs(item?.startMs);
+          const endMs = Math.max(startMs, normalizeMs(item?.endMs));
+          const confidence = typeof item?.confidence === 'number' && Number.isFinite(item.confidence)
+            ? Math.max(0, Math.min(1, item.confidence))
+            : null;
+          const speakerLabel = typeof item?.speakerLabel === 'string' && item.speakerLabel.trim()
+            ? item.speakerLabel.trim()
+            : null;
+          return { token, startMs, endMs, confidence, speakerLabel };
+        })
+        .filter((item): item is { token: string; startMs: number; endMs: number; confidence: number | null; speakerLabel: string | null } => Boolean(item));
+    } catch {
+      return [];
+    }
   };
   const computeUnionDuration = (intervals: Array<{ startMs: number; endMs: number }>): number => {
     if (intervals.length === 0) return 0;
@@ -2098,13 +5587,29 @@ function buildMediaTimeline(params: {
     total += Math.max(0, cursorEnd - cursorStart);
     return total;
   };
+  const countWords = (text: string): number => {
+    return (String(text ?? '').match(/[A-Za-z0-9][A-Za-z0-9'-]*/g) ?? []).length;
+  };
+  const segmentById = new Map(
+    params.segments
+      .filter((segment) => segment.sourceId === params.sourceId && segment.kind === 'time_range')
+      .map((segment) => [segment.id, segment])
+  );
+  const applicationsBySegment = new Map<string, Array<{ codeId: string; coderId: string }>>();
+  for (const application of params.applications) {
+    const bucket = applicationsBySegment.get(application.segmentId) ?? [];
+    bucket.push({ codeId: application.codeId, coderId: application.coderId });
+    applicationsBySegment.set(application.segmentId, bucket);
+  }
   const timeSegments = params.segments
     .filter((segment) => segment.sourceId === params.sourceId && segment.kind === 'time_range')
     .map((segment) => ({
       segmentId: segment.id,
       startMs: normalizeMs(segment.anchor?.startMs),
       endMs: normalizeMs(segment.anchor?.endMs),
-      text: segment.text
+      text: segment.text,
+      codeCount: applicationsBySegment.get(segment.id)?.length ?? 0,
+      coderCount: new Set((applicationsBySegment.get(segment.id) ?? []).map((item) => item.coderId)).size
     }))
     .sort((left, right) => left.startMs - right.startMs);
   const timeSegmentIdSet = new Set(timeSegments.map((segment) => segment.segmentId));
@@ -2123,46 +5628,558 @@ function buildMediaTimeline(params: {
   }
   const enrichedTimeSegments = timeSegments.map((segment) => {
     const syncLinkCount = syncLinkCountBySegmentId.get(segment.segmentId) ?? 0;
+    const linkedSyncLinks = rawSyncLinks.filter((link) => link.segmentId === segment.segmentId);
+    const averageDriftMs = linkedSyncLinks.length > 0
+      ? linkedSyncLinks.reduce((total, link) => {
+        const startDelta = Math.abs(link.startMs - segment.startMs);
+        const endDelta = Math.abs(link.endMs - segment.endMs);
+        return total + ((startDelta + endDelta) / 2);
+      }, 0) / linkedSyncLinks.length
+      : null;
     return {
       ...segment,
       syncLinkCount,
-      isSynced: syncLinkCount > 0
+      isSynced: syncLinkCount > 0,
+      isCoded: segment.codeCount > 0,
+      syncDriftMs: averageDriftMs
     };
   });
   const syncedSegmentCount = enrichedTimeSegments.filter((segment) => segment.isSynced).length;
   const unsyncedSegmentCount = Math.max(0, enrichedTimeSegments.length - syncedSegmentCount);
-  const syncLinks = rawSyncLinks.map((link) => ({
-    id: link.id,
-    segmentId: link.segmentId,
-    transcriptSourceId: link.transcriptSourceId,
-    transcriptSourceTitle: sourceTitleById.get(link.transcriptSourceId) ?? null,
-    startMs: link.startMs,
-    endMs: link.endMs,
-    durationMs: Math.max(0, link.endMs - link.startMs),
-    transcriptText: link.transcriptText,
-    hasSegmentAnchor: Boolean(link.segmentId && timeSegmentIdSet.has(link.segmentId))
-  }));
+  const syncLinks = rawSyncLinks.map((link, index) => {
+    const linkedSegment = link.segmentId ? segmentById.get(link.segmentId) : null;
+    const linkedSegmentStartMs = linkedSegment ? normalizeMs(linkedSegment.anchor?.startMs) : null;
+    const linkedSegmentEndMs = linkedSegment ? normalizeMs(linkedSegment.anchor?.endMs) : null;
+    const averageDriftMs = linkedSegmentStartMs === null || linkedSegmentEndMs === null
+      ? null
+      : (
+        (Math.abs(link.startMs - linkedSegmentStartMs) + Math.abs(link.endMs - linkedSegmentEndMs)) / 2
+      );
+    const tokenTimeline = parseTokenTimeline(link.tokenTimelineJson);
+    const previous = index > 0 ? rawSyncLinks[index - 1]! : null;
+    const overlapPrevMs = previous ? Math.max(0, previous.endMs - link.startMs) : 0;
+    const gapFromPreviousMs = previous ? Math.max(0, link.startMs - previous.endMs) : null;
+    return {
+      id: link.id,
+      segmentId: link.segmentId,
+      transcriptSourceId: link.transcriptSourceId,
+      transcriptSourceTitle: sourceTitleById.get(link.transcriptSourceId) ?? null,
+      transcriptSourceKind: sourceKindById.get(link.transcriptSourceId) ?? null,
+      startMs: link.startMs,
+      endMs: link.endMs,
+      durationMs: Math.max(0, link.endMs - link.startMs),
+      transcriptText: link.transcriptText,
+      transcriptWordCount: countWords(link.transcriptText),
+      speakerLabel: typeof link.speakerLabel === 'string' && link.speakerLabel.trim() ? link.speakerLabel.trim() : null,
+      confidence: typeof link.confidence === 'number' && Number.isFinite(link.confidence) ? Math.max(0, Math.min(1, link.confidence)) : null,
+      syncScore: typeof link.syncScore === 'number' && Number.isFinite(link.syncScore) ? Math.max(0, Math.min(1, link.syncScore)) : null,
+      tokenCount: tokenTimeline.length,
+      tokenTimeline,
+      hasSegmentAnchor: Boolean(link.segmentId && timeSegmentIdSet.has(link.segmentId)),
+      linkedSegmentStartMs,
+      linkedSegmentEndMs,
+      averageDriftMs,
+      overlapPrevMs,
+      gapFromPreviousMs,
+      qaFlags: [] as string[]
+    };
+  });
+  const qaLowConfidenceThreshold = 0.62;
+  const qaRapidSwitchWindowMs = 1500;
+  const addQaFlag = (target: { qaFlags: string[] }, flag: string) => {
+    if (!target.qaFlags.includes(flag)) target.qaFlags.push(flag);
+  };
+  for (let index = 0; index < syncLinks.length; index += 1) {
+    const link = syncLinks[index]!;
+    const previous = index > 0 ? syncLinks[index - 1]! : null;
+    if (!link.speakerLabel) addQaFlag(link, 'unlabeled_speaker');
+    if (typeof link.confidence === 'number' && Number.isFinite(link.confidence) && link.confidence < qaLowConfidenceThreshold) {
+      addQaFlag(link, 'low_confidence');
+    }
+    if (link.durationMs < 900 && typeof link.confidence === 'number' && link.confidence < 0.72) {
+      addQaFlag(link, 'short_low_confidence');
+    }
+    if (previous && previous.speakerLabel && link.speakerLabel && previous.speakerLabel !== link.speakerLabel) {
+      const transitionGapMs = Math.max(0, link.startMs - previous.endMs);
+      if (transitionGapMs <= qaRapidSwitchWindowMs) {
+        addQaFlag(link, 'rapid_speaker_switch');
+        addQaFlag(previous, 'rapid_speaker_switch');
+      }
+      if ((link.overlapPrevMs ?? 0) > 0) {
+        addQaFlag(link, 'overlap_speaker_conflict');
+        addQaFlag(previous, 'overlap_speaker_conflict');
+      }
+    }
+  }
+  const lowConfidenceCount = syncLinks.filter((link) => link.qaFlags.includes('low_confidence')).length;
+  const unlabeledSpeakerCount = syncLinks.filter((link) => link.qaFlags.includes('unlabeled_speaker')).length;
+  const rapidSwitchCount = syncLinks.filter((link) => link.qaFlags.includes('rapid_speaker_switch')).length;
+  const overlapSpeakerConflictCount = syncLinks.filter((link) => link.qaFlags.includes('overlap_speaker_conflict')).length;
+  const shortLowConfidenceCount = syncLinks.filter((link) => link.qaFlags.includes('short_low_confidence')).length;
+  const flaggedSyncLinkCount = syncLinks.filter((link) => link.qaFlags.length > 0).length;
   const orphanSyncLinkCount = syncLinks.filter((link) => !link.hasSegmentAnchor).length;
   const linkedDurationMs = computeUnionDuration(syncLinks.map((link) => ({ startMs: link.startMs, endMs: link.endMs })));
+  const codedDurationMs = computeUnionDuration(
+    enrichedTimeSegments
+      .filter((segment) => segment.codeCount > 0)
+      .map((segment) => ({ startMs: segment.startMs, endMs: segment.endMs }))
+  );
   const durationMs = Math.max(
     0,
     ...timeSegments.map((segment) => segment.endMs),
     ...syncLinks.map((link) => link.endMs)
   );
   const coverageRatio = durationMs > 0 ? Math.min(1, linkedDurationMs / durationMs) : 0;
+  const codedCoverageRatio = durationMs > 0 ? Math.min(1, codedDurationMs / durationMs) : 0;
+  const overlapSyncLinkCount = syncLinks.filter((link) => (link.overlapPrevMs ?? 0) > 0).length;
+  const syncGapValues = syncLinks
+    .map((link) => link.gapFromPreviousMs)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  const maxSyncGapMs = syncGapValues.length > 0 ? Math.max(...syncGapValues) : 0;
+  const largeGapCount = syncGapValues.filter((value) => value >= 10000).length;
+  const driftValues = syncLinks
+    .map((link) => link.averageDriftMs)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  const averageDriftMs = driftValues.length > 0 ? driftValues.reduce((total, value) => total + value, 0) / driftValues.length : null;
+  const maxDriftMs = driftValues.length > 0 ? Math.max(...driftValues) : null;
+  const driftWarningCount = driftValues.filter((value) => value > 1200).length;
+  const tokenCount = syncLinks.reduce((total, link) => total + link.tokenCount, 0);
+  const transcriptWordCount = syncLinks.reduce((total, link) => total + link.transcriptWordCount, 0);
+  const averageSyncScore = averageNullable(syncLinks.map((link) => link.syncScore));
+  const averageConfidence = averageNullable(syncLinks.map((link) => link.confidence));
+
+  const binCount = durationMs <= 0 ? 0 : Math.max(24, Math.min(160, Math.round(durationMs / 3000)));
+  const waveformBins = Array.from({ length: binCount }, (_unused, index) => {
+    const startMs = Math.round((index * durationMs) / binCount);
+    const endMs = Math.round(((index + 1) * durationMs) / binCount);
+    const segmentTouches = enrichedTimeSegments.filter((segment) => segment.endMs > startMs && segment.startMs < endMs);
+    const syncTouches = syncLinks.filter((link) => link.endMs > startMs && link.startMs < endMs);
+    const segmentDensity = Math.min(1, segmentTouches.length / 4);
+    const syncDensity = Math.min(1, syncTouches.length / 5);
+    const codedDensity = Math.min(1, segmentTouches.filter((segment) => segment.codeCount > 0).length / 4);
+    const tokenDensity = Math.min(1, syncTouches.reduce((total, link) => total + link.tokenCount, 0) / 40);
+    const amplitude = Math.min(1, (0.12 + (segmentDensity * 0.25) + (syncDensity * 0.28) + (codedDensity * 0.22) + (tokenDensity * 0.13)));
+    return {
+      index,
+      startMs,
+      endMs,
+      amplitude: Number(amplitude.toFixed(4)),
+      segmentCount: segmentTouches.length,
+      syncLinkCount: syncTouches.length,
+      codedSegmentCount: segmentTouches.filter((segment) => segment.codeCount > 0).length
+    };
+  });
+
+  const chapterMarkers = enrichedTimeSegments
+    .filter((segment) => segment.text.trim())
+    .slice(0, 60)
+    .map((segment) => ({
+      segmentId: segment.segmentId,
+      timeMs: segment.startMs,
+      label: summarizeText(segment.text, 64),
+      isSynced: segment.isSynced,
+      isCoded: segment.isCoded
+    }));
+
+  const transcriptIndex = syncLinks.map((link) => ({
+    linkId: link.id,
+    segmentId: link.segmentId,
+    transcriptSourceId: link.transcriptSourceId,
+    startMs: link.startMs,
+    endMs: link.endMs,
+    speakerLabel: link.speakerLabel,
+    confidence: link.confidence,
+    syncScore: link.syncScore,
+    tokenCount: link.tokenCount,
+    excerpt: summarizeText(link.transcriptText, 220)
+  }));
+
   return {
     durationMs,
     linkedDurationMs,
+    codedDurationMs,
     coverageRatio,
+    codedCoverageRatio,
     summary: {
       timeSegmentCount: enrichedTimeSegments.length,
       syncLinkCount: syncLinks.length,
       syncedSegmentCount,
       unsyncedSegmentCount,
-      orphanSyncLinkCount
+      orphanSyncLinkCount,
+      overlapSyncLinkCount,
+      gapCount: syncGapValues.length,
+      largeGapCount,
+      maxSyncGapMs,
+      transcriptWordCount,
+      transcriptTokenCount: tokenCount,
+      waveformBinCount: waveformBins.length,
+      averageSyncScore,
+      averageConfidence,
+      averageDriftMs,
+      maxDriftMs,
+      driftWarningCount,
+      diarizationLowConfidenceCount: lowConfidenceCount,
+      diarizationUnlabeledCount: unlabeledSpeakerCount,
+      diarizationRapidSwitchCount: rapidSwitchCount,
+      diarizationOverlapConflictCount: overlapSpeakerConflictCount,
+      diarizationShortLowConfidenceCount: shortLowConfidenceCount,
+      diarizationFlaggedCount: flaggedSyncLinkCount
+    },
+    alignmentDiagnostics: {
+      overlapSyncLinkCount,
+      gapCount: syncGapValues.length,
+      largeGapCount,
+      maxSyncGapMs,
+      averageDriftMs,
+      maxDriftMs,
+      driftWarningCount,
+      averageSyncScore,
+      averageConfidence,
+      diarizationLowConfidenceCount: lowConfidenceCount,
+      diarizationUnlabeledCount: unlabeledSpeakerCount,
+      diarizationRapidSwitchCount: rapidSwitchCount,
+      diarizationOverlapConflictCount: overlapSpeakerConflictCount,
+      diarizationShortLowConfidenceCount: shortLowConfidenceCount,
+      diarizationFlaggedCount: flaggedSyncLinkCount
+    },
+    diarizationDiagnostics: {
+      lowConfidenceCount,
+      unlabeledSpeakerCount,
+      rapidSwitchCount,
+      overlapSpeakerConflictCount,
+      shortLowConfidenceCount,
+      flaggedSyncLinkCount,
+      lowConfidenceThreshold: qaLowConfidenceThreshold,
+      rapidSwitchWindowMs: qaRapidSwitchWindowMs
     },
     timeSegments: enrichedTimeSegments,
-    syncLinks
+    syncLinks,
+    waveformBins,
+    chapterMarkers,
+    transcriptIndex,
+    tracks: {
+      segments: enrichedTimeSegments.map((segment) => ({
+        segmentId: segment.segmentId,
+        startMs: segment.startMs,
+        endMs: segment.endMs,
+        label: summarizeText(segment.text, 120),
+        syncLinkCount: segment.syncLinkCount,
+        codeCount: segment.codeCount,
+        coderCount: segment.coderCount,
+        isSynced: segment.isSynced,
+        isCoded: segment.isCoded
+      })),
+      transcript: syncLinks.map((link) => ({
+        linkId: link.id,
+        segmentId: link.segmentId,
+        transcriptSourceId: link.transcriptSourceId,
+        startMs: link.startMs,
+        endMs: link.endMs,
+        speakerLabel: link.speakerLabel,
+        transcriptText: summarizeText(link.transcriptText, 140),
+        tokenCount: link.tokenCount,
+        confidence: link.confidence,
+        syncScore: link.syncScore,
+        qaFlags: link.qaFlags,
+        qaFlagCount: link.qaFlags.length
+      })),
+      codedCoverage: enrichedTimeSegments
+        .filter((segment) => segment.isCoded)
+        .map((segment) => ({
+          segmentId: segment.segmentId,
+          startMs: segment.startMs,
+          endMs: segment.endMs,
+          codeCount: segment.codeCount
+        }))
+    }
+  };
+}
+
+function buildDiarizationQaReview(params: {
+  timeline: ReturnType<typeof buildMediaTimeline>;
+  maxRows: number;
+  maxConfidence: number;
+  switchWindowMs: number;
+}) {
+  const links = [...(params.timeline.syncLinks ?? [])]
+    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+  const flagsById = new Map<string, Set<string>>();
+  const addFlag = (linkId: string, flag: string) => {
+    const bucket = flagsById.get(linkId) ?? new Set<string>();
+    bucket.add(flag);
+    flagsById.set(linkId, bucket);
+  };
+
+  for (let index = 0; index < links.length; index += 1) {
+    const link = links[index]!;
+    const previous = index > 0 ? links[index - 1]! : null;
+    if (!link.speakerLabel) addFlag(link.id, 'unlabeled_speaker');
+    if (typeof link.confidence === 'number' && Number.isFinite(link.confidence) && link.confidence <= params.maxConfidence) {
+      addFlag(link.id, 'low_confidence');
+    }
+    if (link.durationMs < 900 && typeof link.confidence === 'number' && link.confidence <= Math.max(params.maxConfidence, 0.72)) {
+      addFlag(link.id, 'short_low_confidence');
+    }
+    if (previous && previous.speakerLabel && link.speakerLabel && previous.speakerLabel !== link.speakerLabel) {
+      const gapMs = Math.max(0, link.startMs - previous.endMs);
+      if (gapMs <= params.switchWindowMs) {
+        addFlag(link.id, 'rapid_speaker_switch');
+        addFlag(previous.id, 'rapid_speaker_switch');
+      }
+      if ((link.overlapPrevMs ?? 0) > 0) {
+        addFlag(link.id, 'overlap_speaker_conflict');
+        addFlag(previous.id, 'overlap_speaker_conflict');
+      }
+    }
+  }
+
+  const flagWeight: Record<string, number> = {
+    overlap_speaker_conflict: 6,
+    rapid_speaker_switch: 4,
+    low_confidence: 3,
+    short_low_confidence: 2,
+    unlabeled_speaker: 1
+  };
+
+  const candidates = links
+    .map((link) => {
+      const flags = [...(flagsById.get(link.id) ?? new Set<string>())];
+      if (flags.length === 0) return null;
+      const severityScore = flags.reduce((total, flag) => total + (flagWeight[flag] ?? 1), 0);
+      return {
+        linkId: link.id,
+        segmentId: link.segmentId,
+        startMs: link.startMs,
+        endMs: link.endMs,
+        speakerLabel: link.speakerLabel,
+        confidence: link.confidence,
+        syncScore: link.syncScore,
+        flags,
+        severityScore,
+        excerpt: summarizeText(link.transcriptText, 180)
+      };
+    })
+    .filter((entry): entry is {
+      linkId: string;
+      segmentId: string | null;
+      startMs: number;
+      endMs: number;
+      speakerLabel: string | null;
+      confidence: number | null;
+      syncScore: number | null;
+      flags: string[];
+      severityScore: number;
+      excerpt: string;
+    } => Boolean(entry))
+    .sort((left, right) => right.severityScore - left.severityScore || left.startMs - right.startMs);
+
+  return {
+    summary: {
+      maxConfidence: params.maxConfidence,
+      switchWindowMs: params.switchWindowMs,
+      candidateCount: candidates.length,
+      lowConfidenceCount: candidates.filter((entry) => entry.flags.includes('low_confidence')).length,
+      unlabeledSpeakerCount: candidates.filter((entry) => entry.flags.includes('unlabeled_speaker')).length,
+      rapidSwitchCount: candidates.filter((entry) => entry.flags.includes('rapid_speaker_switch')).length,
+      overlapSpeakerConflictCount: candidates.filter((entry) => entry.flags.includes('overlap_speaker_conflict')).length,
+      shortLowConfidenceCount: candidates.filter((entry) => entry.flags.includes('short_low_confidence')).length
+    },
+    candidates: candidates.slice(0, params.maxRows)
+  };
+}
+
+function chooseSpeakerLabel(
+  strategy: 'single' | 'alternating' | 'content_based',
+  index: number,
+  text: string
+): string {
+  if (strategy === 'single') return 'Speaker 1';
+  if (strategy === 'alternating') return index % 2 === 0 ? 'Speaker 1' : 'Speaker 2';
+  const lowered = text.toLowerCase();
+  if (/\b(interviewer|question|asked)\b/.test(lowered)) return 'Interviewer';
+  if (/\b(student|participant|responded|answer)\b/.test(lowered)) return 'Participant';
+  return index % 2 === 0 ? 'Speaker 1' : 'Speaker 2';
+}
+
+function buildTokenTimeline(params: {
+  text: string;
+  startMs: number;
+  endMs: number;
+  speakerLabel: string;
+  confidence: number;
+}) {
+  const tokenMatches = params.text.match(/[A-Za-z0-9][A-Za-z0-9'-]*/g) ?? [];
+  if (tokenMatches.length === 0) return [];
+  const durationMs = Math.max(1, params.endMs - params.startMs);
+  return tokenMatches.map((token, index) => {
+    const tokenStartMs = params.startMs + Math.floor((index / tokenMatches.length) * durationMs);
+    const tokenEndMs = index === tokenMatches.length - 1
+      ? params.endMs
+      : params.startMs + Math.floor(((index + 1) / tokenMatches.length) * durationMs);
+    return {
+      token,
+      startMs: tokenStartMs,
+      endMs: Math.max(tokenStartMs, tokenEndMs),
+      confidence: params.confidence,
+      speakerLabel: params.speakerLabel
+    };
+  });
+}
+
+function buildTranscriptionDraft(params: {
+  mediaTitle: string;
+  mode: 'segment_assembly' | 'timeline_chunked' | 'hybrid';
+  pipeline: ReturnType<typeof parseTranscriptionPipelineConfig>;
+  timeSegments: Array<{ id: string; anchor: { startMs: number; endMs: number }; text: string }>;
+}) {
+  const chunkMs = Math.max(3000, params.pipeline.chunkSeconds * 1000);
+  const sourceSegments = [...params.timeSegments]
+    .map((segment) => ({
+      id: segment.id,
+      startMs: Math.max(0, Math.round(segment.anchor.startMs)),
+      endMs: Math.max(0, Math.round(segment.anchor.endMs)),
+      text: String(segment.text ?? '').trim()
+    }))
+    .filter((segment) => segment.endMs > segment.startMs)
+    .sort((left, right) => left.startMs - right.startMs);
+  const estimatedDurationMs = Math.max(0, ...sourceSegments.map((segment) => segment.endMs));
+  const punctuationize = (text: string): string => {
+    const trimmed = text.trim();
+    if (!trimmed) return trimmed;
+    if (!params.pipeline.punctuation) return trimmed;
+    return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+  };
+
+  const makeEntry = (
+    startMs: number,
+    endMs: number,
+    text: string,
+    entryIndex: number,
+    segmentId: string | null,
+    baseConfidence: number,
+    syncScore: number
+  ) => {
+    const speakerLabel = params.pipeline.diarization
+      ? chooseSpeakerLabel(params.pipeline.speakerStrategy, entryIndex, text)
+      : 'Speaker 1';
+    const confidence = Math.max(0, Math.min(1, baseConfidence));
+    const transcriptText = punctuationize(text) || `Unclear utterance around ${(startMs / 1000).toFixed(1)}s`;
+    const tokenTimeline = buildTokenTimeline({
+      text: transcriptText,
+      startMs,
+      endMs,
+      speakerLabel,
+      confidence
+    });
+    return {
+      segmentId,
+      startMs,
+      endMs,
+      transcriptText,
+      speakerLabel,
+      confidence,
+      syncScore: Math.max(0, Math.min(1, syncScore)),
+      tokenTimeline
+    };
+  };
+
+  const entries: Array<{
+    segmentId: string | null;
+    startMs: number;
+    endMs: number;
+    transcriptText: string;
+    speakerLabel: string;
+    confidence: number;
+    syncScore: number;
+    tokenTimeline: Array<{ token: string; startMs: number; endMs: number; confidence: number; speakerLabel: string }>;
+  }> = [];
+
+  if (params.mode === 'segment_assembly') {
+    if (sourceSegments.length > 0) {
+      sourceSegments.forEach((segment, index) => {
+        entries.push(makeEntry(
+          segment.startMs,
+          segment.endMs,
+          segment.text || `Segment ${index + 1}`,
+          index,
+          segment.id,
+          0.9,
+          0.92
+        ));
+      });
+    } else {
+      const endMs = Math.max(chunkMs, 12000);
+      entries.push(makeEntry(0, endMs, `Transcript placeholder for ${params.mediaTitle}`, 0, null, 0.5, 0.4));
+    }
+  } else if (params.mode === 'timeline_chunked') {
+    const duration = Math.max(chunkMs, estimatedDurationMs);
+    const chunkCount = Math.max(1, Math.ceil(duration / chunkMs));
+    for (let index = 0; index < chunkCount; index += 1) {
+      const startMs = index * chunkMs;
+      const endMs = Math.min(duration, startMs + chunkMs);
+      const overlaps = sourceSegments.filter((segment) => segment.endMs > startMs && segment.startMs < endMs);
+      const seedText = overlaps.map((segment) => segment.text).filter(Boolean).join(' ').trim();
+      const text = seedText || `Auto transcript chunk ${index + 1}`;
+      const segmentId = overlaps.length === 1 ? overlaps[0]!.id : null;
+      const confidence = overlaps.length > 0 ? 0.82 : 0.58;
+      const syncScore = overlaps.length > 0 ? 0.78 : 0.5;
+      entries.push(makeEntry(startMs, Math.max(startMs + 500, endMs), text, index, segmentId, confidence, syncScore));
+    }
+  } else {
+    sourceSegments.forEach((segment, index) => {
+      entries.push(makeEntry(
+        segment.startMs,
+        segment.endMs,
+        segment.text || `Segment ${index + 1}`,
+        entries.length,
+        segment.id,
+        0.9,
+        0.9
+      ));
+      const next = sourceSegments[index + 1];
+      if (!next) return;
+      const gapMs = Math.max(0, next.startMs - segment.endMs);
+      if (gapMs < Math.round(chunkMs * 1.25)) return;
+      const syntheticStart = segment.endMs;
+      const syntheticEnd = Math.min(next.startMs, syntheticStart + chunkMs);
+      entries.push(makeEntry(
+        syntheticStart,
+        syntheticEnd,
+        `Gap fill between ${(segment.endMs / 1000).toFixed(1)}s and ${(next.startMs / 1000).toFixed(1)}s`,
+        entries.length,
+        null,
+        0.55,
+        0.48
+      ));
+    });
+    if (entries.length === 0) {
+      const endMs = Math.max(chunkMs, 12000);
+      entries.push(makeEntry(0, endMs, `Transcript placeholder for ${params.mediaTitle}`, 0, null, 0.5, 0.4));
+    }
+  }
+
+  const filteredEntries = entries
+    .filter((entry) => entry.confidence >= params.pipeline.confidenceThreshold || entry.segmentId !== null)
+    .sort((left, right) => left.startMs - right.startMs);
+
+  const transcriptBody = filteredEntries
+    .map((entry) => `[${(entry.startMs / 1000).toFixed(1)}s - ${(entry.endMs / 1000).toFixed(1)}s] ${entry.speakerLabel}: ${entry.transcriptText}`)
+    .join('\n');
+
+  const generatedCoverageMs = filteredEntries.reduce((total, entry) => total + Math.max(0, entry.endMs - entry.startMs), 0);
+  const modeStats = {
+    mode: params.mode,
+    chunkMs,
+    sourceSegmentCount: sourceSegments.length,
+    generatedEntryCount: filteredEntries.length,
+    generatedCoverageMs,
+    estimatedDurationMs
+  };
+
+  return {
+    transcriptBody: transcriptBody || `Transcript placeholder for ${params.mediaTitle}.`,
+    syncEntries: filteredEntries,
+    modeStats
   };
 }
 
@@ -2170,14 +6187,26 @@ function buildMergeReview(params: {
   projectId: string;
   sourceId?: string;
   codeId?: string;
+  minCoderCount?: number;
+  minConfidenceSpread?: number;
+  maxRows?: number;
   segments: Array<{ id: string; sourceId: string; text: string }>;
   sources: Array<{ id: string; title: string }>;
-  applications: Array<{ id: string; projectId: string; segmentId: string; codeId: string; coderId: string; caseId: string | null; confidence: number }>;
+  applications: Array<{ id: string; projectId: string; segmentId: string; codeId: string; coderId: string; caseId: string | null; confidence: number; createdAt?: string }>;
   codes: Array<{ id: string; name: string }>;
 }) {
+  const minCoderCount = Math.max(1, Math.floor(params.minCoderCount ?? 2));
+  const minConfidenceSpread = Math.max(0, Math.min(1, params.minConfidenceSpread ?? 0.2));
+  const maxRows = Math.max(1, Math.floor(params.maxRows ?? 100));
   const segmentMap = new Map(params.segments.map((segment) => [segment.id, segment]));
   const sourceMap = new Map(params.sources.map((source) => [source.id, source]));
   const codeMap = new Map(params.codes.map((code) => [code.id, code]));
+  const deriveSeverity = (coderCount: number, spread: number): 'low' | 'medium' | 'high' | 'critical' => {
+    if (coderCount >= 4 || spread >= 0.5) return 'critical';
+    if (coderCount >= 3 || spread >= 0.35) return 'high';
+    if (coderCount >= 2 || spread >= 0.2) return 'medium';
+    return 'low';
+  };
   const scopedApplications = params.applications.filter((application) => {
     if (application.projectId !== params.projectId) return false;
     if (params.codeId && application.codeId !== params.codeId) return false;
@@ -2202,6 +6231,12 @@ function buildMergeReview(params: {
       const confidenceSpread = apps.length > 0
         ? Math.max(...apps.map((app) => app.confidence)) - Math.min(...apps.map((app) => app.confidence))
         : 0;
+      const sortedApplications = [...apps].sort((left, right) => {
+        if (right.confidence !== left.confidence) return right.confidence - left.confidence;
+        return String(left.createdAt ?? '').localeCompare(String(right.createdAt ?? ''));
+      });
+      const needsReview = coderIds.length >= minCoderCount || confidenceSpread >= minConfidenceSpread;
+      const triagePriorityScore = Number((coderIds.length * 1.5 + apps.length * 0.5 + confidenceSpread * 4).toFixed(4));
       return {
         segmentId,
         sourceId: segment?.sourceId ?? '',
@@ -2211,24 +6246,177 @@ function buildMergeReview(params: {
         coderIds,
         applicationCount: apps.length,
         confidenceSpread,
+        defaultSeverity: deriveSeverity(coderIds.length, confidenceSpread),
+        triagePriorityScore,
         excerpt: segment?.text ?? '',
-        needsReview: coderIds.length > 1 || confidenceSpread >= 0.2
+        needsReview,
+        applications: sortedApplications.map((application) => ({
+          id: application.id,
+          coderId: application.coderId,
+          caseId: application.caseId,
+          confidence: application.confidence
+        }))
       };
     })
     .filter((row) => row.needsReview)
-    .sort((left, right) => right.coderIds.length - left.coderIds.length || right.confidenceSpread - left.confidenceSpread);
+    .sort((left, right) =>
+      right.triagePriorityScore - left.triagePriorityScore
+      || right.coderIds.length - left.coderIds.length
+      || right.confidenceSpread - left.confidenceSpread
+      || right.applicationCount - left.applicationCount
+    );
+  const limitedRows = rows.slice(0, maxRows);
   return {
     candidateCount: rows.length,
-    rows
+    returnedCount: limitedRows.length,
+    hasMore: rows.length > limitedRows.length,
+    filters: {
+      minCoderCount,
+      minConfidenceSpread,
+      maxRows
+    },
+    rows: limitedRows
   };
 }
 
+async function buildCommitteeReviewPack(params: {
+  projectId: string;
+  payload: QualitativeProjectPayload;
+  bundleLabel?: string;
+  bundleQueryIds: string[];
+  styleTemplate: StructuredReportStyleTemplate;
+  appendixMode: 'standard' | 'expanded';
+  appendixRowLimit: number;
+}) {
+  const savedQueries = await listSavedQualitativeQueries(params.projectId);
+  const savedQueryById = new Map(savedQueries.map((query) => [query.id, query]));
+  const pinnedQueries = savedQueries.filter((query) => {
+    const payload = parseSavedQueryJsonObject(query.queryJson);
+    return payload.qualQueryPinned === true;
+  });
+  const requestedQueryIds = params.bundleQueryIds.filter((item, index, items) => item && items.indexOf(item) === index);
+  const selectedQueries = requestedQueryIds.length > 0
+    ? requestedQueryIds
+      .map((queryId) => savedQueryById.get(queryId))
+      .filter((query): query is NonNullable<typeof query> => Boolean(query))
+    : (pinnedQueries.length > 0 ? pinnedQueries : savedQueries).slice(0, 10);
+
+  if (selectedQueries.length === 0) {
+    throw new Error('No saved qualitative queries are available for committee pack export.');
+  }
+
+  const queryBundles = selectedQueries.map((savedQuery) => {
+    const queryPayload = parseSavedQueryJsonObject(savedQuery.queryJson);
+    const evidenceQuery = parseEvidenceQuery(queryPayload);
+    const queryLabels = formatEvidenceFilterLabels(evidenceQuery);
+    queryLabels.push(`Saved mode: ${savedQuery.mode}`);
+
+    const retrieval = retrieveEvidence({
+      query: evidenceQuery,
+      sources: params.payload.sources,
+      segments: params.payload.segments,
+      applications: params.payload.codeApplications,
+      cases: params.payload.cases,
+      memos: params.payload.memos
+    });
+    const evidenceBundleBase = buildEvidenceExport({
+      project: {
+        id: params.payload.project.id,
+        name: params.payload.project.name
+      },
+      retrieval,
+      codes: params.payload.codes
+    });
+    const evidenceBundle = enrichEvidenceBundleWithContext({
+      bundle: evidenceBundleBase,
+      segments: params.payload.segments,
+      sources: params.payload.sources,
+      transcriptSyncLinks: params.payload.transcriptSyncLinks
+    });
+    const evidenceReport = buildEvidenceReport(evidenceBundle, queryLabels);
+    const queryReport = buildQualitativeQueryReport({
+      query: evidenceQuery,
+      options: parseQualitativeReportOptions({
+        reportTopSources: queryPayload.queryReportTopSources as string | number | undefined,
+        reportTopCases: queryPayload.queryReportTopCases as string | number | undefined,
+        reportTopCodes: queryPayload.queryReportTopCodes as string | number | undefined,
+        reportExcerptLimit: queryPayload.queryReportExcerptLimit as string | number | undefined,
+        reportIncludeSources: queryPayload.queryReportIncludeSources as string | boolean | undefined,
+        reportIncludeCases: queryPayload.queryReportIncludeCases as string | boolean | undefined,
+        reportIncludeExcerpts: queryPayload.queryReportIncludeExcerpts as string | boolean | undefined,
+        reportSortBy: queryPayload.queryReportSortBy as string | undefined
+      }),
+      sources: params.payload.sources,
+      segments: params.payload.segments,
+      applications: params.payload.codeApplications,
+      cases: params.payload.cases,
+      memos: params.payload.memos,
+      codes: params.payload.codes
+    });
+
+    return {
+      queryId: savedQuery.id,
+      label: savedQuery.label,
+      mode: savedQuery.mode,
+      queryLabels,
+      queryReport,
+      evidenceReport
+    };
+  });
+
+  return buildCommitteeReviewPackReport({
+    project: params.payload.project,
+    bundleLabel: params.bundleLabel,
+    styleTemplate: params.styleTemplate,
+    appendixMode: params.appendixMode,
+    appendixRowLimit: params.appendixRowLimit,
+    queryBundles
+  });
+}
+
+function deriveMergeConflictSeverity(params: { coderCount: number; confidenceSpread: number }): 'low' | 'medium' | 'high' | 'critical' {
+  if (params.coderCount >= 4 || params.confidenceSpread >= 0.5) return 'critical';
+  if (params.coderCount >= 3 || params.confidenceSpread >= 0.35) return 'high';
+  if (params.coderCount >= 2 || params.confidenceSpread >= 0.2) return 'medium';
+  return 'low';
+}
+
+function isHighRiskMergeConflict(params: {
+  coderCount: number;
+  confidenceSpread: number;
+  highRiskMinCoderCount: number;
+  highRiskMinConfidenceSpread: number;
+}): boolean {
+  return params.coderCount >= params.highRiskMinCoderCount
+    || params.confidenceSpread >= params.highRiskMinConfidenceSpread;
+}
+
+type ProjectDatasetSpssFieldMetadata = {
+  fieldKey: string;
+  fieldLabel: string;
+  measure: 'nominal' | 'ordinal' | 'scale' | 'unknown' | null;
+  valueLabels: Array<{ value: string | number | boolean | null; label: string }>;
+  missingValues: Array<string | number | boolean | null>;
+  missingRanges: Array<{ lo: string | number | boolean | null; hi: string | number | boolean | null }>;
+};
+
+function parseJsonArrayFallback<T>(value: string, fallback: T[]): T[] {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed as T[] : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 async function buildProjectDatasetPayload(projectId: string, analysis?: ReturnType<typeof parseDatasetAnalysisOptions>) {
-  const [cases, attributes, variables, traceLinks] = await Promise.all([
+  const [cases, attributes, variables, traceLinks, fieldMetadataRows, datasetSettings] = await Promise.all([
     listCases(projectId),
     listAttributes(projectId),
     listVariables(projectId),
-    listTraceLinks(projectId)
+    listTraceLinks(projectId),
+    listDatasetFieldMetadata(projectId),
+    getProjectDatasetSettings(projectId)
   ]);
 
   const dataset = buildCaseDataset({
@@ -2242,9 +6430,38 @@ async function buildProjectDatasetPayload(projectId: string, analysis?: ReturnTy
     }))
   });
 
+  const fieldMetadata: ProjectDatasetSpssFieldMetadata[] = fieldMetadataRows.map((entry) => ({
+    fieldKey: entry.fieldKey,
+    fieldLabel: entry.fieldLabel,
+    measure: entry.measure,
+    valueLabels: parseJsonArrayFallback<{ value: string | number | boolean | null; label: string }>(entry.valueLabelsJson, [])
+      .filter((item) => typeof item?.label === 'string' && item.label.trim().length > 0)
+      .map((item) => ({
+        value: item.value === undefined ? null : item.value,
+        label: item.label.trim()
+      })),
+    missingValues: parseJsonArrayFallback<string | number | boolean | null>(entry.missingValuesJson, [])
+      .map((item) => item === undefined ? null : item),
+    missingRanges: parseJsonArrayFallback<{ lo: string | number | boolean | null; hi: string | number | boolean | null }>(entry.missingRangesJson, [])
+      .map((item) => ({
+        lo: item?.lo === undefined ? null : item.lo,
+        hi: item?.hi === undefined ? null : item.hi
+      }))
+  }));
+
   return {
     dataset,
-    report: describeDataset(dataset, analysis)
+    report: describeDataset(dataset, analysis),
+    spssMetadata: {
+      settings: {
+        weightField: datasetSettings?.weightField ?? null,
+        splitFields: parseJsonArrayFallback<string>(datasetSettings?.splitFieldsJson ?? '[]', [])
+          .map((item) => String(item ?? '').trim())
+          .filter(Boolean),
+        updatedAt: datasetSettings?.updatedAt ?? null
+      },
+      fields: fieldMetadata
+    }
   };
 }
 
@@ -2304,6 +6521,7 @@ function parseDatasetAnalysisOptions(value: unknown) {
     weightField: string;
     missingValues: string[] | string;
     missingStrategy: string;
+    splitFields: string[] | string;
   }>;
   const missingValues = Array.isArray(entry.missingValues)
     ? entry.missingValues.map((item) => String(item ?? '').trim()).filter(Boolean)
@@ -2315,8 +6533,86 @@ function parseDatasetAnalysisOptions(value: unknown) {
     weightField: typeof entry.weightField === 'string' && entry.weightField.trim()
       ? entry.weightField.trim()
       : undefined,
+    splitFields: parseStringArray(entry.splitFields),
     missingValues,
     missingStrategy: entry.missingStrategy === 'listwise' ? 'listwise' as const : 'available' as const
+  };
+}
+
+async function persistImportedSpssMetadata(projectId: string, metadata: ImportedSpssMetadataDraft): Promise<void> {
+  const timestamp = new Date().toISOString();
+  const entries = metadata.fields.map((field) => ({
+    projectId,
+    fieldKey: field.mappedFieldKey,
+    fieldLabel: field.fieldLabel || field.sourceFieldKey,
+    measure: field.measure,
+    valueLabelsJson: JSON.stringify(field.valueLabels ?? []),
+    missingValuesJson: JSON.stringify(field.missingValues ?? []),
+    missingRangesJson: JSON.stringify(field.missingRanges ?? []),
+    createdAt: timestamp,
+    updatedAt: timestamp
+  }));
+  await replaceDatasetFieldMetadata(projectId, entries);
+  await upsertProjectDatasetSettings({
+    projectId,
+    weightField: typeof metadata.weightField === 'string' && metadata.weightField.trim()
+      ? metadata.weightField.trim()
+      : null,
+    splitFieldsJson: JSON.stringify((metadata.splitFields ?? []).map((item) => String(item ?? '').trim()).filter(Boolean)),
+    updatedAt: timestamp
+  });
+}
+
+function normalizeSpssExportScalar(value: unknown): string | number | boolean | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'boolean') return value;
+  return String(value);
+}
+
+function buildSpssExportInput(
+  payload: Awaited<ReturnType<typeof buildProjectDatasetPayload>>,
+  format: 'sav' | 'zsav',
+  override: { weightField: string | null; splitFields: string[] }
+) {
+  const fieldOrder = payload.dataset.fields.map((field) => field.key);
+  const fieldMetadataMap = new Map(payload.spssMetadata.fields.map((field) => [field.fieldKey, field]));
+  const columnLabels = Object.fromEntries(
+    payload.dataset.fields.map((field) => [field.key, fieldMetadataMap.get(field.key)?.fieldLabel || field.label || field.key])
+  );
+  const valueLabels = Object.fromEntries(
+    payload.dataset.fields.map((field) => [field.key, fieldMetadataMap.get(field.key)?.valueLabels ?? []])
+  );
+  const missingValues = Object.fromEntries(
+    payload.dataset.fields.map((field) => [field.key, fieldMetadataMap.get(field.key)?.missingValues ?? []])
+  );
+  const missingRanges = Object.fromEntries(
+    payload.dataset.fields.map((field) => [field.key, fieldMetadataMap.get(field.key)?.missingRanges ?? []])
+  );
+  const variableMeasure = Object.fromEntries(
+    payload.dataset.fields
+      .map((field) => [field.key, fieldMetadataMap.get(field.key)?.measure ?? 'unknown'])
+      .filter((entry): entry is [string, 'nominal' | 'ordinal' | 'scale' | 'unknown'] =>
+        entry[1] === 'nominal' || entry[1] === 'ordinal' || entry[1] === 'scale' || entry[1] === 'unknown'
+      )
+  );
+  const rows = payload.dataset.rows.map((row) => Object.fromEntries(
+    fieldOrder.map((field) => [field, normalizeSpssExportScalar(row[field])])
+  ));
+  return {
+    format,
+    rows,
+    fieldOrder,
+    columnLabels,
+    valueLabels,
+    missingValues,
+    missingRanges,
+    variableMeasure,
+    weightField: override.weightField,
+    splitFields: override.splitFields,
+    fileLabel: `muStatistics ${payload.dataset.caseCount} cases`,
+    notes: []
   };
 }
 
@@ -2338,14 +6634,27 @@ function serializeDatasetToCsv(rows: Array<Record<string, string | number | bool
 // ── Health ────────────────────────────────────────────────────────────────────
 
 server.get('/health', async () => {
-  return ok({ status: 'ok' as const, db: { host: getDbHost() } });
+  const axion = await getAxionIntegrationStatus();
+  return ok({ status: 'ok' as const, db: { host: getDbHost() }, axion });
 });
 
 server.get('/integrations/status', async () => {
+  const axion = await getAxionIntegrationStatus();
   return ok({
     sql: resolveSqlIntegrationStatus(),
-    office: resolveOfficeIntegrationStatus()
+    office: resolveOfficeIntegrationStatus(),
+    transcription: resolveTranscriptionIntegrationStatus(),
+    sem: resolveSemIntegrationStatus(),
+    axion
   });
+});
+
+server.get('/integrations/sem/status', async () => {
+  return ok({ sem: resolveSemIntegrationStatus() });
+});
+
+server.get('/integrations/axion/status', async () => {
+  return ok({ axion: await getAxionIntegrationStatus() });
 });
 
 server.get('/integrations/office/recent', async (request, reply) => {
@@ -2984,12 +7293,52 @@ server.post('/sql-import/jobs/:jobId/run', async (request, reply) => {
   const job = (await listExternalSqlImportJobs(projectId)).find((item) => item.id === jobId);
   if (!job) return reply.status(404).send(fail('NOT_FOUND', 'SQL import job not found.'));
   const maxRows = clampSqlImportMaxRows(body.maxRows, job.maxRows);
+  const startedAtMs = Date.now();
+  const preGuard = await evaluateAxionQeccGuard({
+    jobType: 'sql-import',
+    stage: 'manual_pre_run',
+    projectId,
+    retryCount: job.lastRunStatus === 'error' ? 1 : 0,
+    load: 0.45,
+    metadata: {
+      scheduled: false,
+      jobId: job.id
+    }
+  });
+  if (preGuard.action === 'halt') {
+    const message = `QECC guard blocked SQL import (${preGuard.reason}).`;
+    await settleExternalSqlImportJobRun({
+      job,
+      status: 'error',
+      message
+    });
+    await recordAuditEvent({
+      request,
+      projectId,
+      action: 'sql_import_job.qecc_guard_halt',
+      entityType: 'external_sql_import_job',
+      entityId: job.id,
+      details: { decision: preGuard, maxRows }
+    });
+    return reply.status(409).send(fail('QECC_HALT', message));
+  }
   try {
     const { imported } = await executeExternalSqlImportJob({
       ...job,
       maxRows
     });
     const successMessage = `Imported ${imported.casesCreated} cases and replaced ${imported.removedPriorCases} prior case rows.`;
+    const postGuard = await evaluateAxionQeccGuard({
+      jobType: 'sql-import',
+      stage: 'manual_post_run',
+      projectId,
+      durationSeconds: Math.max(0, (Date.now() - startedAtMs) / 1000),
+      load: 0.55,
+      metadata: {
+        scheduled: false,
+        jobId: job.id
+      }
+    });
     await settleExternalSqlImportJobRun({
       job,
       status: 'success',
@@ -3001,17 +7350,30 @@ server.post('/sql-import/jobs/:jobId/run', async (request, reply) => {
       action: 'sql_import_job.run',
       entityType: 'external_sql_import_job',
       entityId: job.id,
-      details: { label: job.label, maxRows, ...imported }
+      details: { label: job.label, maxRows, qeccGuard: postGuard, ...imported }
     });
     return ok({ imported });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to refresh the SQL import job.';
+    const failGuard = await evaluateAxionQeccGuard({
+      jobType: 'sql-import',
+      stage: 'manual_failed',
+      projectId,
+      durationSeconds: Math.max(0, (Date.now() - startedAtMs) / 1000),
+      errorRate: 1,
+      failedStage: true,
+      load: 0.7,
+      metadata: {
+        scheduled: false,
+        jobId: job.id
+      }
+    });
     await settleExternalSqlImportJobRun({
       job,
       status: 'error',
-      message
+      message: failGuard.action === 'halt' ? `${message} (QECC halt: ${failGuard.reason})` : message
     });
-    return reply.status(400).send(fail('INVALID', message));
+    return reply.status(400).send(fail('INVALID', failGuard.action === 'halt' ? `${message} (QECC halt: ${failGuard.reason})` : message));
   }
 });
 
@@ -3077,22 +7439,693 @@ server.delete('/sql-import/jobs/:jobId', async (request, reply) => {
   return ok({ removed: true });
 });
 
+server.get('/office-connectors/profiles', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = request.query as { projectId?: string };
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const items = await listOfficeConnectorProfiles(projectId);
+  return ok({
+    items: items.map(serializeOfficeConnectorProfile),
+    total: items.length
+  });
+});
+
+server.post('/office-connectors/profiles', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    label: string;
+    rootPath: string;
+    includeSubdirectories: boolean;
+    allowedExtensions: unknown;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const label = typeof body.label === 'string' ? body.label.trim() : '';
+  const rootPathInput = typeof body.rootPath === 'string' ? body.rootPath.trim() : '';
+  if (!label || !rootPathInput) {
+    return reply.status(400).send(fail('INVALID', 'Profile label and root path are required.'));
+  }
+  const normalizedRootPath = path.resolve(rootPathInput);
+  const includeSubdirectories = body.includeSubdirectories !== false;
+  const rawAllowedExtensions = typeof body.allowedExtensions === 'string'
+    ? body.allowedExtensions.split(',').map((item) => item.trim())
+    : body.allowedExtensions;
+  const allowedExtensions = normalizeOfficeConnectorExtensions(rawAllowedExtensions);
+  const timestamp = new Date().toISOString();
+  const saved = await insertOfficeConnectorProfile({
+    id: `office-connector-profile-${randomUUID()}`,
+    projectId,
+    label,
+    rootPath: normalizedRootPath,
+    includeSubdirectories,
+    allowedExtensionsJson: JSON.stringify(allowedExtensions),
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'office_connector_profile.save',
+    entityType: 'office_connector_profile',
+    entityId: saved.id,
+    details: {
+      label: saved.label,
+      rootPath: saved.rootPath,
+      includeSubdirectories: saved.includeSubdirectories,
+      allowedExtensions
+    }
+  });
+  reply.code(201);
+  return ok({ profile: serializeOfficeConnectorProfile(saved) });
+});
+
+server.delete('/office-connectors/profiles/:profileId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const { profileId } = request.params as { profileId: string };
+  const query = request.query as { projectId?: string };
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const removed = await deleteOfficeConnectorProfile(profileId, projectId);
+  if (!removed) return reply.status(404).send(fail('NOT_FOUND', 'Office connector profile not found.'));
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'office_connector_profile.delete',
+    entityType: 'office_connector_profile',
+    entityId: profileId,
+    details: {}
+  });
+  return ok({ removed: true });
+});
+
+server.post('/office-connectors/profiles/:profileId/discover', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const { profileId } = request.params as { profileId: string };
+  const body = (request.body ?? {}) as Partial<{ projectId: string; maxFiles: number }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const profile = (await listOfficeConnectorProfiles(projectId)).find((item) => item.id === profileId);
+  if (!profile) return reply.status(404).send(fail('NOT_FOUND', 'Office connector profile not found.'));
+  const maxFiles = clampOfficeConnectorMaxFiles(body.maxFiles, 200);
+  try {
+    const files = await collectOfficeConnectorFiles({
+      rootPath: profile.rootPath,
+      includeSubdirectories: profile.includeSubdirectories,
+      allowedExtensions: normalizeOfficeConnectorExtensions(parseJsonArray(profile.allowedExtensionsJson)),
+      maxFiles
+    });
+    await recordAuditEvent({
+      request,
+      projectId,
+      action: 'office_connector_profile.discover',
+      entityType: 'office_connector_profile',
+      entityId: profile.id,
+      details: { label: profile.label, maxFiles, discoveredCount: files.length }
+    });
+    return ok({ items: files, total: files.length });
+  } catch (error) {
+    return reply.status(400).send(fail('INVALID', error instanceof Error ? error.message : 'Unable to discover Office files.'));
+  }
+});
+
+server.get('/office-connectors/jobs', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = request.query as { projectId?: string };
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const items = await listOfficeConnectorJobs(projectId);
+  return ok({
+    items: items.map(serializeOfficeConnectorJob),
+    total: items.length
+  });
+});
+
+server.post('/office-connectors/jobs', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    profileId: string;
+    label: string;
+    maxFiles: number;
+    forceResync: boolean;
+    scheduleEnabled: boolean;
+    scheduleIntervalMinutes: number;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const profileId = typeof body.profileId === 'string' ? body.profileId.trim() : '';
+  const label = typeof body.label === 'string' ? body.label.trim() : '';
+  if (!profileId || !label) {
+    return reply.status(400).send(fail('INVALID', 'Profile and label are required.'));
+  }
+  const profile = (await listOfficeConnectorProfiles(projectId)).find((item) => item.id === profileId);
+  if (!profile) return reply.status(404).send(fail('NOT_FOUND', 'Office connector profile not found.'));
+  const maxFiles = clampOfficeConnectorMaxFiles(body.maxFiles, 500);
+  const forceResync = body.forceResync === true;
+  const scheduleEnabled = body.scheduleEnabled === true;
+  const scheduleIntervalMinutes = scheduleEnabled ? clampSqlScheduleIntervalMinutes(body.scheduleIntervalMinutes) : null;
+  const timestamp = new Date().toISOString();
+  const saved = await insertOfficeConnectorJob({
+    id: `office-connector-job-${randomUUID()}`,
+    projectId,
+    profileId,
+    label,
+    syncOptionsJson: JSON.stringify({ maxFiles, forceResync }),
+    scheduleEnabled,
+    scheduleIntervalMinutes,
+    scheduleNextRunAt: computeSqlImportScheduleNextRunAt(scheduleEnabled, scheduleIntervalMinutes, timestamp),
+    lastRunAt: null,
+    lastRunStatus: null,
+    lastRunMessage: null,
+    lastRunStatsJson: JSON.stringify(defaultOfficeConnectorRunStats()),
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'office_connector_job.save',
+    entityType: 'office_connector_job',
+    entityId: saved.id,
+    details: { label, profileLabel: profile.label, maxFiles, forceResync, scheduleEnabled, scheduleIntervalMinutes }
+  });
+  reply.code(201);
+  return ok({ job: serializeOfficeConnectorJob(saved) });
+});
+
+server.post('/office-connectors/jobs/:jobId/run', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const { jobId } = request.params as { jobId: string };
+  const body = (request.body ?? {}) as Partial<{ projectId: string; maxFiles: number; forceResync: boolean }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const job = (await listOfficeConnectorJobs(projectId)).find((item) => item.id === jobId);
+  if (!job) return reply.status(404).send(fail('NOT_FOUND', 'Office connector job not found.'));
+  const parsedSync = parseJsonObject(job.syncOptionsJson);
+  const maxFiles = clampOfficeConnectorMaxFiles(body.maxFiles, clampOfficeConnectorMaxFiles(parsedSync.maxFiles, 500));
+  const forceResync = body.forceResync === true;
+  try {
+    const { profileLabel, stats } = await executeOfficeConnectorJob(job, { maxFiles, forceResync });
+    const message = `Synced ${stats.importedCount} file(s); ${stats.skippedUnchangedCount} unchanged; ${stats.errorCount} error(s).`;
+    await settleOfficeConnectorJobRun({
+      job,
+      status: stats.errorCount > 0 ? 'error' : 'success',
+      message,
+      stats
+    });
+    await recordAuditEvent({
+      request,
+      projectId,
+      action: 'office_connector_job.run',
+      entityType: 'office_connector_job',
+      entityId: job.id,
+      details: { label: job.label, profileLabel, maxFiles, forceResync, ...stats }
+    });
+    return ok({ profileLabel, stats });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to run the Office connector sync job.';
+    const stats = defaultOfficeConnectorRunStats();
+    stats.errorCount = 1;
+    stats.errors.push({ message });
+    await settleOfficeConnectorJobRun({
+      job,
+      status: 'error',
+      message,
+      stats
+    });
+    return reply.status(400).send(fail('INVALID', message));
+  }
+});
+
+server.patch('/office-connectors/jobs/:jobId/schedule', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const { jobId } = request.params as { jobId: string };
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    enabled: boolean;
+    intervalMinutes: number;
+    maxFiles: number;
+    forceResync: boolean;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const job = (await listOfficeConnectorJobs(projectId)).find((item) => item.id === jobId);
+  if (!job) return reply.status(404).send(fail('NOT_FOUND', 'Office connector job not found.'));
+  const priorOptions = parseJsonObject(job.syncOptionsJson);
+  const maxFiles = clampOfficeConnectorMaxFiles(body.maxFiles, clampOfficeConnectorMaxFiles(priorOptions.maxFiles, 500));
+  const forceResync = body.forceResync === true || priorOptions.forceResync === true;
+  const enabled = body.enabled === true;
+  const intervalMinutes = enabled ? clampSqlScheduleIntervalMinutes(body.intervalMinutes ?? job.scheduleIntervalMinutes ?? 60) : null;
+  const updatedAt = new Date().toISOString();
+  const updated = await updateOfficeConnectorJobSchedule({
+    id: job.id,
+    projectId,
+    scheduleEnabled: enabled,
+    scheduleIntervalMinutes: intervalMinutes,
+    scheduleNextRunAt: computeSqlImportScheduleNextRunAt(enabled, intervalMinutes, updatedAt),
+    syncOptionsJson: JSON.stringify({ maxFiles, forceResync }),
+    updatedAt
+  });
+  if (!updated) return reply.status(404).send(fail('NOT_FOUND', 'Office connector job not found.'));
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'office_connector_job.schedule',
+    entityType: 'office_connector_job',
+    entityId: job.id,
+    details: { enabled, intervalMinutes, maxFiles, forceResync }
+  });
+  const refreshed = (await listOfficeConnectorJobs(projectId)).find((item) => item.id === jobId);
+  return ok({ job: refreshed ? serializeOfficeConnectorJob(refreshed) : null });
+});
+
+server.delete('/office-connectors/jobs/:jobId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const { jobId } = request.params as { jobId: string };
+  const query = request.query as { projectId?: string };
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const removed = await deleteOfficeConnectorJob(jobId, projectId);
+  if (!removed) return reply.status(404).send(fail('NOT_FOUND', 'Office connector job not found.'));
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'office_connector_job.delete',
+    entityType: 'office_connector_job',
+    entityId: jobId,
+    details: {}
+  });
+  return ok({ removed: true });
+});
+
+server.get('/reference-connectors/profiles', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = request.query as { projectId?: string };
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const items = await listReferenceConnectorProfiles(projectId);
+  return ok({
+    items: items.map(serializeReferenceConnectorProfile),
+    total: items.length
+  });
+});
+
+server.post('/reference-connectors/profiles', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    label: string;
+    provider: string;
+    settings: unknown;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const label = typeof body.label === 'string' ? body.label.trim() : '';
+  if (!label) return reply.status(400).send(fail('INVALID', 'Profile label is required.'));
+  const provider = parseReferenceConnectorProvider(body.provider);
+  const settingsRaw = body.settings && typeof body.settings === 'object' && !Array.isArray(body.settings)
+    ? body.settings as Record<string, unknown>
+    : {};
+  const settings = {
+    mailto: typeof settingsRaw.mailto === 'string' ? settingsRaw.mailto.trim() : '',
+    apiKey: typeof settingsRaw.apiKey === 'string' ? settingsRaw.apiKey.trim() : ''
+  };
+  const timestamp = new Date().toISOString();
+  const saved = await insertReferenceConnectorProfile({
+    id: `reference-connector-profile-${randomUUID()}`,
+    projectId,
+    label,
+    provider,
+    settingsJson: JSON.stringify(settings),
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference_connector_profile.save',
+    entityType: 'reference_connector_profile',
+    entityId: saved.id,
+    details: { label, provider, hasMailto: Boolean(settings.mailto), hasApiKey: Boolean(settings.apiKey) }
+  });
+  reply.code(201);
+  return ok({ profile: serializeReferenceConnectorProfile(saved) });
+});
+
+server.delete('/reference-connectors/profiles/:profileId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const { profileId } = request.params as { profileId: string };
+  const query = request.query as { projectId?: string };
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const removed = await deleteReferenceConnectorProfile(profileId, projectId);
+  if (!removed) return reply.status(404).send(fail('NOT_FOUND', 'Reference connector profile not found.'));
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference_connector_profile.delete',
+    entityType: 'reference_connector_profile',
+    entityId: profileId,
+    details: {}
+  });
+  return ok({ removed: true });
+});
+
+server.post('/reference-connectors/profiles/:profileId/search', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const { profileId } = request.params as { profileId: string };
+  const body = (request.body ?? {}) as Partial<{ projectId: string; queryText: string; maxRows: number }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const profile = (await listReferenceConnectorProfiles(projectId)).find((item) => item.id === profileId);
+  if (!profile) return reply.status(404).send(fail('NOT_FOUND', 'Reference connector profile not found.'));
+  const queryText = typeof body.queryText === 'string' ? body.queryText.trim() : '';
+  if (!queryText) return reply.status(400).send(fail('INVALID', 'Query text is required.'));
+  const maxRows = clampReferenceConnectorMaxRows(body.maxRows, 50);
+  try {
+    const candidates = await searchReferenceProvider({
+      provider: profile.provider,
+      queryText,
+      maxRows,
+      settings: parseJsonObject(profile.settingsJson)
+    });
+    await recordAuditEvent({
+      request,
+      projectId,
+      action: 'reference_connector.search',
+      entityType: 'reference_connector_profile',
+      entityId: profile.id,
+      details: { label: profile.label, provider: profile.provider, queryText, maxRows, fetchedCount: candidates.length }
+    });
+    return ok({ items: candidates, total: candidates.length });
+  } catch (error) {
+    return reply.status(400).send(fail('INVALID', error instanceof Error ? error.message : 'Reference connector search failed.'));
+  }
+});
+
+server.post('/reference-connectors/profiles/:profileId/import', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const { profileId } = request.params as { profileId: string };
+  const body = (request.body ?? {}) as Partial<{ projectId: string; queryText: string; maxRows: number; skipDuplicates: boolean }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const profile = (await listReferenceConnectorProfiles(projectId)).find((item) => item.id === profileId);
+  if (!profile) return reply.status(404).send(fail('NOT_FOUND', 'Reference connector profile not found.'));
+  const queryText = typeof body.queryText === 'string' ? body.queryText.trim() : '';
+  if (!queryText) return reply.status(400).send(fail('INVALID', 'Query text is required.'));
+  const maxRows = clampReferenceConnectorMaxRows(body.maxRows, 50);
+  const skipDuplicates = body.skipDuplicates !== false;
+  try {
+    const candidates = await searchReferenceProvider({
+      provider: profile.provider,
+      queryText,
+      maxRows,
+      settings: parseJsonObject(profile.settingsJson)
+    });
+    const imported = await importReferenceConnectorCandidates({
+      projectId,
+      provider: profile.provider,
+      candidates,
+      skipDuplicates
+    });
+    await recordAuditEvent({
+      request,
+      projectId,
+      action: 'reference_connector.import',
+      entityType: 'reference_connector_profile',
+      entityId: profile.id,
+      details: {
+        label: profile.label,
+        provider: profile.provider,
+        queryText,
+        maxRows,
+        skipDuplicates,
+        fetchedCount: candidates.length,
+        importedCount: imported.imported.length,
+        skippedCount: imported.skipped.length
+      }
+    });
+    return ok({
+      fetchedCount: candidates.length,
+      importedCount: imported.imported.length,
+      skippedCount: imported.skipped.length,
+      imported: imported.imported,
+      skipped: imported.skipped
+    });
+  } catch (error) {
+    return reply.status(400).send(fail('INVALID', error instanceof Error ? error.message : 'Reference connector import failed.'));
+  }
+});
+
+server.get('/reference-connectors/jobs', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = request.query as { projectId?: string };
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const items = await listReferenceConnectorJobs(projectId);
+  return ok({
+    items: items.map(serializeReferenceConnectorJob),
+    total: items.length
+  });
+});
+
+server.post('/reference-connectors/jobs', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    profileId: string;
+    label: string;
+    queryText: string;
+    maxRows: number;
+    skipDuplicates: boolean;
+    scheduleEnabled: boolean;
+    scheduleIntervalMinutes: number;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const profileId = typeof body.profileId === 'string' ? body.profileId.trim() : '';
+  const label = typeof body.label === 'string' ? body.label.trim() : '';
+  const queryText = typeof body.queryText === 'string' ? body.queryText.trim() : '';
+  if (!profileId || !label || !queryText) {
+    return reply.status(400).send(fail('INVALID', 'Profile, label, and query text are required.'));
+  }
+  const profile = (await listReferenceConnectorProfiles(projectId)).find((item) => item.id === profileId);
+  if (!profile) return reply.status(404).send(fail('NOT_FOUND', 'Reference connector profile not found.'));
+  const maxRows = clampReferenceConnectorMaxRows(body.maxRows, 50);
+  const skipDuplicates = body.skipDuplicates !== false;
+  const scheduleEnabled = body.scheduleEnabled === true;
+  const scheduleIntervalMinutes = scheduleEnabled ? clampSqlScheduleIntervalMinutes(body.scheduleIntervalMinutes) : null;
+  const timestamp = new Date().toISOString();
+  const saved = await insertReferenceConnectorJob({
+    id: `reference-connector-job-${randomUUID()}`,
+    projectId,
+    profileId,
+    label,
+    queryJson: JSON.stringify({ text: queryText, maxRows, skipDuplicates }),
+    scheduleEnabled,
+    scheduleIntervalMinutes,
+    scheduleNextRunAt: computeSqlImportScheduleNextRunAt(scheduleEnabled, scheduleIntervalMinutes, timestamp),
+    lastRunAt: null,
+    lastRunStatus: null,
+    lastRunMessage: null,
+    lastRunStatsJson: '{}',
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference_connector_job.save',
+    entityType: 'reference_connector_job',
+    entityId: saved.id,
+    details: { label, provider: profile.provider, queryText, maxRows, skipDuplicates, scheduleEnabled, scheduleIntervalMinutes }
+  });
+  reply.code(201);
+  return ok({ job: serializeReferenceConnectorJob(saved) });
+});
+
+server.post('/reference-connectors/jobs/:jobId/run', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const { jobId } = request.params as { jobId: string };
+  const body = (request.body ?? {}) as Partial<{ projectId: string; queryText: string; maxRows: number; skipDuplicates: boolean }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const job = (await listReferenceConnectorJobs(projectId)).find((item) => item.id === jobId);
+  if (!job) return reply.status(404).send(fail('NOT_FOUND', 'Reference connector job not found.'));
+  const priorQuery = parseJsonObject(job.queryJson);
+  const queryText = typeof body.queryText === 'string' && body.queryText.trim()
+    ? body.queryText.trim()
+    : (typeof priorQuery.text === 'string' ? priorQuery.text.trim() : '');
+  if (!queryText) return reply.status(400).send(fail('INVALID', 'Query text is required.'));
+  const maxRows = clampReferenceConnectorMaxRows(body.maxRows ?? priorQuery.maxRows, 50);
+  const skipDuplicates = typeof body.skipDuplicates === 'boolean'
+    ? body.skipDuplicates
+    : priorQuery.skipDuplicates !== false;
+  const effectiveJob = { ...job, queryJson: JSON.stringify({ text: queryText, maxRows, skipDuplicates }) };
+  try {
+    const result = await executeReferenceConnectorJob(effectiveJob);
+    const message = `Fetched ${result.fetchedCount} record(s), imported ${result.importedCount}, skipped ${result.skippedCount}.`;
+    await settleReferenceConnectorJobRun({
+      job,
+      status: 'success',
+      message,
+      stats: result
+    });
+    await recordAuditEvent({
+      request,
+      projectId,
+      action: 'reference_connector_job.run',
+      entityType: 'reference_connector_job',
+      entityId: job.id,
+      details: result
+    });
+    return ok(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to run the reference connector sync job.';
+    await settleReferenceConnectorJobRun({
+      job,
+      status: 'error',
+      message,
+      stats: { error: message }
+    });
+    return reply.status(400).send(fail('INVALID', message));
+  }
+});
+
+server.patch('/reference-connectors/jobs/:jobId/schedule', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const { jobId } = request.params as { jobId: string };
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    enabled: boolean;
+    intervalMinutes: number;
+    queryText: string;
+    maxRows: number;
+    skipDuplicates: boolean;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const job = (await listReferenceConnectorJobs(projectId)).find((item) => item.id === jobId);
+  if (!job) return reply.status(404).send(fail('NOT_FOUND', 'Reference connector job not found.'));
+  const priorQuery = parseJsonObject(job.queryJson);
+  const queryText = typeof body.queryText === 'string' && body.queryText.trim()
+    ? body.queryText.trim()
+    : (typeof priorQuery.text === 'string' ? priorQuery.text.trim() : '');
+  if (!queryText) return reply.status(400).send(fail('INVALID', 'Query text is required.'));
+  const maxRows = clampReferenceConnectorMaxRows(body.maxRows ?? priorQuery.maxRows, 50);
+  const skipDuplicates = typeof body.skipDuplicates === 'boolean'
+    ? body.skipDuplicates
+    : priorQuery.skipDuplicates !== false;
+  const enabled = body.enabled === true;
+  const intervalMinutes = enabled ? clampSqlScheduleIntervalMinutes(body.intervalMinutes ?? job.scheduleIntervalMinutes ?? 60) : null;
+  const updatedAt = new Date().toISOString();
+  const updated = await updateReferenceConnectorJobSchedule({
+    id: job.id,
+    projectId,
+    scheduleEnabled: enabled,
+    scheduleIntervalMinutes: intervalMinutes,
+    scheduleNextRunAt: computeSqlImportScheduleNextRunAt(enabled, intervalMinutes, updatedAt),
+    queryJson: JSON.stringify({ text: queryText, maxRows, skipDuplicates }),
+    updatedAt
+  });
+  if (!updated) return reply.status(404).send(fail('NOT_FOUND', 'Reference connector job not found.'));
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference_connector_job.schedule',
+    entityType: 'reference_connector_job',
+    entityId: job.id,
+    details: { enabled, intervalMinutes, queryText, maxRows, skipDuplicates }
+  });
+  const refreshed = (await listReferenceConnectorJobs(projectId)).find((item) => item.id === job.id);
+  return ok({ job: refreshed ? serializeReferenceConnectorJob(refreshed) : null });
+});
+
+server.delete('/reference-connectors/jobs/:jobId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const { jobId } = request.params as { jobId: string };
+  const query = request.query as { projectId?: string };
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
+  const removed = await deleteReferenceConnectorJob(jobId, projectId);
+  if (!removed) return reply.status(404).send(fail('NOT_FOUND', 'Reference connector job not found.'));
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference_connector_job.delete',
+    entityType: 'reference_connector_job',
+    entityId: jobId,
+    details: {}
+  });
+  return ok({ removed: true });
+});
+
 server.get('/governance/status', async () => {
   const policy = await getGovernancePolicy();
-  const deploymentIssues = validateDeploymentEnvironment();
+  const deploymentIssues = validateDeploymentEnvironment(policy);
+  const oidcReadiness = await buildOidcReadiness(false);
   return ok({
     auditTrailEnabled: true,
     oidcEnabled: oidcConfig.enabled,
     sessionIdleTimeoutMinutes: policy.idleTimeoutMinutes,
+    sessionAbsoluteTimeoutMinutes: policy.sessionAbsoluteTimeoutMinutes,
     loginThrottle: {
       enabled: true,
       windowMinutes: policy.loginThrottleWindowMinutes,
       maxFailures: policy.loginThrottleMaxFailures
     },
+    localAuthEnabled: policy.localAuthEnabled,
+    passwordPolicy: {
+      minLength: policy.passwordMinLength,
+      requireUppercase: policy.passwordRequireUppercase,
+      requireNumber: policy.passwordRequireNumber,
+      requireSymbol: policy.passwordRequireSymbol
+    },
     auditExportMaxRows: policy.auditExportMaxRows,
     backupRetentionDays: policy.backupRetentionDays,
     exportStorageEnabled: true,
     securityHeadersEnabled: true,
+    oidcReadiness,
     deploymentReady: deploymentIssues.every((issue) => issue.severity !== 'error'),
     deploymentIssues
   });
@@ -3109,27 +8142,54 @@ server.put('/governance/policies', async (request, reply) => {
   if (!userId) return;
   const body = (request.body ?? {}) as Partial<{
     idleTimeoutMinutes: number;
+    sessionAbsoluteTimeoutMinutes: number;
     loginThrottleWindowMinutes: number;
     loginThrottleMaxFailures: number;
+    localAuthEnabled: boolean;
+    passwordMinLength: number;
+    passwordRequireUppercase: boolean;
+    passwordRequireNumber: boolean;
+    passwordRequireSymbol: boolean;
     auditExportMaxRows: number;
     backupRetentionDays: number;
   }>;
   const idleTimeoutMinutes = Math.max(15, Math.min(720, Number(body.idleTimeoutMinutes) || 90));
+  const sessionAbsoluteTimeoutMinutes = Math.max(30, Math.min(7 * 24 * 60, Number(body.sessionAbsoluteTimeoutMinutes) || 720));
   const loginThrottleWindowMinutes = Math.max(1, Math.min(240, Number(body.loginThrottleWindowMinutes) || 15));
   const loginThrottleMaxFailures = Math.max(1, Math.min(20, Number(body.loginThrottleMaxFailures) || 5));
+  const localAuthEnabled = body.localAuthEnabled !== false;
+  const passwordMinLength = Math.max(8, Math.min(128, Number(body.passwordMinLength) || 10));
+  const passwordRequireUppercase = body.passwordRequireUppercase === true;
+  const passwordRequireNumber = body.passwordRequireNumber === true;
+  const passwordRequireSymbol = body.passwordRequireSymbol === true;
   const auditExportMaxRows = Math.max(100, Math.min(100000, Number(body.auditExportMaxRows) || 2000));
   const backupRetentionDays = Math.max(1, Math.min(3650, Number(body.backupRetentionDays) || 30));
+  if (!localAuthEnabled && !oidcConfig.enabled) {
+    return reply.status(400).send(fail('INVALID', 'Cannot disable local auth until OIDC is configured.'));
+  }
   const policy = await updateGovernancePolicy({
     idleTimeoutMinutes,
+    sessionAbsoluteTimeoutMinutes,
     loginThrottleWindowMinutes,
     loginThrottleMaxFailures,
+    localAuthEnabled,
+    passwordMinLength,
+    passwordRequireUppercase,
+    passwordRequireNumber,
+    passwordRequireSymbol,
     auditExportMaxRows,
     backupRetentionDays,
     updatedByUserId: userId
   });
   IDLE_TIMEOUT_MS = policy.idleTimeoutMinutes * 60 * 1000;
+  SESSION_ABSOLUTE_TIMEOUT_MS = policy.sessionAbsoluteTimeoutMinutes * 60 * 1000;
   LOGIN_THROTTLE_WINDOW_MS = policy.loginThrottleWindowMinutes * 60 * 1000;
   LOGIN_THROTTLE_MAX_FAILURES = policy.loginThrottleMaxFailures;
+  LOCAL_AUTH_ENABLED = policy.localAuthEnabled;
+  PASSWORD_MIN_LENGTH = policy.passwordMinLength;
+  PASSWORD_REQUIRE_UPPERCASE = policy.passwordRequireUppercase;
+  PASSWORD_REQUIRE_NUMBER = policy.passwordRequireNumber;
+  PASSWORD_REQUIRE_SYMBOL = policy.passwordRequireSymbol;
   AUDIT_EXPORT_MAX_ROWS = policy.auditExportMaxRows;
   BACKUP_RETENTION_DAYS = policy.backupRetentionDays;
   return ok({ policy });
@@ -3138,21 +8198,334 @@ server.put('/governance/policies', async (request, reply) => {
 server.get('/deployment/validate', async (request, reply) => {
   const userId = await assertProfessor(request, reply);
   if (!userId) return;
-  const issues = validateDeploymentEnvironment();
+  const policy = await getGovernancePolicy();
+  const issues = validateDeploymentEnvironment(policy);
+  const addIssue = (issue: { severity: 'error' | 'warning'; key: string; message: string }) => {
+    if (!issues.some((entry) => entry.severity === issue.severity && entry.key === issue.key && entry.message === issue.message)) {
+      issues.push(issue);
+    }
+  };
+  const oidcReadiness = await buildOidcReadiness(true);
+  if (oidcReadiness.discovery && !oidcReadiness.discovery.ok) {
+    addIssue({
+      severity: 'error',
+      key: 'OIDC_DISCOVERY',
+      message: `OIDC discovery probe failed: ${oidcReadiness.discovery.error}`
+    });
+  }
+  if (oidcConfig.enabled && !oidcReadiness.redirectUriCheck.valid) {
+    addIssue({
+      severity: 'error',
+      key: 'OIDC_REDIRECT_URI_FORMAT',
+      message: oidcReadiness.redirectUriCheck.message
+    });
+  }
+  if (oidcConfig.enabled && oidcReadiness.redirectUriCheck.hostMatchesAppOrigin === false) {
+    addIssue({
+      severity: isProduction ? 'error' : 'warning',
+      key: 'OIDC_REDIRECT_URI_ORIGIN',
+      message: oidcReadiness.redirectUriCheck.message
+    });
+  }
+  if (oidcConfig.enabled && oidcReadiness.audienceCheck.status === 'fail') {
+    addIssue({
+      severity: 'error',
+      key: 'OIDC_AUDIENCE',
+      message: oidcReadiness.audienceCheck.message
+    });
+  } else if (oidcConfig.enabled && oidcReadiness.audienceCheck.status === 'warn') {
+    addIssue({
+      severity: 'warning',
+      key: 'OIDC_AUDIENCE',
+      message: oidcReadiness.audienceCheck.message
+    });
+  }
+  if (oidcReadiness.discovery?.ok && oidcReadiness.discovery.issuerMatchesConfig === false) {
+    addIssue({
+      severity: 'error',
+      key: 'OIDC_ISSUER_MISMATCH',
+      message: `OIDC discovery issuer (${oidcReadiness.discovery.issuer ?? 'unknown'}) does not match configured issuer (${oidcConfig.issuer}).`
+    });
+  }
+  if (oidcReadiness.discovery?.ok && oidcReadiness.discovery.secureEndpoints === false) {
+    addIssue({
+      severity: isProduction ? 'error' : 'warning',
+      key: 'OIDC_ENDPOINT_SECURITY',
+      message: 'OIDC discovery returned non-HTTPS endpoints. Use HTTPS endpoints before deployment cutover.'
+    });
+  }
   const storageRoot = resolveStorageRoot();
   await ensureDirectory(storageRoot);
+  const blockingIssues = issues.filter((issue) => issue.severity === 'error');
+  const warningIssues = issues.filter((issue) => issue.severity === 'warning');
   return ok({
     storageRoot,
+    oidcReadiness,
+    policySnapshot: policy,
     issues,
-    ready: issues.every((issue) => issue.severity !== 'error')
+    ready: blockingIssues.length === 0,
+    summary: {
+      generatedAt: new Date().toISOString(),
+      blockingCount: blockingIssues.length,
+      warningCount: warningIssues.length,
+      blockingKeys: [...new Set(blockingIssues.map((issue) => issue.key))],
+      warningKeys: [...new Set(warningIssues.map((issue) => issue.key))]
+    }
+  });
+});
+
+server.get('/deployment/cutover-check', async (request, reply) => {
+  const userId = await assertProfessor(request, reply);
+  if (!userId) return;
+  const policy = await getGovernancePolicy();
+  const issues = validateDeploymentEnvironment(policy);
+  const addIssue = (issue: { severity: 'error' | 'warning'; key: string; message: string }) => {
+    if (!issues.some((entry) => entry.severity === issue.severity && entry.key === issue.key && entry.message === issue.message)) {
+      issues.push(issue);
+    }
+  };
+  const oidcReadiness = await buildOidcReadiness(true);
+  if (oidcReadiness.discovery && !oidcReadiness.discovery.ok) {
+    addIssue({
+      severity: 'error',
+      key: 'OIDC_DISCOVERY',
+      message: `OIDC discovery probe failed: ${oidcReadiness.discovery.error}`
+    });
+  }
+  if (oidcConfig.enabled && !oidcReadiness.redirectUriCheck.valid) {
+    addIssue({
+      severity: 'error',
+      key: 'OIDC_REDIRECT_URI_FORMAT',
+      message: oidcReadiness.redirectUriCheck.message
+    });
+  }
+  if (oidcConfig.enabled && oidcReadiness.redirectUriCheck.hostMatchesAppOrigin === false) {
+    addIssue({
+      severity: isProduction ? 'error' : 'warning',
+      key: 'OIDC_REDIRECT_URI_ORIGIN',
+      message: oidcReadiness.redirectUriCheck.message
+    });
+  }
+  if (oidcConfig.enabled && oidcReadiness.audienceCheck.status === 'fail') {
+    addIssue({
+      severity: 'error',
+      key: 'OIDC_AUDIENCE',
+      message: oidcReadiness.audienceCheck.message
+    });
+  } else if (oidcConfig.enabled && oidcReadiness.audienceCheck.status === 'warn') {
+    addIssue({
+      severity: 'warning',
+      key: 'OIDC_AUDIENCE',
+      message: oidcReadiness.audienceCheck.message
+    });
+  }
+  if (oidcReadiness.discovery?.ok && oidcReadiness.discovery.issuerMatchesConfig === false) {
+    addIssue({
+      severity: 'error',
+      key: 'OIDC_ISSUER_MISMATCH',
+      message: `OIDC discovery issuer (${oidcReadiness.discovery.issuer ?? 'unknown'}) does not match configured issuer (${oidcConfig.issuer}).`
+    });
+  }
+  if (oidcReadiness.discovery?.ok && oidcReadiness.discovery.secureEndpoints === false) {
+    addIssue({
+      severity: isProduction ? 'error' : 'warning',
+      key: 'OIDC_ENDPOINT_SECURITY',
+      message: 'OIDC discovery returned non-HTTPS endpoints. Use HTTPS endpoints before deployment cutover.'
+    });
+  }
+  const storageRoot = resolveStorageRoot();
+  await ensureDirectory(storageRoot);
+  const hasError = (key: string) => issues.some((issue) => issue.key === key && issue.severity === 'error');
+  const hasWarning = (key: string) => issues.some((issue) => issue.key === key && issue.severity === 'warning');
+  const checks: Array<{
+    key: string;
+    label: string;
+    status: 'pass' | 'warn' | 'fail';
+    message: string;
+  }> = [
+      {
+        key: 'OIDC_ENABLED',
+        label: 'OIDC enabled',
+        status: oidcConfig.enabled ? 'pass' : 'fail',
+        message: oidcConfig.enabled ? 'OIDC is enabled.' : 'Enable OIDC before MU deployment cutover.'
+      },
+      {
+        key: 'OIDC_FIELDS',
+        label: 'OIDC required fields',
+        status: oidcReadiness.missingFields.length === 0 ? 'pass' : 'fail',
+        message: oidcReadiness.missingFields.length === 0
+          ? 'Issuer, client, redirect, and audience fields are configured.'
+          : `Missing fields: ${oidcReadiness.missingFields.join(', ')}`
+      },
+      {
+        key: 'OIDC_DISCOVERY',
+        label: 'OIDC discovery probe',
+        status: !oidcConfig.enabled
+          ? 'fail'
+          : oidcReadiness.discovery?.ok
+            ? 'pass'
+            : 'fail',
+        message: !oidcConfig.enabled
+          ? 'OIDC is disabled.'
+          : oidcReadiness.discovery?.ok
+            ? 'Provider metadata endpoint is reachable.'
+            : (oidcReadiness.discovery?.error || 'OIDC discovery probe failed.')
+      },
+      {
+        key: 'OIDC_DISCOVERY_LATENCY',
+        label: 'OIDC discovery latency',
+        status: !oidcConfig.enabled
+          ? 'fail'
+          : !oidcReadiness.discovery?.ok
+            ? 'fail'
+            : (oidcReadiness.discovery.probeElapsedMs ?? 0) > 4000
+              ? 'warn'
+              : 'pass',
+        message: !oidcConfig.enabled
+          ? 'OIDC is disabled.'
+          : !oidcReadiness.discovery?.ok
+            ? 'Discovery metadata unavailable.'
+            : `Discovery probe completed in ${oidcReadiness.discovery.probeElapsedMs ?? 0} ms.`
+      },
+      {
+        key: 'OIDC_REDIRECT_ALIGNMENT',
+        label: 'OIDC redirect URI alignment',
+        status: !oidcConfig.enabled
+          ? 'fail'
+          : !oidcReadiness.redirectUriCheck.valid
+            ? 'fail'
+            : oidcReadiness.redirectUriCheck.hostMatchesAppOrigin === false
+              ? (isProduction ? 'fail' : 'warn')
+              : 'pass',
+        message: !oidcConfig.enabled
+          ? 'OIDC is disabled.'
+          : oidcReadiness.redirectUriCheck.message
+      },
+      {
+        key: 'OIDC_AUDIENCE',
+        label: 'OIDC audience strictness',
+        status: !oidcConfig.enabled
+          ? 'fail'
+          : oidcReadiness.audienceCheck.status === 'pass'
+            ? 'pass'
+            : oidcReadiness.audienceCheck.status === 'warn'
+              ? 'warn'
+              : 'fail',
+        message: !oidcConfig.enabled
+          ? 'OIDC is disabled.'
+          : oidcReadiness.audienceCheck.message
+      },
+      {
+        key: 'OIDC_ISSUER_MATCH',
+        label: 'OIDC issuer consistency',
+        status: !oidcConfig.enabled
+          ? 'fail'
+          : !oidcReadiness.discovery?.ok
+            ? 'fail'
+            : oidcReadiness.discovery.issuerMatchesConfig === false
+              ? 'fail'
+              : 'pass',
+        message: !oidcConfig.enabled
+          ? 'OIDC is disabled.'
+          : !oidcReadiness.discovery?.ok
+            ? 'Discovery metadata unavailable.'
+            : oidcReadiness.discovery.issuerMatchesConfig === false
+              ? `Discovery issuer ${oidcReadiness.discovery.issuer ?? '(unknown)'} does not match configured issuer ${oidcConfig.issuer}.`
+              : 'Discovery issuer matches configured issuer.'
+      },
+      {
+        key: 'OIDC_ENDPOINT_SECURITY',
+        label: 'OIDC endpoint transport',
+        status: !oidcConfig.enabled
+          ? 'fail'
+          : !oidcReadiness.discovery?.ok
+            ? 'fail'
+            : oidcReadiness.discovery.secureEndpoints === false
+              ? (isProduction ? 'fail' : 'warn')
+              : 'pass',
+        message: !oidcConfig.enabled
+          ? 'OIDC is disabled.'
+          : !oidcReadiness.discovery?.ok
+            ? 'Discovery metadata unavailable.'
+            : oidcReadiness.discovery.secureEndpoints === false
+              ? 'Discovery metadata includes non-HTTPS endpoints.'
+              : 'All discovered OIDC endpoints use HTTPS.'
+      },
+      {
+        key: 'LOCAL_AUTH_MODE',
+        label: 'Local auth cutover mode',
+        status: policy.localAuthEnabled ? 'warn' : 'pass',
+        message: policy.localAuthEnabled
+          ? 'Local auth still enabled. For campus SSO cutover, disable local auth after validation.'
+          : 'Local auth disabled (SSO-only mode).'
+      },
+      {
+        key: 'DEPLOYMENT_ERRORS',
+        label: 'Deployment validation errors',
+        status: issues.some((issue) => issue.severity === 'error') ? 'fail' : 'pass',
+        message: issues.some((issue) => issue.severity === 'error')
+          ? `Found ${issues.filter((issue) => issue.severity === 'error').length} blocking deployment issue(s).`
+          : 'No blocking deployment issues.'
+      },
+      {
+        key: 'SESSION_SECRET',
+        label: 'Session secret hardening',
+        status: hasError('SESSION_SECRET') ? 'fail' : hasWarning('SESSION_SECRET') ? 'warn' : 'pass',
+        message: hasError('SESSION_SECRET')
+          ? 'SESSION_SECRET is not deployment-safe.'
+          : hasWarning('SESSION_SECRET')
+            ? 'SESSION_SECRET is weak for production; replace before campus cutover.'
+            : 'SESSION_SECRET is configured with deployment-safe strength.'
+      },
+      {
+        key: 'STORAGE_ROOT',
+        label: 'Storage root availability',
+        status: hasError('MU_STORAGE_ROOT') ? 'fail' : hasWarning('MU_STORAGE_ROOT') ? 'warn' : 'pass',
+        message: hasError('MU_STORAGE_ROOT')
+          ? 'Storage root check failed.'
+          : hasWarning('MU_STORAGE_ROOT')
+            ? `Storage root exists but needs review: ${storageRoot}`
+            : `Storage root is available: ${storageRoot}`
+      }
+    ];
+  const blockers = checks.filter((check) => check.status === 'fail');
+  const warnings = checks.filter((check) => check.status === 'warn');
+  const checkStatusByKey = Object.fromEntries(checks.map((check) => [check.key, check.status]));
+  return ok({
+    readyForCutover: blockers.length === 0,
+    blockerCount: blockers.length,
+    warningCount: warnings.length,
+    checks,
+    summary: {
+      generatedAt: new Date().toISOString(),
+      readyForCutover: blockers.length === 0,
+      blockers: blockers.map((check) => ({ key: check.key, label: check.label, message: check.message })),
+      warnings: warnings.map((check) => ({ key: check.key, label: check.label, message: check.message })),
+      checkStatusByKey
+    },
+    issues,
+    oidcReadiness,
+    policySnapshot: policy,
+    storageRoot
   });
 });
 
 server.get('/auth/oidc/config', async () => {
   return ok({
     enabled: oidcConfig.enabled,
-    providerName: oidcConfig.providerName
+    providerName: oidcConfig.providerName,
+    expectedAudienceConfigured: Boolean(oidcConfig.expectedAudience),
+    allowUserInfoFallback: oidcConfig.allowUserInfoFallback
   });
+});
+
+server.get('/auth/oidc/readiness', async (request, reply) => {
+  const userId = await assertProfessor(request, reply);
+  if (!userId) return;
+  const query = request.query as { probe?: string };
+  const probe = query.probe === '1' || query.probe === 'true';
+  const readiness = await buildOidcReadiness(probe);
+  return ok({ readiness });
 });
 
 server.get('/auth/oidc/start', async (request, reply) => {
@@ -3220,13 +8593,17 @@ server.get('/auth/oidc/callback', async (request, reply) => {
 
 server.post('/auth/register', async (request, reply) => {
   await deleteExpiredUsers();
+  if (!LOCAL_AUTH_ENABLED) {
+    return reply.status(403).send(fail('FORBIDDEN', 'Local account registration is disabled by governance policy. Use MU single sign-on.'));
+  }
   const body = (request.body ?? {}) as Partial<{ username: string; password: string; role: string }>;
   const username = typeof body.username === 'string' ? normalizeMuUsername(body.username) : '';
   const password = typeof body.password === 'string' ? body.password : '';
   const role = resolveMuRole(body.role);
 
   if (!username || username.length < 3) return reply.status(400).send(fail('INVALID', 'Username must be at least 3 characters.'));
-  if (!password || password.length < 6) return reply.status(400).send(fail('INVALID', 'Password must be at least 6 characters.'));
+  const passwordPolicyError = validatePasswordAgainstPolicy(password);
+  if (passwordPolicyError) return reply.status(400).send(fail('INVALID', passwordPolicyError));
 
   const existing = await findUserByUsername(username);
   if (existing) return reply.status(409).send(fail('CONFLICT', 'Account already exists for that MU username. Use Sign in.'));
@@ -3239,6 +8616,9 @@ server.post('/auth/register', async (request, reply) => {
 
 server.post('/auth/login', async (request, reply) => {
   await deleteExpiredUsers();
+  if (!LOCAL_AUTH_ENABLED) {
+    return reply.status(403).send(fail('FORBIDDEN', 'Local username/password sign-in is disabled by governance policy. Use MU single sign-on.'));
+  }
   const body = (request.body ?? {}) as Partial<{ username: string; password: string }>;
   const username = typeof body.username === 'string' ? normalizeMuUsername(body.username) : '';
   const password = typeof body.password === 'string' ? body.password : '';
@@ -3746,13 +9126,31 @@ server.get('/retrieval', async (request, reply) => {
     coderId: string;
     searchText: string;
     memoOnly: string;
+    reportTopSources: string;
+    reportTopCases: string;
+    reportTopCodes: string;
+    reportExcerptLimit: string;
+    reportIncludeSources: string;
+    reportIncludeCases: string;
+    reportIncludeExcerpts: string;
+    reportSortBy: string;
+    styleTemplate: string;
+    bundleQueryIds: string;
+    bundleLabel: string;
+    bundleStyleTemplate: string;
+    bundleAppendixMode: string;
+    bundleAppendixRowLimit: string;
   }>;
   const projectId = requireProjectId(reply, query.projectId);
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
   const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined,
+    preferredMaxRows: 400
+  });
   const retrieval = retrieveEvidence({
     query: evidenceQuery,
     sources: payload.sources,
@@ -3771,7 +9169,8 @@ server.get('/retrieval', async (request, reply) => {
       codes: payload.codes.map((code) => code.name),
       analyticQuestion: 'Summarize the coded evidence for this retrieval set.'
     }),
-    evidenceCoverage: scoreEvidenceCoverage(retrieval.length)
+    evidenceCoverage: scoreEvidenceCoverage(retrieval.length),
+    axionPrefilter: prefilter
   });
 });
 
@@ -3790,8 +9189,15 @@ server.get('/text-search', async (request, reply) => {
     memoOnly: string;
     searchText: string;
     matchMode: string;
+    linguisticMode: string;
+    fuzzyDistance: string;
     caseSensitive: string;
     contextWindow: string;
+    minHitCount: string;
+    maxRows: string;
+    codingScope: string;
+    snippetLimit: string;
+    sortBy: string;
   }>;
   const projectId = requireProjectId(reply, query.projectId);
   if (!projectId) return;
@@ -3800,20 +9206,33 @@ server.get('/text-search', async (request, reply) => {
     return reply.status(400).send(fail('INVALID', 'searchText is required.'));
   }
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
+  const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: query.searchText.trim(),
+    preferredMaxRows: typeof query.maxRows === 'string' ? Number(query.maxRows) : undefined
+  });
   return ok({
     textSearch: buildTextSearch({
-      query: parseEvidenceQuery(query),
+      query: evidenceQuery,
       searchText: query.searchText.trim(),
       matchMode: parseTextSearchMode(query.matchMode),
+      linguisticMode: parseTextSearchLinguisticMode(query.linguisticMode),
+      fuzzyDistance: parsePositiveInteger(query.fuzzyDistance, 1, 1, 3),
       caseSensitive: query.caseSensitive === 'true',
       contextWindow: typeof query.contextWindow === 'string' ? Number(query.contextWindow) : undefined,
+      minHitCount: typeof query.minHitCount === 'string' ? Number(query.minHitCount) : undefined,
+      maxRows: typeof query.maxRows === 'string' ? Number(query.maxRows) : undefined,
+      codingScope: parseTextSearchCodingScope(query.codingScope),
+      snippetLimit: typeof query.snippetLimit === 'string' ? Number(query.snippetLimit) : undefined,
+      sortBy: parseTextSearchSortBy(query.sortBy),
       sources: payload.sources,
       segments: payload.segments,
       applications: payload.codeApplications,
       cases: payload.cases,
       memos: payload.memos
-    })
+    }),
+    axionPrefilter: prefilter
   });
 });
 
@@ -3839,10 +9258,15 @@ server.get('/word-frequency', async (request, reply) => {
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
+  const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined,
+    preferredMaxRows: typeof query.topN === 'string' ? Number(query.topN) : undefined
+  });
   return ok({
     wordFrequency: buildWordFrequency({
-      query: parseEvidenceQuery(query),
+      query: evidenceQuery,
       topN: typeof query.topN === 'string' ? Number(query.topN) : undefined,
       minLength: typeof query.minLength === 'string' ? Number(query.minLength) : undefined,
       excludeStopWords: query.excludeStopWords === undefined ? undefined : query.excludeStopWords === 'true',
@@ -3851,7 +9275,8 @@ server.get('/word-frequency', async (request, reply) => {
       applications: payload.codeApplications,
       cases: payload.cases,
       memos: payload.memos
-    })
+    }),
+    axionPrefilter: prefilter
   });
 });
 
@@ -3877,10 +9302,15 @@ server.get('/word-cloud', async (request, reply) => {
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
+  const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined,
+    preferredMaxRows: typeof query.topN === 'string' ? Number(query.topN) : undefined
+  });
   return ok({
     wordCloud: buildWordCloud({
-      query: parseEvidenceQuery(query),
+      query: evidenceQuery,
       topN: typeof query.topN === 'string' ? Number(query.topN) : undefined,
       minLength: typeof query.minLength === 'string' ? Number(query.minLength) : undefined,
       excludeStopWords: query.excludeStopWords === undefined ? undefined : query.excludeStopWords === 'true',
@@ -3889,7 +9319,8 @@ server.get('/word-cloud', async (request, reply) => {
       applications: payload.codeApplications,
       cases: payload.cases,
       memos: payload.memos
-    })
+    }),
+    axionPrefilter: prefilter
   });
 });
 
@@ -3907,22 +9338,33 @@ server.get('/map-visualization', async (request, reply) => {
     coderId: string;
     searchText: string;
     memoOnly: string;
+    mapLocationField: string;
+    mapMetric: string;
+    mapNormalization: string;
+    mapMinCount: string;
+    mapMaxPoints: string;
   }>;
   const projectId = requireProjectId(reply, query.projectId);
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
+  const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined
+  });
   return ok({
     mapVisualization: buildMapVisualization({
-      query: parseEvidenceQuery(query),
+      query: evidenceQuery,
       sources: payload.sources,
       segments: payload.segments,
       applications: payload.codeApplications,
       cases: payload.cases,
       memos: payload.memos,
-      attributes: payload.attributes
-    })
+      attributes: payload.attributes,
+      options: parseMapVisualizationOptions(query)
+    }),
+    axionPrefilter: prefilter
   });
 });
 
@@ -3940,22 +9382,41 @@ server.get('/code-hierarchy', async (request, reply) => {
     coderId: string;
     searchText: string;
     memoOnly: string;
+    reportTopSources: string;
+    reportTopCases: string;
+    reportTopCodes: string;
+    reportExcerptLimit: string;
+    reportIncludeSources: string;
+    reportIncludeCases: string;
+    reportIncludeExcerpts: string;
+    reportSortBy: string;
+    styleTemplate: string;
+    bundleQueryIds: string;
+    bundleLabel: string;
+    bundleStyleTemplate: string;
+    bundleAppendixMode: string;
+    bundleAppendixRowLimit: string;
   }>;
   const projectId = requireProjectId(reply, query.projectId);
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
+  const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined
+  });
   return ok({
     codeHierarchy: buildCodeHierarchy({
-      query: parseEvidenceQuery(query),
+      query: evidenceQuery,
       sources: payload.sources,
       segments: payload.segments,
       applications: payload.codeApplications,
       cases: payload.cases,
       memos: payload.memos,
       codes: payload.codes
-    })
+    }),
+    axionPrefilter: prefilter
   });
 });
 
@@ -3973,28 +9434,40 @@ server.get('/concept-map', async (request, reply) => {
     coderId: string;
     searchText: string;
     memoOnly: string;
+    conceptMinLinkWeight: string;
+    conceptMaxLinks: string;
+    conceptMinNodeSize: string;
+    conceptIncludeCooccurrence: string;
+    conceptIncludeRelationships: string;
+    conceptNodeSizeMode: string;
   }>;
   const projectId = requireProjectId(reply, query.projectId);
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
+  const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined
+  });
   const conceptMap = buildConceptMap({
-    query: parseEvidenceQuery(query),
+    query: evidenceQuery,
     sources: payload.sources,
     segments: payload.segments,
     applications: payload.codeApplications,
     cases: payload.cases,
     memos: payload.memos,
     codes: payload.codes,
-    relationships: payload.relationships
+    relationships: payload.relationships,
+    options: parseConceptMapOptions(query)
   });
   return ok({
     conceptMap,
     codeClusters: buildCodeClusters({
       conceptMap,
       codes: payload.codes
-    })
+    }),
+    axionPrefilter: prefilter
   });
 });
 
@@ -4017,9 +9490,13 @@ server.get('/sentiment-analysis', async (request, reply) => {
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
+  const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined
+  });
   const sentiment = buildSentimentAnalysis({
-    query: parseEvidenceQuery(query),
+    query: evidenceQuery,
     sources: payload.sources,
     segments: payload.segments,
     applications: payload.codeApplications,
@@ -4027,7 +9504,7 @@ server.get('/sentiment-analysis', async (request, reply) => {
     memos: payload.memos
   });
 
-  return ok({ sentiment });
+  return ok({ sentiment, axionPrefilter: prefilter });
 });
 
 server.post('/compound-query', async (request, reply) => {
@@ -4047,37 +9524,80 @@ server.post('/compound-query', async (request, reply) => {
       memoOnly: string;
     }>;
     operator: string;
+    caseSensitive: boolean | string;
+    maxRows: number | string;
     clauses: unknown[];
+    workbench: {
+      groupOperator?: 'all' | 'any' | 'none';
+      minGroupsMatched?: number | string | null;
+      groups?: Array<{
+        id?: string;
+        label?: string;
+        enabled?: boolean;
+        operator?: 'all' | 'any' | 'none';
+        minClausesMatched?: number | string | null;
+        clauses?: unknown[];
+      }>;
+    };
   }>;
   const projectId = requireProjectId(reply, body.projectId);
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
-  const clauses = parseCompoundQueryClauses(body.clauses);
-  if (clauses.length === 0) {
+  const scopeQuery = parseEvidenceQuery(body.scope ?? {});
+  const basePayload = await buildQualitativeProjectPayload(projectId);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, scopeQuery, {
+    searchTextHint: scopeQuery.searchText
+  });
+  const caseSensitive = body.caseSensitive === true || body.caseSensitive === 'true';
+  const maxRows = parsePositiveInteger(body.maxRows, 200, 1, 1000);
+  const workbench = parseCompoundWorkbenchDefinition(body.workbench);
+  const flatClauses = parseCompoundQueryClauses(body.clauses);
+  if (workbench.groups.length === 0 && flatClauses.length === 0) {
     return reply.status(400).send(fail('INVALID', 'At least one valid compound query clause is required.'));
   }
-  const operator = body.operator === 'all' || body.operator === 'none' ? body.operator : 'any';
-  const payload = await buildQualitativeProjectPayload(projectId);
-  const compoundQuery = buildCompoundQuery({
-    scopeQuery: parseEvidenceQuery(body.scope ?? {}),
-    operator,
-    clauses,
-    sources: payload.sources,
-    segments: payload.segments,
-    applications: payload.codeApplications,
-    cases: payload.cases,
-    memos: payload.memos
-  });
+  const compoundQuery = workbench.groups.length > 0
+    ? buildCompoundWorkbenchQuery({
+      scopeQuery,
+      groupOperator: workbench.groupOperator,
+      minGroupsMatched: workbench.minGroupsMatched,
+      groups: workbench.groups,
+      caseSensitive,
+      maxRows,
+      sources: payload.sources,
+      segments: payload.segments,
+      applications: payload.codeApplications,
+      cases: payload.cases,
+      memos: payload.memos
+    })
+    : buildCompoundQuery({
+      scopeQuery,
+      operator: parseCompoundOperator(body.operator),
+      caseSensitive,
+      maxRows,
+      clauses: flatClauses,
+      sources: payload.sources,
+      segments: payload.segments,
+      applications: payload.codeApplications,
+      cases: payload.cases,
+      memos: payload.memos
+    });
   await recordAuditEvent({
     request,
     projectId,
     action: 'qual_query.compound',
     entityType: 'compound_query',
     entityId: `compound-${randomUUID()}`,
-    details: { operator, clauseCount: clauses.length, matchCount: compoundQuery.matchCount }
+    details: {
+      operator: 'operator' in compoundQuery ? (compoundQuery as any).operator : parseCompoundOperator(body.operator),
+      clauseCount: Number((compoundQuery as any).clauseCount ?? 0),
+      groupCount: Number((compoundQuery as any).groupCount ?? 0),
+      minGroupsMatched: (compoundQuery as any).minGroupsMatched ?? null,
+      mode: (compoundQuery as any).mode ?? 'flat',
+      matchCount: Number((compoundQuery as any).matchCount ?? 0)
+    }
   });
-  return ok({ compoundQuery });
+  return ok({ compoundQuery, axionPrefilter: prefilter });
 });
 
 server.get('/matrix-coding', async (request, reply) => {
@@ -4099,8 +9619,11 @@ server.get('/matrix-coding', async (request, reply) => {
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
   const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined
+  });
   return ok({
     matrix: buildMatrixCoding({
       query: evidenceQuery,
@@ -4110,7 +9633,8 @@ server.get('/matrix-coding', async (request, reply) => {
       cases: payload.cases,
       memos: payload.memos,
       codes: payload.codes
-    })
+    }),
+    axionPrefilter: prefilter
   });
 });
 
@@ -4133,8 +9657,11 @@ server.get('/code-by-case', async (request, reply) => {
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
   const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined
+  });
   return ok({
     view: buildCodeByCaseView({
       query: evidenceQuery,
@@ -4144,7 +9671,8 @@ server.get('/code-by-case', async (request, reply) => {
       cases: payload.cases,
       memos: payload.memos,
       codes: payload.codes
-    })
+    }),
+    axionPrefilter: prefilter
   });
 });
 
@@ -4167,8 +9695,11 @@ server.get('/code-cooccurrence', async (request, reply) => {
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
   const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined
+  });
   return ok({
     cooccurrence: buildCodeCooccurrence({
       query: evidenceQuery,
@@ -4178,7 +9709,8 @@ server.get('/code-cooccurrence', async (request, reply) => {
       cases: payload.cases,
       memos: payload.memos,
       codes: payload.codes
-    })
+    }),
+    axionPrefilter: prefilter
   });
 });
 
@@ -4201,8 +9733,11 @@ server.get('/matrix-coding-codes', async (request, reply) => {
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
   const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined
+  });
   return ok({
     matrix: buildCodeCodeMatrix({
       query: evidenceQuery,
@@ -4212,7 +9747,8 @@ server.get('/matrix-coding-codes', async (request, reply) => {
       cases: payload.cases,
       memos: payload.memos,
       codes: payload.codes
-    })
+    }),
+    axionPrefilter: prefilter
   });
 });
 
@@ -4230,23 +9766,36 @@ server.get('/query-report', async (request, reply) => {
     coderId: string;
     searchText: string;
     memoOnly: string;
+    reportTopSources: string;
+    reportTopCases: string;
+    reportTopCodes: string;
+    reportExcerptLimit: string;
+    reportIncludeSources: string;
+    reportIncludeCases: string;
+    reportIncludeExcerpts: string;
+    reportSortBy: string;
   }>;
   const projectId = requireProjectId(reply, query.projectId);
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
   const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined
+  });
   return ok({
     report: buildQualitativeQueryReport({
       query: evidenceQuery,
+      options: parseQualitativeReportOptions(query),
       sources: payload.sources,
       segments: payload.segments,
       applications: payload.codeApplications,
       cases: payload.cases,
       memos: payload.memos,
       codes: payload.codes
-    })
+    }),
+    axionPrefilter: prefilter
   });
 });
 
@@ -4269,8 +9818,11 @@ server.get('/framework-matrix', async (request, reply) => {
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
   const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined
+  });
   return ok({
     frameworkMatrix: buildFrameworkMatrix({
       query: evidenceQuery,
@@ -4280,7 +9832,8 @@ server.get('/framework-matrix', async (request, reply) => {
       cases: payload.cases,
       memos: payload.memos,
       codes: payload.codes
-    })
+    }),
+    axionPrefilter: prefilter
   });
 });
 
@@ -4308,7 +9861,7 @@ server.get('/coding-comparison', async (request, reply) => {
     return reply.status(400).send(fail('INVALID', 'codeId is required.'));
   }
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
   const evidenceQuery = parseEvidenceQuery({
     sourceId: query.sourceId,
     sourceKind: query.sourceKind,
@@ -4316,6 +9869,10 @@ server.get('/coding-comparison', async (request, reply) => {
     caseId: query.caseId,
     searchText: query.searchText,
     memoOnly: query.memoOnly
+  });
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined,
+    preferredMaxRows: typeof query.disagreementLimit === 'string' ? Number(query.disagreementLimit) : undefined
   });
   try {
     const disagreementMode = parseCodingDisagreementMode(query.disagreementMode);
@@ -4335,7 +9892,8 @@ server.get('/coding-comparison', async (request, reply) => {
           codes: payload.codes
         }),
         { disagreementMode, disagreementLimit }
-      )
+      ),
+      axionPrefilter: prefilter
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to compare coding agreement.';
@@ -4363,7 +9921,7 @@ server.get('/inter-rater-summary', async (request, reply) => {
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
   const evidenceQuery = parseEvidenceQuery({
     sourceId: query.sourceId,
     sourceKind: query.sourceKind,
@@ -4371,6 +9929,10 @@ server.get('/inter-rater-summary', async (request, reply) => {
     caseId: query.caseId,
     searchText: query.searchText,
     memoOnly: query.memoOnly
+  });
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined,
+    preferredMaxRows: typeof query.maxRows === 'string' ? Number(query.maxRows) : undefined
   });
   try {
     const minKappa = parseOptionalBoundedNumber(query.minKappa, -1, 1);
@@ -4389,7 +9951,8 @@ server.get('/inter-rater-summary', async (request, reply) => {
           codes: payload.codes
         }),
         { minKappa, maxRows }
-      )
+      ),
+      axionPrefilter: prefilter
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to build the inter-rater summary.';
@@ -4428,7 +9991,6 @@ server.post('/autocode/keywords', async (request, reply) => {
     return reply.status(400).send(fail('INVALID', 'At least one keyword is required.'));
   }
 
-  const payload = await buildQualitativeProjectPayload(projectId);
   const scopeQuery = parseEvidenceQuery({
     sourceId: body.sourceId,
     sourceKind: body.sourceKind,
@@ -4436,6 +9998,10 @@ server.post('/autocode/keywords', async (request, reply) => {
     caseId: body.caseId,
     searchText: body.searchText,
     memoOnly: typeof body.memoOnly === 'boolean' ? String(body.memoOnly) : body.memoOnly
+  });
+  const basePayload = await buildQualitativeProjectPayload(projectId);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, scopeQuery, {
+    searchTextHint: scopeQuery.searchText
   });
   const matches = retrieveEvidence({
     query: {
@@ -4527,7 +10093,8 @@ server.post('/autocode/keywords', async (request, reply) => {
       wouldCreateCount,
       wouldSkipCount,
       matches: matchedSegments.slice(0, 50)
-    }
+    },
+    axionPrefilter: prefilter
   });
 });
 
@@ -4565,7 +10132,6 @@ server.post('/autocode/patterns', async (request, reply) => {
     return reply.status(400).send(fail('INVALID', 'At least one pattern is required.'));
   }
 
-  const payload = await buildQualitativeProjectPayload(projectId);
   const scopeQuery = parseEvidenceQuery({
     sourceId: body.sourceId,
     sourceKind: body.sourceKind,
@@ -4574,11 +10140,15 @@ server.post('/autocode/patterns', async (request, reply) => {
     searchText: body.searchText,
     memoOnly: typeof body.memoOnly === 'boolean' ? String(body.memoOnly) : body.memoOnly
   });
+  const basePayload = await buildQualitativeProjectPayload(projectId);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, scopeQuery, {
+    searchTextHint: scopeQuery.searchText
+  });
   const autocode = buildPatternAutocode({
     query: scopeQuery,
     patterns,
     expandSynonyms: body.expandSynonyms === true,
-    matchMode: parseTextSearchMode(body.matchMode),
+    matchMode: parsePatternAutocodeMatchMode(body.matchMode),
     sources: payload.sources,
     segments: payload.segments,
     applications: payload.codeApplications,
@@ -4666,7 +10236,8 @@ server.post('/autocode/patterns', async (request, reply) => {
       wouldCreateCount,
       wouldSkipCount,
       matches: autocode.hits.slice(0, 50)
-    }
+    },
+    axionPrefilter: prefilter
   });
 });
 
@@ -4700,6 +10271,47 @@ server.post('/imports/files', async (request, reply) => {
   const errors: Array<Record<string, unknown>> = [];
 
   for (const upload of uploads) {
+    const mediaUpload = inferMediaUploadSpec(upload.filename, upload.mimetype);
+    if (mediaUpload) {
+      try {
+        const title = path.basename(upload.filename, path.extname(upload.filename)).trim() || 'Imported media';
+        const mediaArtifact = await writeProjectArtifactBytes({
+          projectId,
+          area: 'worker',
+          label: `${title}-media`,
+          extension: mediaUpload.extension,
+          contents: upload.buffer
+        });
+        const source = createSource({
+          id: `source-${randomUUID()}`,
+          projectId,
+          kind: mediaUpload.sourceKind,
+          title,
+          language: 'en',
+          contentType: mediaUpload.contentType,
+          contentUrl: `artifact://${mediaArtifact.relativePath}`,
+          contentText: ''
+        });
+        await insertSource(source);
+        items.push({
+          filename: upload.filename,
+          importedAs: 'media_source',
+          sourceId: source.id,
+          title: source.title,
+          sourceKind: source.kind,
+          contentType: source.contentType,
+          artifactPath: mediaArtifact.relativePath
+        });
+      } catch (error) {
+        errors.push({
+          filename: upload.filename,
+          importedAs: 'error',
+          message: error instanceof Error ? error.message : 'Unable to import media file.'
+        });
+      }
+      continue;
+    }
+
     let parsed;
     try {
       parsed = await parseImportedFile(upload.filename, upload.mimetype, upload.buffer);
@@ -4774,13 +10386,20 @@ server.post('/imports/files', async (request, reply) => {
       }
     }
 
+    if (parsed.spssMetadata) {
+      await persistImportedSpssMetadata(projectId, parsed.spssMetadata);
+    }
+
     items.push({
       filename: upload.filename,
       importedAs: 'tabular',
       caseLabelField: parsed.caseLabelField,
       sheetName: parsed.sheetName,
       casesCreated,
-      attributesCreated
+      attributesCreated,
+      spssFormat: parsed.spssMetadata?.format ?? null,
+      spssWeightField: parsed.spssMetadata?.weightField ?? null,
+      spssSplitFields: parsed.spssMetadata?.splitFields ?? []
     });
   }
 
@@ -4816,13 +10435,28 @@ server.post('/imports/files', async (request, reply) => {
 server.get('/exports/dataset', async (request, reply) => {
   const userId = await assertAuth(request, reply);
   if (!userId) return;
-  const query = (request.query ?? {}) as Partial<{ projectId: string; format: string }>;
-  const projectId = typeof query.projectId === 'string' && query.projectId.trim() ? query.projectId : undefined;
-  const format = query.format === 'json' || query.format === 'xlsx' ? query.format : 'csv';
+  const query = (request.query ?? {}) as Partial<{
+    projectId: string;
+    format: string;
+    weightField: string;
+    splitFields: string | string[];
+  }>;
+  const projectId = typeof query.projectId === 'string' && query.projectId.trim() ? query.projectId.trim() : undefined;
+  const format = query.format === 'json' || query.format === 'xlsx' || query.format === 'sav' || query.format === 'zsav'
+    ? query.format
+    : 'csv';
   if (!projectId) return reply.status(400).send(fail('INVALID', 'projectId is required.'));
   if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
 
   const payload = await buildProjectDatasetPayload(projectId);
+  const hasWeightOverride = Object.prototype.hasOwnProperty.call(query, 'weightField');
+  const hasSplitOverride = Object.prototype.hasOwnProperty.call(query, 'splitFields');
+  const resolvedWeightField = hasWeightOverride
+    ? (typeof query.weightField === 'string' && query.weightField.trim() ? query.weightField.trim() : null)
+    : payload.spssMetadata.settings.weightField;
+  const resolvedSplitFields = hasSplitOverride
+    ? parseStringArray(query.splitFields)
+    : payload.spssMetadata.settings.splitFields;
   if (format === 'json') {
     const jsonPayload = JSON.stringify(payload, null, 2);
     await writeProjectArtifact({
@@ -4871,6 +10505,44 @@ server.get('/exports/dataset', async (request, reply) => {
     return reply.send(Buffer.from(xlsxPayload));
   }
 
+  if (format === 'sav' || format === 'zsav') {
+    const spssPayload = await writeSpssBuffer(buildSpssExportInput(payload, format, {
+      weightField: resolvedWeightField,
+      splitFields: resolvedSplitFields
+    }));
+    await writeProjectArtifactBytes({
+      projectId,
+      area: 'exports',
+      label: 'dataset-export',
+      extension: format,
+      contents: spssPayload
+    });
+    if (hasWeightOverride || hasSplitOverride) {
+      await upsertProjectDatasetSettings({
+        projectId,
+        weightField: resolvedWeightField,
+        splitFieldsJson: JSON.stringify(resolvedSplitFields),
+        updatedAt: new Date().toISOString()
+      });
+    }
+    await recordAuditEvent({
+      request,
+      projectId,
+      action: 'export.dataset',
+      entityType: 'export',
+      entityId: `${projectId}:dataset:${format}`,
+      details: {
+        format,
+        caseCount: payload.report.caseCount,
+        weightField: resolvedWeightField,
+        splitFields: resolvedSplitFields
+      }
+    });
+    reply.header('Content-Type', format === 'zsav' ? 'application/x-spss-zsav' : 'application/x-spss-sav');
+    reply.header('Content-Disposition', `attachment; filename="${projectId}-dataset.${format}"`);
+    return reply.send(spssPayload);
+  }
+
   const csvPayload = serializeDatasetToCsv(payload.dataset.rows);
   await writeProjectArtifact({
     projectId,
@@ -4912,8 +10584,12 @@ server.get('/exports/evidence', async (request, reply) => {
   if (!projectId) return;
   if (!await assertProjectExportAccess(request, userId, projectId, reply)) return;
 
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
   const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined,
+    preferredMaxRows: 1200
+  });
   const retrieval = retrieveEvidence({
     query: evidenceQuery,
     sources: payload.sources,
@@ -4952,7 +10628,7 @@ server.get('/exports/evidence', async (request, reply) => {
       action: 'export.evidence',
       entityType: 'export',
       entityId: `${projectId}:evidence:docx`,
-      details: { matches: retrieval.length, file: artifact.relativePath, format: 'docx' }
+      details: { matches: retrieval.length, file: artifact.relativePath, format: 'docx', axionPrefilter: prefilter }
     });
     reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     reply.header('Content-Disposition', `attachment; filename="${projectId}-evidence-report.docx"`);
@@ -4974,7 +10650,7 @@ server.get('/exports/evidence', async (request, reply) => {
       action: 'export.evidence',
       entityType: 'export',
       entityId: `${projectId}:evidence:pdf`,
-      details: { matches: retrieval.length, file: artifact.relativePath, format: 'pdf' }
+      details: { matches: retrieval.length, file: artifact.relativePath, format: 'pdf', axionPrefilter: prefilter }
     });
     reply.header('Content-Type', 'application/pdf');
     reply.header('Content-Disposition', `attachment; filename="${projectId}-evidence-report.pdf"`);
@@ -4996,7 +10672,7 @@ server.get('/exports/evidence', async (request, reply) => {
       action: 'export.evidence',
       entityType: 'export',
       entityId: `${projectId}:evidence:xlsx`,
-      details: { matches: retrieval.length, file: artifact.relativePath, format: 'xlsx' }
+      details: { matches: retrieval.length, file: artifact.relativePath, format: 'xlsx', axionPrefilter: prefilter }
     });
     reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     reply.header('Content-Disposition', `attachment; filename="${projectId}-evidence-report.xlsx"`);
@@ -5018,7 +10694,7 @@ server.get('/exports/evidence', async (request, reply) => {
       action: 'export.evidence',
       entityType: 'export',
       entityId: `${projectId}:evidence:txt`,
-      details: { matches: retrieval.length, file: artifact.relativePath, format: 'txt' }
+      details: { matches: retrieval.length, file: artifact.relativePath, format: 'txt', axionPrefilter: prefilter }
     });
     reply.header('Content-Type', 'text/plain; charset=utf-8');
     reply.header('Content-Disposition', `attachment; filename="${projectId}-evidence-report.txt"`);
@@ -5039,7 +10715,7 @@ server.get('/exports/evidence', async (request, reply) => {
     action: 'export.evidence',
     entityType: 'export',
     entityId: `${projectId}:evidence:json`,
-    details: { matches: retrieval.length, file: artifact.relativePath, format: 'json' }
+    details: { matches: retrieval.length, file: artifact.relativePath, format: 'json', axionPrefilter: prefilter }
   });
   reply.header('Content-Type', 'application/json; charset=utf-8');
   reply.header('Content-Disposition', `attachment; filename="${projectId}-evidence.json"`);
@@ -5055,6 +10731,9 @@ server.get('/exports/reports', async (request, reply) => {
     projectId: string;
     kind: string;
     format: string;
+    compoundWorkbench: string;
+    compoundCaseSensitive: string;
+    compoundMaxRows: string;
     sourceId: string;
     sourceKind: string;
     segmentKind: string;
@@ -5068,8 +10747,24 @@ server.get('/exports/reports', async (request, reply) => {
     disagreementLimit: string;
     minKappa: string;
     maxRows: string;
+    minCoderCount: string;
+    minConfidenceSpread: string;
     searchText: string;
     memoOnly: string;
+    reportTopSources: string;
+    reportTopCases: string;
+    reportTopCodes: string;
+    reportExcerptLimit: string;
+    reportIncludeSources: string;
+    reportIncludeCases: string;
+    reportIncludeExcerpts: string;
+    reportSortBy: string;
+    styleTemplate: string;
+    bundleQueryIds: string;
+    bundleLabel: string;
+    bundleStyleTemplate: string;
+    bundleAppendixMode: string;
+    bundleAppendixRowLimit: string;
   }>;
   const projectId = requireProjectId(reply, query.projectId);
   if (!projectId) return;
@@ -5084,7 +10779,10 @@ server.get('/exports/reports', async (request, reply) => {
     || query.kind === 'cooccurrence'
     || query.kind === 'coding-comparison'
     || query.kind === 'inter-rater-summary'
+    || query.kind === 'merge-review'
     || query.kind === 'query-report'
+    || query.kind === 'compound-workbench'
+    || query.kind === 'committee-review-pack'
     || query.kind === 'chat-history'
     ? query.kind
     : null;
@@ -5096,8 +10794,12 @@ server.get('/exports/reports', async (request, reply) => {
   }
 
   const format = query.format === 'docx' || query.format === 'pdf' || query.format === 'txt' || query.format === 'xlsx' ? query.format : 'json';
-  const payload = await buildQualitativeProjectPayload(projectId);
+  const basePayload = await buildQualitativeProjectPayload(projectId);
   const evidenceQuery = parseEvidenceQuery(query);
+  const { payload, prefilter } = await applyAxionPrefilterToQualitativePayload(basePayload, evidenceQuery, {
+    searchTextHint: typeof query.searchText === 'string' ? query.searchText : undefined,
+    preferredMaxRows: typeof query.maxRows === 'string' ? Number(query.maxRows) : 1400
+  });
   const retrieval = retrieveEvidence({
     query: evidenceQuery,
     sources: payload.sources,
@@ -5124,6 +10826,18 @@ server.get('/exports/reports', async (request, reply) => {
   const disagreementLimit = parsePositiveInteger(query.disagreementLimit, 100, 1, 500);
   const minKappa = parseOptionalBoundedNumber(query.minKappa, -1, 1);
   const maxRows = parseOptionalPositiveInteger(query.maxRows, 1, 500);
+  const mergeMinCoderCount = parsePositiveInteger(query.minCoderCount, 2, 1, 20);
+  const mergeMinConfidenceSpread = parseOptionalBoundedNumber(query.minConfidenceSpread, 0, 1) ?? 0.2;
+  const mergeMaxRows = parsePositiveInteger(query.maxRows, 100, 1, 500);
+  const reportOptions = parseQualitativeReportOptions(query);
+  const reportStyleTemplate = parseStructuredReportStyleTemplate(query.styleTemplate);
+  const committeeBundleStyleTemplate = parseStructuredReportStyleTemplate(query.bundleStyleTemplate);
+  const committeeBundleAppendixMode = parseCommitteeAppendixMode(query.bundleAppendixMode);
+  const committeeBundleAppendixRowLimit = parsePositiveInteger(query.bundleAppendixRowLimit, 250, 25, 2000);
+  const committeeBundleQueryIds = parseStringArray(query.bundleQueryIds).slice(0, 50);
+  const committeeBundleLabel = typeof query.bundleLabel === 'string' && query.bundleLabel.trim()
+    ? query.bundleLabel.trim()
+    : undefined;
   const queryLabels = formatEvidenceFilterLabels(evidenceQuery);
   if (kind === 'coding-comparison') {
     if (disagreementMode !== 'all') queryLabels.push(`Disagreement mode: ${disagreementMode}`);
@@ -5132,6 +10846,63 @@ server.get('/exports/reports', async (request, reply) => {
   if (kind === 'inter-rater-summary') {
     if (minKappa !== null) queryLabels.push(`Kappa threshold <= ${minKappa.toFixed(4)}`);
     if (maxRows !== null) queryLabels.push(`Max rows: ${maxRows}`);
+  }
+  if (kind === 'merge-review') {
+    queryLabels.push(`Merge min coder count: ${mergeMinCoderCount}`);
+    queryLabels.push(`Merge min confidence spread: ${mergeMinConfidenceSpread.toFixed(3)}`);
+    queryLabels.push(`Merge max rows: ${mergeMaxRows}`);
+  }
+  if (kind === 'query-report') {
+    queryLabels.push(`Report sort: ${reportOptions.sortBy}`);
+    queryLabels.push(`Top sources: ${reportOptions.topSources}`);
+    queryLabels.push(`Top cases: ${reportOptions.topCases}`);
+    queryLabels.push(`Top codes: ${reportOptions.topCodes}`);
+    queryLabels.push(`Excerpts: ${reportOptions.includeExcerptRows ? `yes (${reportOptions.excerptLimit})` : 'no'}`);
+  }
+  const compoundCaseSensitive = query.compoundCaseSensitive === 'true';
+  const compoundMaxRows = parsePositiveInteger(query.compoundMaxRows, 250, 1, 1000);
+  let compoundWorkbenchResult: ReturnType<typeof buildCompoundWorkbenchQuery> | null = null;
+  if (kind === 'compound-workbench') {
+    const rawWorkbench = typeof query.compoundWorkbench === 'string' ? query.compoundWorkbench.trim() : '';
+    if (!rawWorkbench) {
+      return reply.status(400).send(fail('INVALID', 'compoundWorkbench is required for compound-workbench exports.'));
+    }
+    let workbenchParsed: ReturnType<typeof parseCompoundWorkbenchDefinition>;
+    try {
+      workbenchParsed = parseCompoundWorkbenchDefinition(JSON.parse(rawWorkbench));
+    } catch (error) {
+      return reply.status(400).send(fail('INVALID', `compoundWorkbench must be valid JSON (${error instanceof Error ? error.message : 'parse failed'}).`));
+    }
+    if (workbenchParsed.groups.length === 0) {
+      return reply.status(400).send(fail('INVALID', 'compoundWorkbench must include at least one enabled group with valid clauses.'));
+    }
+    compoundWorkbenchResult = buildCompoundWorkbenchQuery({
+      scopeQuery: evidenceQuery,
+      groupOperator: workbenchParsed.groupOperator,
+      minGroupsMatched: workbenchParsed.minGroupsMatched,
+      groups: workbenchParsed.groups,
+      caseSensitive: compoundCaseSensitive,
+      maxRows: compoundMaxRows,
+      sources: payload.sources,
+      segments: payload.segments,
+      applications: payload.codeApplications,
+      cases: payload.cases,
+      memos: payload.memos
+    });
+    queryLabels.push(`Workbench group operator: ${workbenchParsed.groupOperator}`);
+    if (workbenchParsed.minGroupsMatched !== null) {
+      queryLabels.push(`Workbench min groups matched: ${workbenchParsed.minGroupsMatched}`);
+    }
+    const perGroupThresholds = workbenchParsed.groups
+      .filter((group) => group.minClausesMatched !== null)
+      .map((group) => `${group.label}>=${group.minClausesMatched}`);
+    if (perGroupThresholds.length > 0) {
+      queryLabels.push(`Workbench clause thresholds: ${perGroupThresholds.join(', ')}`);
+    }
+    queryLabels.push(`Workbench groups: ${compoundWorkbenchResult.groupCount}`);
+    queryLabels.push(`Workbench clauses: ${compoundWorkbenchResult.clauseCount}`);
+    queryLabels.push(`Workbench case-sensitive: ${compoundCaseSensitive ? 'yes' : 'no'}`);
+    queryLabels.push(`Workbench max rows: ${compoundMaxRows}`);
   }
   const evidenceReport = buildEvidenceReport(evidenceBundle, queryLabels);
   const report = kind === 'codebook'
@@ -5256,6 +11027,7 @@ server.get('/exports/reports', async (request, reply) => {
                   queryLabels,
                   report: buildQualitativeQueryReport({
                     query: evidenceQuery,
+                    options: reportOptions,
                     sources: payload.sources,
                     segments: payload.segments,
                     applications: payload.codeApplications,
@@ -5264,15 +11036,51 @@ server.get('/exports/reports', async (request, reply) => {
                     codes: payload.codes
                   })
                 })
+                : kind === 'compound-workbench'
+                  ? buildCompoundWorkbenchReport({
+                    project: payload.project,
+                    queryLabels,
+                    result: compoundWorkbenchResult!
+                  })
+                : kind === 'merge-review'
+                  ? buildMergeReviewReport({
+                    project: payload.project,
+                    queryLabels,
+                    review: buildMergeReview({
+                      projectId,
+                      sourceId: evidenceQuery.sourceId,
+                      codeId: evidenceQuery.codeId,
+                      minCoderCount: mergeMinCoderCount,
+                      minConfidenceSpread: mergeMinConfidenceSpread,
+                      maxRows: mergeMaxRows,
+                      segments: payload.segments,
+                      sources: payload.sources,
+                      applications: payload.codeApplications,
+                      codes: payload.codes
+                    })
+                  })
+                : kind === 'committee-review-pack'
+                  ? await buildCommitteeReviewPack({
+                    projectId,
+                    payload,
+                    bundleLabel: committeeBundleLabel,
+                    bundleQueryIds: committeeBundleQueryIds,
+                    styleTemplate: committeeBundleStyleTemplate,
+                    appendixMode: committeeBundleAppendixMode,
+                    appendixRowLimit: committeeBundleAppendixRowLimit
+                  })
                 : buildChatHistoryReport({
                   project: payload.project,
                   messages: await listProjectMessages(projectId, 1000)
                 });
 
   const baseFileName = `${projectId}-${kind}`;
+  const effectiveStyleTemplate = kind === 'committee-review-pack'
+    ? committeeBundleStyleTemplate
+    : reportStyleTemplate;
 
   if (format === 'docx') {
-    const docxPayload = await renderStructuredReportDocx(report);
+    const docxPayload = await renderStructuredReportDocx(report, { styleTemplate: effectiveStyleTemplate });
     const artifact = await writeProjectArtifactBytes({
       projectId,
       area: 'exports',
@@ -5286,7 +11094,7 @@ server.get('/exports/reports', async (request, reply) => {
       action: 'export.report',
       entityType: 'export',
       entityId: `${projectId}:${kind}:docx`,
-      details: { kind, format: 'docx', file: artifact.relativePath }
+      details: { kind, format: 'docx', file: artifact.relativePath, axionPrefilter: prefilter }
     });
     reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     reply.header('Content-Disposition', `attachment; filename="${baseFileName}.docx"`);
@@ -5294,7 +11102,7 @@ server.get('/exports/reports', async (request, reply) => {
   }
 
   if (format === 'pdf') {
-    const pdfPayload = await renderStructuredReportPdf(report);
+    const pdfPayload = await renderStructuredReportPdf(report, { styleTemplate: effectiveStyleTemplate });
     const artifact = await writeProjectArtifactBytes({
       projectId,
       area: 'exports',
@@ -5308,7 +11116,7 @@ server.get('/exports/reports', async (request, reply) => {
       action: 'export.report',
       entityType: 'export',
       entityId: `${projectId}:${kind}:pdf`,
-      details: { kind, format: 'pdf', file: artifact.relativePath }
+      details: { kind, format: 'pdf', file: artifact.relativePath, axionPrefilter: prefilter }
     });
     reply.header('Content-Type', 'application/pdf');
     reply.header('Content-Disposition', `attachment; filename="${baseFileName}.pdf"`);
@@ -5330,7 +11138,7 @@ server.get('/exports/reports', async (request, reply) => {
       action: 'export.report',
       entityType: 'export',
       entityId: `${projectId}:${kind}:xlsx`,
-      details: { kind, format: 'xlsx', file: artifact.relativePath }
+      details: { kind, format: 'xlsx', file: artifact.relativePath, axionPrefilter: prefilter }
     });
     reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     reply.header('Content-Disposition', `attachment; filename="${baseFileName}.xlsx"`);
@@ -5352,7 +11160,7 @@ server.get('/exports/reports', async (request, reply) => {
       action: 'export.report',
       entityType: 'export',
       entityId: `${projectId}:${kind}:txt`,
-      details: { kind, format: 'txt', file: artifact.relativePath }
+      details: { kind, format: 'txt', file: artifact.relativePath, axionPrefilter: prefilter }
     });
     reply.header('Content-Type', 'text/plain; charset=utf-8');
     reply.header('Content-Disposition', `attachment; filename="${baseFileName}.txt"`);
@@ -5373,7 +11181,7 @@ server.get('/exports/reports', async (request, reply) => {
     action: 'export.report',
     entityType: 'export',
     entityId: `${projectId}:${kind}:json`,
-    details: { kind, format: 'json', file: artifact.relativePath }
+    details: { kind, format: 'json', file: artifact.relativePath, axionPrefilter: prefilter }
   });
   reply.header('Content-Type', 'application/json; charset=utf-8');
   reply.header('Content-Disposition', `attachment; filename="${baseFileName}.json"`);
@@ -5389,6 +11197,61 @@ server.get('/sources', async (request, reply) => {
   if (!await assertProjectAccess(userId, projectId, reply)) return;
   const items = await listSources(projectId);
   return ok({ items, total: items.length });
+});
+
+server.get('/sources/:sourceId/media', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const { sourceId } = request.params as { sourceId: string };
+  const query = (request.query ?? {}) as Partial<{ projectId: string }>;
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+
+  const source = (await listSources(projectId)).find((entry) => entry.id === sourceId);
+  if (!source) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Source not found.'));
+  }
+  if (!(source.kind === 'audio' || source.kind === 'video')) {
+    return reply.status(400).send(fail('INVALID', 'The selected source is not an audio/video source.'));
+  }
+  const contentUrl = source.contentUrl?.trim() || '';
+  if (!contentUrl) {
+    return reply.status(404).send(fail('NOT_FOUND', 'This media source does not have a file URL.'));
+  }
+  if (/^https?:\/\//i.test(contentUrl)) {
+    reply.redirect(contentUrl);
+    return;
+  }
+
+  const media = await resolveMediaSourceBytes({
+    id: source.id,
+    title: source.title,
+    contentType: source.contentType,
+    contentUrl: source.contentUrl
+  });
+  const totalBytes = media.bytes.length;
+  const rangeHeader = typeof request.headers.range === 'string' ? request.headers.range : '';
+  const rangeMatch = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader.trim());
+  const filename = inferFilenameFromSource(source);
+  reply.header('Accept-Ranges', 'bytes');
+  reply.header('Content-Type', media.contentType || inferContentTypeFromFilename(filename));
+  reply.header('Content-Disposition', `inline; filename="${filename.replace(/"/g, '')}"`);
+
+  if (rangeMatch) {
+    const start = rangeMatch[1] ? Number.parseInt(rangeMatch[1], 10) : 0;
+    const end = rangeMatch[2] ? Number.parseInt(rangeMatch[2], 10) : (totalBytes - 1);
+    const safeStart = Math.max(0, Math.min(totalBytes - 1, Number.isFinite(start) ? start : 0));
+    const safeEnd = Math.max(safeStart, Math.min(totalBytes - 1, Number.isFinite(end) ? end : totalBytes - 1));
+    const chunk = media.bytes.subarray(safeStart, safeEnd + 1);
+    reply.code(206);
+    reply.header('Content-Range', `bytes ${safeStart}-${safeEnd}/${totalBytes}`);
+    reply.header('Content-Length', String(chunk.length));
+    return reply.send(chunk);
+  }
+
+  reply.header('Content-Length', String(totalBytes));
+  return reply.send(media.bytes);
 });
 
 server.post('/sources', async (request, reply) => {
@@ -5875,15 +11738,237 @@ server.delete('/relationships/:relationshipId', async (request, reply) => {
   return ok({ removed: true });
 });
 
+type ReferenceSearchRecord = {
+  id: string;
+  sourceFormat: 'ris' | 'bibtex' | 'manual' | 'csljson';
+  referenceType: string;
+  title: string;
+  authors: string[];
+  year: number | null;
+  containerTitle: string;
+  publisher: string;
+  doi: string;
+  url: string;
+  abstractText: string;
+  keywords: string[];
+};
+
+function normalizeReferenceLookupToken(value: string): string {
+  return String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function normalizeReferenceDoi(value: string): string {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\/(dx\.)?doi\.org\//, '')
+    .replace(/^doi:/, '');
+}
+
+function referenceMatchesSearch(reference: ReferenceSearchRecord, searchText: string): boolean {
+  const token = normalizeReferenceLookupToken(searchText);
+  if (!token) return true;
+  const haystack = normalizeReferenceLookupToken([
+    reference.title,
+    reference.referenceType,
+    reference.authors.join(' '),
+    reference.containerTitle,
+    reference.publisher,
+    reference.doi,
+    reference.url,
+    reference.abstractText,
+    reference.keywords.join(' ')
+  ].join(' '));
+  return haystack.includes(token);
+}
+
+function referencesLikelyDuplicate(existing: ReferenceSearchRecord, draft: {
+  title: string;
+  authors: string[];
+  year: number | null;
+  doi: string;
+}): boolean {
+  const existingDoi = normalizeReferenceDoi(existing.doi);
+  const draftDoi = normalizeReferenceDoi(draft.doi);
+  if (existingDoi && draftDoi && existingDoi === draftDoi) return true;
+  const existingTitle = normalizeReferenceLookupToken(existing.title);
+  const draftTitle = normalizeReferenceLookupToken(draft.title);
+  const existingAuthor = normalizeReferenceLookupToken(existing.authors[0] ?? '');
+  const draftAuthor = normalizeReferenceLookupToken(draft.authors[0] ?? '');
+  if (!existingTitle || !draftTitle || existingTitle !== draftTitle) return false;
+  if (existing.year && draft.year && existing.year !== draft.year) return false;
+  if (existingAuthor && draftAuthor && existingAuthor !== draftAuthor) return false;
+  return true;
+}
+
+function filterReferences(
+  items: ReferenceSearchRecord[],
+  options: {
+    searchText: string;
+    sourceFormat: 'manual' | 'ris' | 'bibtex' | 'csljson' | 'all';
+    allowedReferenceIds?: Set<string> | null;
+  }
+): ReferenceSearchRecord[] {
+  const allowedReferenceIds = options.allowedReferenceIds ?? null;
+  return items.filter((reference) => {
+    if (allowedReferenceIds && !allowedReferenceIds.has(reference.id)) return false;
+    if (options.sourceFormat !== 'all' && reference.sourceFormat !== options.sourceFormat) return false;
+    return referenceMatchesSearch(reference, options.searchText);
+  });
+}
+
 server.get('/references', async (request, reply) => {
   const userId = await assertAuth(request, reply);
   if (!userId) return;
-  const query = request.query as { projectId?: string };
+  const query = request.query as {
+    projectId?: string;
+    q?: string;
+    sourceFormat?: string;
+    collectionId?: string;
+  };
   const projectId = requireProjectId(reply, query.projectId);
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
-  const items = await listProjectReferences(projectId);
-  return ok({ items, total: items.length });
+  const allReferences = await listProjectReferences(projectId);
+  const sourceFormat = query.sourceFormat === 'manual' || query.sourceFormat === 'ris' || query.sourceFormat === 'bibtex'
+    || query.sourceFormat === 'csljson'
+    ? query.sourceFormat
+    : 'all';
+  const allowedReferenceIds = typeof query.collectionId === 'string' && query.collectionId.trim()
+    ? new Set((await listProjectReferenceCollectionItems(projectId, query.collectionId.trim())).map((item) => item.referenceId))
+    : null;
+  const items = filterReferences(allReferences, {
+    searchText: typeof query.q === 'string' ? query.q : '',
+    sourceFormat,
+    allowedReferenceIds
+  });
+  return ok({
+    items,
+    total: items.length,
+    overallTotal: allReferences.length
+  });
+});
+
+server.post('/references', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    sourceFormat: string;
+    referenceType: string;
+    title: string;
+    authors: string[] | string;
+    year: number | string | null;
+    containerTitle: string;
+    publisher: string;
+    doi: string;
+    url: string;
+    abstractText: string;
+    keywords: string[] | string;
+    rawText: string;
+    relatedSourceId: string | null;
+  }>;
+  const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+  if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
+  const title = typeof body.title === 'string' ? body.title.trim() : '';
+  if (!title) {
+    return reply.status(400).send(fail('INVALID', 'Reference title is required.'));
+  }
+  const timestamp = new Date().toISOString();
+  const reference = await insertProjectReference({
+    id: `reference-${randomUUID()}`,
+    projectId,
+    sourceFormat: parseReferenceSourceFormat(body.sourceFormat),
+    referenceType: typeof body.referenceType === 'string' && body.referenceType.trim() ? body.referenceType.trim() : 'article',
+    title,
+    authors: parseStringArray(body.authors),
+    year: parseOptionalYear(body.year),
+    containerTitle: typeof body.containerTitle === 'string' ? body.containerTitle.trim() : '',
+    publisher: typeof body.publisher === 'string' ? body.publisher.trim() : '',
+    doi: typeof body.doi === 'string' ? body.doi.trim() : '',
+    url: typeof body.url === 'string' ? body.url.trim() : '',
+    abstractText: typeof body.abstractText === 'string' ? body.abstractText.trim() : '',
+    keywords: parseStringArray(body.keywords),
+    rawText: typeof body.rawText === 'string' ? body.rawText : '',
+    relatedSourceId: typeof body.relatedSourceId === 'string' && body.relatedSourceId.trim() ? body.relatedSourceId.trim() : null,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference.create',
+    entityType: 'project_reference',
+    entityId: reference.id,
+    details: { sourceFormat: reference.sourceFormat, referenceType: reference.referenceType, title: reference.title }
+  });
+  reply.code(201);
+  return ok({ reference });
+});
+
+server.patch('/references/:referenceId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ referenceId: string }>;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    sourceFormat: string;
+    referenceType: string;
+    title: string;
+    authors: string[] | string;
+    year: number | string | null;
+    containerTitle: string;
+    publisher: string;
+    doi: string;
+    url: string;
+    abstractText: string;
+    keywords: string[] | string;
+    rawText: string;
+    relatedSourceId: string | null;
+  }>;
+  const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+  if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
+  const referenceId = typeof params.referenceId === 'string' ? params.referenceId.trim() : '';
+  if (!referenceId) {
+    return reply.status(400).send(fail('INVALID', 'referenceId is required.'));
+  }
+  const existing = await getProjectReference(referenceId, projectId);
+  if (!existing) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Reference not found.'));
+  }
+  const updated = await updateProjectReference({
+    ...existing,
+    sourceFormat: body.sourceFormat === undefined ? existing.sourceFormat : parseReferenceSourceFormat(body.sourceFormat),
+    referenceType: body.referenceType === undefined ? existing.referenceType : String(body.referenceType ?? '').trim() || existing.referenceType,
+    title: body.title === undefined ? existing.title : String(body.title ?? '').trim(),
+    authors: body.authors === undefined ? existing.authors : parseStringArray(body.authors),
+    year: body.year === undefined ? existing.year : parseOptionalYear(body.year),
+    containerTitle: body.containerTitle === undefined ? existing.containerTitle : String(body.containerTitle ?? '').trim(),
+    publisher: body.publisher === undefined ? existing.publisher : String(body.publisher ?? '').trim(),
+    doi: body.doi === undefined ? existing.doi : String(body.doi ?? '').trim(),
+    url: body.url === undefined ? existing.url : String(body.url ?? '').trim(),
+    abstractText: body.abstractText === undefined ? existing.abstractText : String(body.abstractText ?? '').trim(),
+    keywords: body.keywords === undefined ? existing.keywords : parseStringArray(body.keywords),
+    rawText: body.rawText === undefined ? existing.rawText : String(body.rawText ?? ''),
+    relatedSourceId: body.relatedSourceId === undefined
+      ? existing.relatedSourceId
+      : typeof body.relatedSourceId === 'string' && body.relatedSourceId.trim()
+        ? body.relatedSourceId.trim()
+        : null,
+    updatedAt: new Date().toISOString()
+  });
+  if (!updated) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Reference not found.'));
+  }
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference.update',
+    entityType: 'project_reference',
+    entityId: updated.id,
+    details: { sourceFormat: updated.sourceFormat, referenceType: updated.referenceType, title: updated.title }
+  });
+  return ok({ reference: updated });
 });
 
 server.post('/references/import', async (request, reply) => {
@@ -5894,6 +11979,7 @@ server.post('/references/import', async (request, reply) => {
     format: string;
     text: string;
     relatedSourceId: string;
+    skipDuplicates: boolean;
   }>;
   const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
   if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
@@ -5901,18 +11987,32 @@ server.post('/references/import', async (request, reply) => {
   if (!rawText) {
     return reply.status(400).send(fail('INVALID', 'Reference text is required.'));
   }
-  const format = body.format === 'bibtex' ? 'bibtex' : 'ris';
-  const drafts = format === 'bibtex' ? parseBibtexReferences(rawText) : parseRisReferences(rawText);
+  const format = body.format === 'bibtex' || body.format === 'csljson' ? body.format : 'ris';
+  const drafts = format === 'bibtex'
+    ? parseBibtexReferences(rawText)
+    : format === 'csljson'
+      ? parseCslJsonReferences(rawText)
+      : parseRisReferences(rawText);
   if (drafts.length === 0) {
     return reply.status(400).send(fail('INVALID', 'No references could be parsed from the supplied text.'));
   }
+  const skipDuplicates = body.skipDuplicates !== false;
+  const existing = skipDuplicates ? await listProjectReferences(projectId) : [];
   const timestamp = new Date().toISOString();
   const items = [];
+  const skipped: Array<{ title: string; reason: string }> = [];
   for (const draft of drafts) {
+    if (skipDuplicates) {
+      const duplicate = existing.find((row) => referencesLikelyDuplicate(row, draft));
+      if (duplicate) {
+        skipped.push({ title: draft.title || 'Untitled reference', reason: `Duplicate of ${duplicate.id}` });
+        continue;
+      }
+    }
     const reference = await insertProjectReference({
       id: `reference-${randomUUID()}`,
       projectId,
-      sourceFormat: format,
+      sourceFormat: format === 'csljson' ? 'csljson' : format,
       referenceType: draft.referenceType || 'article',
       title: draft.title || 'Untitled reference',
       authors: draft.authors,
@@ -5929,6 +12029,7 @@ server.post('/references/import', async (request, reply) => {
       updatedAt: timestamp
     });
     items.push(reference);
+    existing.push(reference);
   }
   await recordAuditEvent({
     request,
@@ -5936,10 +12037,10 @@ server.post('/references/import', async (request, reply) => {
     action: 'reference.import',
     entityType: 'project_reference_batch',
     entityId: `reference-import-${randomUUID()}`,
-    details: { format, importedCount: items.length }
+    details: { format, importedCount: items.length, skippedCount: skipped.length }
   });
   reply.code(201);
-  return ok({ items, total: items.length });
+  return ok({ items, total: items.length, skippedCount: skipped.length, skipped });
 });
 
 server.delete('/references/:referenceId', async (request, reply) => {
@@ -5963,6 +12064,495 @@ server.delete('/references/:referenceId', async (request, reply) => {
     details: {}
   });
   return ok({ removed: true });
+});
+
+server.get('/references/export', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = (request.query ?? {}) as Partial<{
+    projectId: string;
+    format: string;
+    q: string;
+    sourceFormat: string;
+    collectionId: string;
+  }>;
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const format = query.format === 'ris' || query.format === 'bibtex' || query.format === 'csljson' ? query.format : 'json';
+  const sourceFormat = query.sourceFormat === 'manual' || query.sourceFormat === 'ris' || query.sourceFormat === 'bibtex' || query.sourceFormat === 'csljson'
+    ? query.sourceFormat
+    : 'all';
+  const allReferences = await listProjectReferences(projectId);
+  const allowedReferenceIds = typeof query.collectionId === 'string' && query.collectionId.trim()
+    ? new Set((await listProjectReferenceCollectionItems(projectId, query.collectionId.trim())).map((item) => item.referenceId))
+    : null;
+  const items = filterReferences(allReferences, {
+    searchText: typeof query.q === 'string' ? query.q : '',
+    sourceFormat,
+    allowedReferenceIds
+  });
+  const payload = format === 'bibtex'
+    ? serializeBibtexReferences(items)
+    : format === 'ris'
+      ? serializeRisReferences(items)
+      : format === 'csljson'
+        ? serializeCslJsonReferences(items)
+      : JSON.stringify({ exportedAt: new Date().toISOString(), total: items.length, items }, null, 2);
+  const artifact = format === 'json'
+    ? await writeProjectArtifact({
+      projectId,
+      area: 'exports',
+      label: 'references',
+      extension: 'json',
+      contents: payload
+    })
+    : await writeProjectArtifactBytes({
+      projectId,
+      area: 'exports',
+      label: 'references',
+      extension: format === 'bibtex' ? 'bib' : format === 'ris' ? 'ris' : 'csl.json',
+      contents: Buffer.from(payload, 'utf8')
+    });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference.export',
+    entityType: 'export',
+    entityId: `${projectId}:references:${format}`,
+    details: { format, count: items.length, file: artifact.relativePath }
+  });
+  if (format === 'bibtex') {
+    reply.header('Content-Type', 'text/x-bibtex; charset=utf-8');
+    reply.header('Content-Disposition', `attachment; filename="${projectId}-references.bib"`);
+  } else if (format === 'ris') {
+    reply.header('Content-Type', 'application/x-research-info-systems; charset=utf-8');
+    reply.header('Content-Disposition', `attachment; filename="${projectId}-references.ris"`);
+  } else if (format === 'csljson') {
+    reply.header('Content-Type', 'application/vnd.citationstyles.csl+json; charset=utf-8');
+    reply.header('Content-Disposition', `attachment; filename="${projectId}-references.csl.json"`);
+  } else {
+    reply.header('Content-Type', 'application/json; charset=utf-8');
+    reply.header('Content-Disposition', `attachment; filename="${projectId}-references.json"`);
+  }
+  return reply.send(payload);
+});
+
+server.get('/references/duplicates', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = (request.query ?? {}) as Partial<{ projectId: string; minScore: string }>;
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const minScoreRaw = Number(query.minScore ?? 0.74);
+  const minScore = Number.isFinite(minScoreRaw) ? Math.max(0, Math.min(1, minScoreRaw)) : 0.74;
+  const [references, candidates] = await Promise.all([
+    listProjectReferences(projectId),
+    listProjectReferenceDuplicateCandidates(projectId)
+  ]);
+  const byId = new Map(references.map((reference) => [reference.id, reference]));
+  const items = candidates
+    .filter((candidate) => candidate.score >= minScore)
+    .map((candidate) => ({
+      ...candidate,
+      primary: byId.get(candidate.primaryReferenceId) ?? null,
+      duplicate: byId.get(candidate.duplicateReferenceId) ?? null
+    }))
+    .filter((candidate) => candidate.primary && candidate.duplicate);
+  return ok({ items, total: items.length });
+});
+
+server.post('/references/merge', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    primaryReferenceId: string;
+    mergedReferenceId: string;
+    reason: string;
+  }>;
+  const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+  if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
+  const primaryReferenceId = typeof body.primaryReferenceId === 'string' ? body.primaryReferenceId.trim() : '';
+  const mergedReferenceId = typeof body.mergedReferenceId === 'string' ? body.mergedReferenceId.trim() : '';
+  if (!primaryReferenceId || !mergedReferenceId || primaryReferenceId === mergedReferenceId) {
+    return reply.status(400).send(fail('INVALID', 'primaryReferenceId and mergedReferenceId must be different and non-empty.'));
+  }
+  const timestamp = new Date().toISOString();
+  const mergeResult = await mergeProjectReferences({
+    projectId,
+    primaryReferenceId,
+    mergedReferenceId,
+    reason: typeof body.reason === 'string' ? body.reason.trim() : '',
+    eventId: `reference-merge-${randomUUID()}`,
+    createdAt: timestamp,
+    createdByUserId: userId,
+    createdByUsername: request.session.username ?? 'system'
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference.merge',
+    entityType: 'project_reference',
+    entityId: mergeResult.primary.id,
+    details: {
+      mergedReferenceId,
+      reason: mergeResult.event.reason,
+      mergeEventId: mergeResult.event.id
+    }
+  });
+  return ok(mergeResult);
+});
+
+server.get('/reference-links', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = (request.query ?? {}) as Partial<{ projectId: string; referenceId: string }>;
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const referenceId = typeof query.referenceId === 'string' && query.referenceId.trim() ? query.referenceId.trim() : undefined;
+  const items = await listProjectReferenceLinks(projectId, referenceId);
+  return ok({ items, total: items.length });
+});
+
+server.post('/reference-links', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    referenceId: string;
+    targetType: string;
+    targetId: string;
+    note: string;
+  }>;
+  const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+  if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
+  const referenceId = typeof body.referenceId === 'string' ? body.referenceId.trim() : '';
+  const targetId = typeof body.targetId === 'string' ? body.targetId.trim() : '';
+  if (!referenceId || !targetId) {
+    return reply.status(400).send(fail('INVALID', 'referenceId and targetId are required.'));
+  }
+  const timestamp = new Date().toISOString();
+  const link = await insertProjectReferenceLink({
+    id: `reference-link-${randomUUID()}`,
+    projectId,
+    referenceId,
+    targetType: parseReferenceTargetType(body.targetType),
+    targetId,
+    note: typeof body.note === 'string' ? body.note.trim() : '',
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference.link.create',
+    entityType: 'project_reference_link',
+    entityId: link.id,
+    details: { referenceId: link.referenceId, targetType: link.targetType, targetId: link.targetId }
+  });
+  reply.code(201);
+  return ok({ link });
+});
+
+server.patch('/reference-links/:linkId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ linkId: string }>;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    referenceId: string;
+    targetType: string;
+    targetId: string;
+    note: string;
+  }>;
+  const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+  if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
+  const linkId = typeof params.linkId === 'string' ? params.linkId.trim() : '';
+  if (!linkId) {
+    return reply.status(400).send(fail('INVALID', 'linkId is required.'));
+  }
+  const existing = (await listProjectReferenceLinks(projectId)).find((item) => item.id === linkId);
+  if (!existing) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Reference link not found.'));
+  }
+  const updated = await updateProjectReferenceLink({
+    ...existing,
+    referenceId: body.referenceId === undefined ? existing.referenceId : String(body.referenceId ?? '').trim(),
+    targetType: body.targetType === undefined ? existing.targetType : parseReferenceTargetType(body.targetType),
+    targetId: body.targetId === undefined ? existing.targetId : String(body.targetId ?? '').trim(),
+    note: body.note === undefined ? existing.note : String(body.note ?? '').trim(),
+    updatedAt: new Date().toISOString()
+  });
+  if (!updated) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Reference link not found.'));
+  }
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference.link.update',
+    entityType: 'project_reference_link',
+    entityId: updated.id,
+    details: { referenceId: updated.referenceId, targetType: updated.targetType, targetId: updated.targetId }
+  });
+  return ok({ link: updated });
+});
+
+server.delete('/reference-links/:linkId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ linkId: string }>;
+  const query = (request.query ?? {}) as Partial<{ projectId: string }>;
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const linkId = typeof params.linkId === 'string' ? params.linkId.trim() : '';
+  if (!linkId) {
+    return reply.status(400).send(fail('INVALID', 'linkId is required.'));
+  }
+  const removed = await deleteProjectReferenceLink(linkId, projectId);
+  if (!removed) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Reference link not found.'));
+  }
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference.link.delete',
+    entityType: 'project_reference_link',
+    entityId: linkId,
+    details: {}
+  });
+  return ok({ removed: true });
+});
+
+server.get('/reference-collections', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = (request.query ?? {}) as Partial<{ projectId: string }>;
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const items = await listProjectReferenceCollections(projectId);
+  return ok({ items, total: items.length });
+});
+
+server.post('/reference-collections', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    name: string;
+    description: string;
+    colorToken: string;
+  }>;
+  const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+  if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name) {
+    return reply.status(400).send(fail('INVALID', 'Collection name is required.'));
+  }
+  const timestamp = new Date().toISOString();
+  const collection = await insertProjectReferenceCollection({
+    id: `reference-collection-${randomUUID()}`,
+    projectId,
+    name,
+    description: typeof body.description === 'string' ? body.description.trim() : '',
+    colorToken: parseReferenceCollectionColorToken(body.colorToken),
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference.collection.create',
+    entityType: 'project_reference_collection',
+    entityId: collection.id,
+    details: { name: collection.name, colorToken: collection.colorToken }
+  });
+  reply.code(201);
+  return ok({ collection });
+});
+
+server.patch('/reference-collections/:collectionId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ collectionId: string }>;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    name: string;
+    description: string;
+    colorToken: string;
+  }>;
+  const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+  if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
+  const collectionId = typeof params.collectionId === 'string' ? params.collectionId.trim() : '';
+  if (!collectionId) {
+    return reply.status(400).send(fail('INVALID', 'collectionId is required.'));
+  }
+  const existing = (await listProjectReferenceCollections(projectId)).find((item) => item.id === collectionId);
+  if (!existing) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Reference collection not found.'));
+  }
+  const updated = await updateProjectReferenceCollection({
+    ...existing,
+    name: body.name === undefined ? existing.name : String(body.name ?? '').trim(),
+    description: body.description === undefined ? existing.description : String(body.description ?? '').trim(),
+    colorToken: body.colorToken === undefined ? existing.colorToken : parseReferenceCollectionColorToken(body.colorToken),
+    updatedAt: new Date().toISOString()
+  });
+  if (!updated) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Reference collection not found.'));
+  }
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference.collection.update',
+    entityType: 'project_reference_collection',
+    entityId: updated.id,
+    details: { name: updated.name, colorToken: updated.colorToken }
+  });
+  return ok({ collection: updated });
+});
+
+server.delete('/reference-collections/:collectionId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ collectionId: string }>;
+  const query = (request.query ?? {}) as Partial<{ projectId: string }>;
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const collectionId = typeof params.collectionId === 'string' ? params.collectionId.trim() : '';
+  if (!collectionId) {
+    return reply.status(400).send(fail('INVALID', 'collectionId is required.'));
+  }
+  const removed = await deleteProjectReferenceCollection(collectionId, projectId);
+  if (!removed) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Reference collection not found.'));
+  }
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference.collection.delete',
+    entityType: 'project_reference_collection',
+    entityId: collectionId,
+    details: {}
+  });
+  return ok({ removed: true });
+});
+
+server.get('/reference-collection-items', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = (request.query ?? {}) as Partial<{ projectId: string; collectionId: string }>;
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const collectionId = typeof query.collectionId === 'string' && query.collectionId.trim() ? query.collectionId.trim() : undefined;
+  const items = await listProjectReferenceCollectionItems(projectId, collectionId);
+  return ok({ items, total: items.length });
+});
+
+server.post('/reference-collections/:collectionId/items', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ collectionId: string }>;
+  const body = (request.body ?? {}) as Partial<{ projectId: string; referenceId: string }>;
+  const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+  if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
+  const collectionId = typeof params.collectionId === 'string' ? params.collectionId.trim() : '';
+  const referenceId = typeof body.referenceId === 'string' ? body.referenceId.trim() : '';
+  if (!collectionId || !referenceId) {
+    return reply.status(400).send(fail('INVALID', 'collectionId and referenceId are required.'));
+  }
+  const timestamp = new Date().toISOString();
+  const item = await insertProjectReferenceCollectionItem({
+    id: `reference-collection-item-${randomUUID()}`,
+    projectId,
+    collectionId,
+    referenceId,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference.collection.add_item',
+    entityType: 'project_reference_collection_item',
+    entityId: item.id,
+    details: { collectionId, referenceId }
+  });
+  reply.code(201);
+  return ok({ item });
+});
+
+server.delete('/reference-collections/:collectionId/items/:itemId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ collectionId: string; itemId: string }>;
+  const query = (request.query ?? {}) as Partial<{ projectId: string }>;
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const itemId = typeof params.itemId === 'string' ? params.itemId.trim() : '';
+  if (!itemId) {
+    return reply.status(400).send(fail('INVALID', 'itemId is required.'));
+  }
+  const removed = await deleteProjectReferenceCollectionItem(itemId, projectId);
+  if (!removed) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Collection item not found.'));
+  }
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference.collection.remove_item',
+    entityType: 'project_reference_collection_item',
+    entityId: itemId,
+    details: { collectionId: params.collectionId ?? null }
+  });
+  return ok({ removed: true });
+});
+
+server.delete('/reference-collections/:collectionId/references/:referenceId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ collectionId: string; referenceId: string }>;
+  const query = (request.query ?? {}) as Partial<{ projectId: string }>;
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const collectionId = typeof params.collectionId === 'string' ? params.collectionId.trim() : '';
+  const referenceId = typeof params.referenceId === 'string' ? params.referenceId.trim() : '';
+  if (!collectionId || !referenceId) {
+    return reply.status(400).send(fail('INVALID', 'collectionId and referenceId are required.'));
+  }
+  const removed = await removeReferenceFromCollection(projectId, collectionId, referenceId);
+  if (!removed) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Reference not found in collection.'));
+  }
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'reference.collection.remove_reference',
+    entityType: 'project_reference_collection',
+    entityId: collectionId,
+    details: { referenceId }
+  });
+  return ok({ removed: true });
+});
+
+server.get('/reference-merge-events', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = (request.query ?? {}) as Partial<{ projectId: string; referenceId: string }>;
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const referenceId = typeof query.referenceId === 'string' && query.referenceId.trim() ? query.referenceId.trim() : undefined;
+  const items = await listProjectReferenceMergeEvents(projectId, referenceId);
+  return ok({ items, total: items.length });
 });
 
 server.get('/transcript-sync-links', async (request, reply) => {
@@ -5991,6 +12581,10 @@ server.post('/transcript-sync-links', async (request, reply) => {
     startMs: number;
     endMs: number;
     transcriptText: string;
+    speakerLabel: string;
+    confidence: number;
+    syncScore: number;
+    tokenTimeline: Array<{ token: string; startMs: number; endMs: number; confidence?: number; speakerLabel?: string }>;
   }>;
   const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
   if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
@@ -6001,6 +12595,10 @@ server.post('/transcript-sync-links', async (request, reply) => {
   }
   const startMs = typeof body.startMs === 'number' ? Math.max(0, Math.round(body.startMs)) : 0;
   const endMs = typeof body.endMs === 'number' ? Math.max(startMs, Math.round(body.endMs)) : startMs;
+  const speakerLabel = typeof body.speakerLabel === 'string' ? body.speakerLabel.trim() : '';
+  const confidence = parseOptionalBoundedNumber(body.confidence, 0, 1);
+  const syncScore = parseOptionalBoundedNumber(body.syncScore, 0, 1);
+  const tokenTimeline = normalizeTokenTimeline(body.tokenTimeline);
   const link = await insertTranscriptSyncLink({
     id: `sync-${randomUUID()}`,
     projectId,
@@ -6010,6 +12608,10 @@ server.post('/transcript-sync-links', async (request, reply) => {
     startMs,
     endMs,
     transcriptText: typeof body.transcriptText === 'string' ? body.transcriptText : '',
+    speakerLabel,
+    confidence,
+    syncScore,
+    tokenTimelineJson: JSON.stringify(tokenTimeline),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   });
@@ -6019,7 +12621,7 @@ server.post('/transcript-sync-links', async (request, reply) => {
     action: 'transcript_sync.create',
     entityType: 'transcript_sync_link',
     entityId: link.id,
-    details: { mediaSourceId, transcriptSourceId, segmentId: link.segmentId, startMs, endMs }
+    details: { mediaSourceId, transcriptSourceId, segmentId: link.segmentId, startMs, endMs, tokenCount: tokenTimeline.length, confidence, syncScore }
   });
   return ok({ link });
 });
@@ -6036,6 +12638,10 @@ server.put('/transcript-sync-links/:linkId', async (request, reply) => {
     startMs: number;
     endMs: number;
     transcriptText: string;
+    speakerLabel: string;
+    confidence: number;
+    syncScore: number;
+    tokenTimeline: Array<{ token: string; startMs: number; endMs: number; confidence?: number; speakerLabel?: string }>;
   }>;
   const linkId = typeof params.linkId === 'string' ? params.linkId.trim() : '';
   if (!linkId) {
@@ -6074,6 +12680,29 @@ server.put('/transcript-sync-links/:linkId', async (request, reply) => {
   const transcriptText = typeof body.transcriptText === 'string'
     ? body.transcriptText
     : existing.transcriptText;
+  const speakerLabel = typeof body.speakerLabel === 'string'
+    ? body.speakerLabel.trim()
+    : existing.speakerLabel;
+  const confidence = body.confidence === null
+    ? null
+    : body.confidence === undefined
+      ? existing.confidence
+      : parseOptionalBoundedNumber(body.confidence, 0, 1);
+  const syncScore = body.syncScore === null
+    ? null
+    : body.syncScore === undefined
+      ? existing.syncScore
+      : parseOptionalBoundedNumber(body.syncScore, 0, 1);
+  const existingTokenTimeline = (() => {
+    try {
+      return normalizeTokenTimeline(JSON.parse(existing.tokenTimelineJson || '[]'));
+    } catch {
+      return [];
+    }
+  })();
+  const tokenTimeline = body.tokenTimeline === undefined
+    ? existingTokenTimeline
+    : normalizeTokenTimeline(body.tokenTimeline);
   const updatedAt = new Date().toISOString();
   const link = await updateTranscriptSyncLink({
     ...existing,
@@ -6083,6 +12712,10 @@ server.put('/transcript-sync-links/:linkId', async (request, reply) => {
     startMs,
     endMs,
     transcriptText,
+    speakerLabel,
+    confidence,
+    syncScore,
+    tokenTimelineJson: JSON.stringify(tokenTimeline),
     updatedAt
   });
   await recordAuditEvent({
@@ -6097,10 +12730,198 @@ server.put('/transcript-sync-links/:linkId', async (request, reply) => {
       segmentId,
       startMs,
       endMs,
-      replacedSegmentId: existing.segmentId
+      replacedSegmentId: existing.segmentId,
+      tokenCount: tokenTimeline.length,
+      confidence,
+      syncScore
     }
   });
   return ok({ link });
+});
+
+server.post('/transcript-sync-links/batch-update', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    mediaSourceId: string;
+    linkIds: string[];
+    speakerLabel: string;
+    fromSpeakerLabel: string;
+    confidenceFloor: number;
+    syncScoreFloor: number;
+    maxConfidence: number;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+
+  const rawLinkIds = Array.isArray(body.linkIds) ? body.linkIds : [];
+  const linkIds = [...new Set(rawLinkIds
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => value.trim())
+    .filter(Boolean))];
+  if (linkIds.length === 0) {
+    return reply.status(400).send(fail('INVALID', 'At least one transcript sync link id is required.'));
+  }
+  if (linkIds.length > 2000) {
+    return reply.status(400).send(fail('INVALID', 'Batch updates are limited to 2000 rows per request.'));
+  }
+
+  const mediaSourceId = typeof body.mediaSourceId === 'string' && body.mediaSourceId.trim()
+    ? body.mediaSourceId.trim()
+    : null;
+  const hasSpeakerUpdate = body.speakerLabel !== undefined;
+  const speakerLabel = typeof body.speakerLabel === 'string' ? body.speakerLabel.trim() : '';
+  if (hasSpeakerUpdate && !speakerLabel) {
+    return reply.status(400).send(fail('INVALID', 'speakerLabel must be a non-empty string when provided.'));
+  }
+  const fromSpeakerLabel = typeof body.fromSpeakerLabel === 'string'
+    ? body.fromSpeakerLabel.trim()
+    : null;
+  const confidenceFloor = parseOptionalBoundedNumber(body.confidenceFloor, 0, 1);
+  const syncScoreFloor = parseOptionalBoundedNumber(body.syncScoreFloor, 0, 1);
+  const maxConfidence = parseOptionalBoundedNumber(body.maxConfidence, 0, 1);
+  if (!hasSpeakerUpdate && confidenceFloor === null && syncScoreFloor === null) {
+    return reply.status(400).send(fail('INVALID', 'Provide speakerLabel, confidenceFloor, or syncScoreFloor for batch update.'));
+  }
+
+  const normalizeSpeakerKey = (value: string): string => {
+    const normalized = value.trim().toLowerCase();
+    return normalized ? normalized : '__unlabeled__';
+  };
+  const normalizedFromSpeaker = fromSpeakerLabel === null
+    ? null
+    : normalizeSpeakerKey(fromSpeakerLabel);
+  const now = new Date().toISOString();
+  const linkById = new Map((await listTranscriptSyncLinks(projectId)).map((link) => [link.id, link]));
+  let updatedCount = 0;
+  let skippedCount = 0;
+  let skippedByFilter = 0;
+  let missingCount = 0;
+  const sample: Array<{
+    id: string;
+    speakerLabel: string;
+    confidence: number | null;
+    syncScore: number | null;
+  }> = [];
+
+  for (const linkId of linkIds) {
+    const existing = linkById.get(linkId);
+    if (!existing) {
+      missingCount += 1;
+      continue;
+    }
+    if (mediaSourceId && existing.mediaSourceId !== mediaSourceId) {
+      skippedByFilter += 1;
+      continue;
+    }
+    const currentSpeakerLabel = typeof existing.speakerLabel === 'string' ? existing.speakerLabel.trim() : '';
+    if (normalizedFromSpeaker !== null && normalizeSpeakerKey(currentSpeakerLabel) !== normalizedFromSpeaker) {
+      skippedByFilter += 1;
+      continue;
+    }
+    if (
+      maxConfidence !== null &&
+      typeof existing.confidence === 'number' &&
+      Number.isFinite(existing.confidence) &&
+      existing.confidence > maxConfidence
+    ) {
+      skippedByFilter += 1;
+      continue;
+    }
+
+    const nextSpeakerLabel = hasSpeakerUpdate ? speakerLabel : currentSpeakerLabel;
+    const nextConfidence = confidenceFloor === null
+      ? existing.confidence
+      : Math.max(
+          typeof existing.confidence === 'number' && Number.isFinite(existing.confidence) ? existing.confidence : 0,
+          confidenceFloor
+        );
+    const nextSyncScore = syncScoreFloor === null
+      ? existing.syncScore
+      : Math.max(
+          typeof existing.syncScore === 'number' && Number.isFinite(existing.syncScore) ? existing.syncScore : 0,
+          syncScoreFloor
+        );
+
+    const tokenTimeline = (() => {
+      try {
+        return normalizeTokenTimeline(JSON.parse(existing.tokenTimelineJson || '[]'));
+      } catch {
+        return [];
+      }
+    })();
+    const remappedTokenTimeline = hasSpeakerUpdate && nextSpeakerLabel !== currentSpeakerLabel
+      ? tokenTimeline.map((token) => {
+          const tokenSpeaker = typeof token.speakerLabel === 'string' ? token.speakerLabel.trim() : '';
+          if (tokenSpeaker && normalizeSpeakerKey(tokenSpeaker) !== normalizeSpeakerKey(currentSpeakerLabel)) {
+            return token;
+          }
+          return {
+            ...token,
+            speakerLabel: nextSpeakerLabel
+          };
+        })
+      : tokenTimeline;
+
+    const changed = nextSpeakerLabel !== currentSpeakerLabel
+      || nextConfidence !== existing.confidence
+      || nextSyncScore !== existing.syncScore;
+    if (!changed) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const updated = await updateTranscriptSyncLink({
+      ...existing,
+      speakerLabel: nextSpeakerLabel,
+      confidence: nextConfidence,
+      syncScore: nextSyncScore,
+      tokenTimelineJson: JSON.stringify(remappedTokenTimeline),
+      updatedAt: now
+    });
+    updatedCount += 1;
+    sample.push({
+      id: updated.id,
+      speakerLabel: updated.speakerLabel,
+      confidence: updated.confidence,
+      syncScore: updated.syncScore
+    });
+  }
+
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'transcript_sync.batch_update',
+    entityType: 'transcript_sync_link',
+    entityId: mediaSourceId ?? linkIds[0],
+    details: {
+      mediaSourceId,
+      requestedCount: linkIds.length,
+      updatedCount,
+      skippedCount,
+      skippedByFilter,
+      missingCount,
+      hasSpeakerUpdate,
+      fromSpeakerLabel,
+      speakerLabel: hasSpeakerUpdate ? speakerLabel : null,
+      confidenceFloor,
+      syncScoreFloor,
+      maxConfidence
+    }
+  });
+
+  return ok({
+    batch: {
+      requestedCount: linkIds.length,
+      updatedCount,
+      skippedCount,
+      skippedByFilter,
+      missingCount,
+      sample: sample.slice(0, 120)
+    }
+  });
 });
 
 server.delete('/transcript-sync-links/:linkId', async (request, reply) => {
@@ -6147,29 +12968,1939 @@ server.get('/media-timeline', async (request, reply) => {
       sourceId,
       segments: payload.segments,
       syncLinks: payload.transcriptSyncLinks,
-      sources: payload.sources
+      sources: payload.sources,
+      applications: payload.codeApplications
     })
+  });
+});
+
+server.get('/transcript-sync-links/diarization-qa', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = request.query as {
+    projectId?: string;
+    mediaSourceId?: string;
+    maxRows?: string;
+    maxConfidence?: string;
+    switchWindowMs?: string;
+  };
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const mediaSourceId = typeof query.mediaSourceId === 'string' ? query.mediaSourceId.trim() : '';
+  if (!mediaSourceId) {
+    return reply.status(400).send(fail('INVALID', 'mediaSourceId is required.'));
+  }
+  const maxRows = parsePositiveInteger(query.maxRows, 120, 1, 2000);
+  const maxConfidence = parseOptionalBoundedNumber(query.maxConfidence, 0, 1) ?? 0.62;
+  const switchWindowMs = parsePositiveInteger(query.switchWindowMs, 1500, 100, 120000);
+  const payload = await buildQualitativeProjectPayload(projectId);
+  const timeline = buildMediaTimeline({
+    sourceId: mediaSourceId,
+    segments: payload.segments,
+    syncLinks: payload.transcriptSyncLinks,
+    sources: payload.sources,
+    applications: payload.codeApplications
+  });
+  const qa = buildDiarizationQaReview({
+    timeline,
+    maxRows,
+    maxConfidence,
+    switchWindowMs
+  });
+  return ok({
+    qa,
+    timelineSummary: timeline.summary
+  });
+});
+
+server.post('/transcript-sync-links/auto-align', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    mediaSourceId: string;
+    maxDriftMs: number;
+    mode: 'snap_to_segment' | 'fit_to_segment';
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const mediaSourceId = typeof body.mediaSourceId === 'string' && body.mediaSourceId.trim() ? body.mediaSourceId.trim() : '';
+  if (!mediaSourceId) {
+    return reply.status(400).send(fail('INVALID', 'mediaSourceId is required.'));
+  }
+  const maxDriftMs = parsePositiveInteger(body.maxDriftMs, 1200, 100, 120000);
+  const mode = body.mode === 'fit_to_segment' ? 'fit_to_segment' : 'snap_to_segment';
+
+  const payload = await buildQualitativeProjectPayload(projectId);
+  const segmentById = new Map(
+    payload.segments
+      .filter((segment) => segment.sourceId === mediaSourceId && segment.kind === 'time_range')
+      .map((segment) => [segment.id, segment])
+  );
+  const scopedLinks = payload.transcriptSyncLinks
+    .filter((link) => link.mediaSourceId === mediaSourceId && Boolean(link.segmentId))
+    .filter((link) => link.segmentId && segmentById.has(link.segmentId));
+
+  let updatedCount = 0;
+  let skippedCount = 0;
+  let measuredCount = 0;
+  let measuredDriftBeforeMs = 0;
+  let measuredDriftAfterMs = 0;
+  const now = new Date().toISOString();
+  const changes: Array<{ linkId: string; segmentId: string | null; startMsBefore: number; endMsBefore: number; startMsAfter: number; endMsAfter: number; driftBeforeMs: number; driftAfterMs: number }> = [];
+
+  for (const link of scopedLinks) {
+    const segmentId = link.segmentId as string;
+    const segment = segmentById.get(segmentId);
+    if (!segment) {
+      skippedCount += 1;
+      continue;
+    }
+    const anchor = segment.anchor as { startMs: number; endMs: number };
+    const targetStartMs = Math.max(0, Math.round(anchor.startMs));
+    const targetEndMs = Math.max(targetStartMs, Math.round(anchor.endMs));
+    const driftBeforeMs = (Math.abs(link.startMs - targetStartMs) + Math.abs(link.endMs - targetEndMs)) / 2;
+    if (driftBeforeMs <= maxDriftMs) {
+      skippedCount += 1;
+      continue;
+    }
+    const nextStart = mode === 'fit_to_segment'
+      ? targetStartMs
+      : (Math.round((link.startMs + targetStartMs) / 2));
+    const nextEnd = mode === 'fit_to_segment'
+      ? targetEndMs
+      : Math.max(nextStart, Math.round((link.endMs + targetEndMs) / 2));
+    const driftAfterMs = (Math.abs(nextStart - targetStartMs) + Math.abs(nextEnd - targetEndMs)) / 2;
+    measuredCount += 1;
+    measuredDriftBeforeMs += driftBeforeMs;
+    measuredDriftAfterMs += driftAfterMs;
+
+    const existingTokenTimeline = (() => {
+      try {
+        return normalizeTokenTimeline(JSON.parse(link.tokenTimelineJson || '[]'));
+      } catch {
+        return [];
+      }
+    })();
+    const syncScore = driftAfterMs <= 250 ? 0.95 : driftAfterMs <= 750 ? 0.82 : driftAfterMs <= 1200 ? 0.7 : 0.55;
+    await updateTranscriptSyncLink({
+      ...link,
+      startMs: nextStart,
+      endMs: nextEnd,
+      syncScore,
+      tokenTimelineJson: JSON.stringify(existingTokenTimeline),
+      updatedAt: now
+    });
+    updatedCount += 1;
+    changes.push({
+      linkId: link.id,
+      segmentId,
+      startMsBefore: link.startMs,
+      endMsBefore: link.endMs,
+      startMsAfter: nextStart,
+      endMsAfter: nextEnd,
+      driftBeforeMs,
+      driftAfterMs
+    });
+  }
+
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'transcript_sync.auto_align',
+    entityType: 'transcript_sync_link',
+    entityId: mediaSourceId,
+    details: {
+      mediaSourceId,
+      mode,
+      maxDriftMs,
+      updatedCount,
+      skippedCount
+    }
+  });
+
+  return ok({
+    alignment: {
+      mediaSourceId,
+      mode,
+      maxDriftMs,
+      updatedCount,
+      skippedCount,
+      avgDriftBeforeMs: measuredCount > 0 ? measuredDriftBeforeMs / measuredCount : null,
+      avgDriftAfterMs: measuredCount > 0 ? measuredDriftAfterMs / measuredCount : null,
+      changes: changes.slice(0, 120)
+    }
+  });
+});
+
+server.post('/transcript-sync-links/diarization-corrections', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    mediaSourceId: string;
+    replacements: Array<{ fromLabel: string; toLabel: string }>;
+    linkIds: string[];
+    maxConfidence: number;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const mediaSourceId = typeof body.mediaSourceId === 'string' && body.mediaSourceId.trim() ? body.mediaSourceId.trim() : '';
+  if (!mediaSourceId) {
+    return reply.status(400).send(fail('INVALID', 'mediaSourceId is required.'));
+  }
+  const replacements = Array.isArray(body.replacements)
+    ? body.replacements
+      .map((item) => ({
+        fromLabel: typeof item?.fromLabel === 'string' ? item.fromLabel.trim() : '',
+        toLabel: typeof item?.toLabel === 'string' ? item.toLabel.trim() : ''
+      }))
+      .filter((item) => item.toLabel)
+    : [];
+  if (replacements.length === 0) {
+    return reply.status(400).send(fail('INVALID', 'At least one speaker replacement is required.'));
+  }
+  const normalizeSpeakerKey = (value: string): string => {
+    const normalized = value.trim().toLowerCase();
+    return normalized ? normalized : '__unlabeled__';
+  };
+  const replacementMap = new Map<string, string>();
+  for (const replacement of replacements) {
+    replacementMap.set(normalizeSpeakerKey(replacement.fromLabel), replacement.toLabel);
+  }
+  const linkIdSet = Array.isArray(body.linkIds)
+    ? new Set(body.linkIds.filter((value): value is string => typeof value === 'string' && value.trim().length > 0).map((value) => value.trim()))
+    : null;
+  const maxConfidence = parseOptionalBoundedNumber(body.maxConfidence, 0, 1);
+  const now = new Date().toISOString();
+  const links = (await listTranscriptSyncLinks(projectId))
+    .filter((link) => link.mediaSourceId === mediaSourceId);
+  const updatedLinks: Array<{ id: string; speakerLabel: string; confidence: number | null }> = [];
+  let skippedByConfidence = 0;
+  let unmatchedLabelCount = 0;
+
+  for (const link of links) {
+    if (linkIdSet && linkIdSet.size > 0 && !linkIdSet.has(link.id)) continue;
+    if (maxConfidence !== null && typeof link.confidence === 'number' && Number.isFinite(link.confidence) && link.confidence > maxConfidence) {
+      skippedByConfidence += 1;
+      continue;
+    }
+    const currentSpeakerLabel = typeof link.speakerLabel === 'string' ? link.speakerLabel.trim() : '';
+    const targetSpeakerLabel = replacementMap.get(normalizeSpeakerKey(currentSpeakerLabel));
+    if (!targetSpeakerLabel) {
+      unmatchedLabelCount += 1;
+      continue;
+    }
+    if (targetSpeakerLabel === currentSpeakerLabel) continue;
+    const existingTokenTimeline = (() => {
+      try {
+        return normalizeTokenTimeline(JSON.parse(link.tokenTimelineJson || '[]'));
+      } catch {
+        return [];
+      }
+    })();
+    const remappedTokenTimeline = existingTokenTimeline.map((token) => {
+      const tokenSpeaker = typeof token.speakerLabel === 'string' ? token.speakerLabel.trim() : '';
+      const mappedSpeaker = replacementMap.get(normalizeSpeakerKey(tokenSpeaker));
+      if (!mappedSpeaker) return token;
+      return {
+        ...token,
+        speakerLabel: mappedSpeaker
+      };
+    });
+    await updateTranscriptSyncLink({
+      ...link,
+      speakerLabel: targetSpeakerLabel,
+      tokenTimelineJson: JSON.stringify(remappedTokenTimeline),
+      updatedAt: now
+    });
+    updatedLinks.push({
+      id: link.id,
+      speakerLabel: targetSpeakerLabel,
+      confidence: link.confidence
+    });
+  }
+
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'transcript_sync.diarization_correction',
+    entityType: 'transcript_sync_link',
+    entityId: mediaSourceId,
+    details: {
+      mediaSourceId,
+      replacementCount: replacements.length,
+      updatedCount: updatedLinks.length,
+      skippedByConfidence,
+      unmatchedLabelCount,
+      maxConfidence
+    }
+  });
+
+  return ok({
+    correction: {
+      mediaSourceId,
+      replacementCount: replacements.length,
+      updatedCount: updatedLinks.length,
+      skippedByConfidence,
+      unmatchedLabelCount,
+      maxConfidence,
+      sample: updatedLinks.slice(0, 120)
+    }
+  });
+});
+
+server.get('/coding-assignments', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = request.query as {
+    projectId?: string;
+    status?: string;
+    assigneeUsername?: string;
+  };
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const status = query.status === 'todo' || query.status === 'in_progress' || query.status === 'blocked' || query.status === 'done'
+    ? query.status
+    : undefined;
+  let assigneeUserId: string | undefined;
+  if (typeof query.assigneeUsername === 'string' && query.assigneeUsername.trim()) {
+    const assignee = await findUserByUsername(normalizeMuUsername(query.assigneeUsername));
+    if (!assignee) {
+      return ok({ items: [], total: 0 });
+    }
+    assigneeUserId = assignee.user.id;
+  }
+  const items = await listCodingAssignments(projectId, { status, assigneeUserId });
+  return ok({ items, total: items.length });
+});
+
+server.post('/coding-assignments', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    title: string;
+    description: string;
+    sourceId: string | null;
+    codeId: string | null;
+    caseId: string | null;
+    assigneeUsername: string | null;
+    status: string;
+    priority: string;
+    dueAt: string | null;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const title = typeof body.title === 'string' ? body.title.trim() : '';
+  if (!title) {
+    return reply.status(400).send(fail('INVALID', 'title is required.'));
+  }
+
+  let assigneeUserId: string | null = null;
+  let assigneeUsername: string | null = null;
+  if (typeof body.assigneeUsername === 'string' && body.assigneeUsername.trim()) {
+    const assignee = await findUserByUsername(normalizeMuUsername(body.assigneeUsername));
+    if (!assignee) {
+      return reply.status(400).send(fail('INVALID', 'assigneeUsername was not found.'));
+    }
+    assigneeUserId = assignee.user.id;
+    assigneeUsername = assignee.user.username;
+  }
+  const timestamp = new Date().toISOString();
+  const createdByUsername = request.session.username ?? 'system';
+  const status = parseCodingAssignmentStatus(body.status);
+  const task = await insertCodingAssignment({
+    id: `assignment-${randomUUID()}`,
+    projectId,
+    title,
+    description: typeof body.description === 'string' ? body.description : '',
+    sourceId: typeof body.sourceId === 'string' && body.sourceId.trim() ? body.sourceId.trim() : null,
+    codeId: typeof body.codeId === 'string' && body.codeId.trim() ? body.codeId.trim() : null,
+    caseId: typeof body.caseId === 'string' && body.caseId.trim() ? body.caseId.trim() : null,
+    assigneeUserId,
+    assigneeUsername,
+    status,
+    priority: parseCodingAssignmentPriority(body.priority),
+    dueAt: parseOptionalIsoDate(body.dueAt),
+    createdByUserId: userId,
+    createdByUsername,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    completedAt: status === 'done' ? timestamp : null
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'coding_assignment.create',
+    entityType: 'coding_assignment',
+    entityId: task.id,
+    details: {
+      title: task.title,
+      status: task.status,
+      priority: task.priority,
+      assigneeUsername: task.assigneeUsername
+    }
+  });
+  reply.code(201);
+  return ok({ task });
+});
+
+server.patch('/coding-assignments/:taskId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = request.params as { taskId: string };
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    title: string;
+    description: string;
+    sourceId: string | null;
+    codeId: string | null;
+    caseId: string | null;
+    assigneeUsername: string | null;
+    status: string;
+    priority: string;
+    dueAt: string | null;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const taskId = typeof params.taskId === 'string' ? params.taskId.trim() : '';
+  if (!taskId) {
+    return reply.status(400).send(fail('INVALID', 'taskId is required.'));
+  }
+  const existing = await getCodingAssignment(taskId, projectId);
+  if (!existing) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Coding assignment not found.'));
+  }
+
+  let assigneeUserId = existing.assigneeUserId;
+  let assigneeUsername = existing.assigneeUsername;
+  if (body.assigneeUsername !== undefined) {
+    if (typeof body.assigneeUsername === 'string' && body.assigneeUsername.trim()) {
+      const assignee = await findUserByUsername(normalizeMuUsername(body.assigneeUsername));
+      if (!assignee) {
+        return reply.status(400).send(fail('INVALID', 'assigneeUsername was not found.'));
+      }
+      assigneeUserId = assignee.user.id;
+      assigneeUsername = assignee.user.username;
+    } else {
+      assigneeUserId = null;
+      assigneeUsername = null;
+    }
+  }
+
+  const status = body.status !== undefined
+    ? parseCodingAssignmentStatus(body.status)
+    : existing.status;
+  const now = new Date().toISOString();
+  const task = await updateCodingAssignment({
+    ...existing,
+    title: body.title !== undefined ? String(body.title).trim() || existing.title : existing.title,
+    description: body.description !== undefined ? String(body.description) : existing.description,
+    sourceId: body.sourceId !== undefined
+      ? (typeof body.sourceId === 'string' && body.sourceId.trim() ? body.sourceId.trim() : null)
+      : existing.sourceId,
+    codeId: body.codeId !== undefined
+      ? (typeof body.codeId === 'string' && body.codeId.trim() ? body.codeId.trim() : null)
+      : existing.codeId,
+    caseId: body.caseId !== undefined
+      ? (typeof body.caseId === 'string' && body.caseId.trim() ? body.caseId.trim() : null)
+      : existing.caseId,
+    assigneeUserId,
+    assigneeUsername,
+    status,
+    priority: body.priority !== undefined ? parseCodingAssignmentPriority(body.priority) : existing.priority,
+    dueAt: body.dueAt !== undefined ? parseOptionalIsoDate(body.dueAt) : existing.dueAt,
+    updatedAt: now,
+    completedAt: status === 'done' ? (existing.completedAt ?? now) : null
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'coding_assignment.update',
+    entityType: 'coding_assignment',
+    entityId: task.id,
+    details: {
+      status: task.status,
+      priority: task.priority,
+      assigneeUsername: task.assigneeUsername
+    }
+  });
+  return ok({ task });
+});
+
+server.delete('/coding-assignments/:taskId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = request.params as { taskId: string };
+  const query = request.query as { projectId?: string };
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const taskId = typeof params.taskId === 'string' ? params.taskId.trim() : '';
+  if (!taskId) return reply.status(400).send(fail('INVALID', 'taskId is required.'));
+  const removed = await deleteCodingAssignment(taskId, projectId);
+  if (!removed) return reply.status(404).send(fail('NOT_FOUND', 'Coding assignment not found.'));
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'coding_assignment.delete',
+    entityType: 'coding_assignment',
+    entityId: taskId,
+    details: {}
+  });
+  return ok({ removed: true });
+});
+
+server.get('/coding-calibration-sessions', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = (request.query ?? {}) as Partial<{
+    projectId: string;
+    status: string;
+    limit: string;
+  }>;
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const status = query.status ? parseCodingCalibrationStatus(query.status) : undefined;
+  const limit = parsePositiveInteger(query.limit, 200, 1, 2000);
+  const items = await listCodingCalibrationSessions(projectId, { status, limit });
+  return ok({
+    items: items.map((item) => ({
+      ...item,
+      scope: (() => {
+        try {
+          return JSON.parse(item.scopeJson);
+        } catch {
+          return {};
+        }
+      })(),
+      sampleSegmentIds: (() => {
+        try {
+          const parsed = JSON.parse(item.sampleSegmentIdsJson);
+          return Array.isArray(parsed) ? parsed.map((value) => String(value)) : [];
+        } catch {
+          return [];
+        }
+      })(),
+      latestResult: (() => {
+        try {
+          const parsed = JSON.parse(item.latestResultJson);
+          return typeof parsed === 'object' && parsed ? parsed : {};
+        } catch {
+          return {};
+        }
+      })()
+    })),
+    total: items.length
+  });
+});
+
+server.post('/coding-calibration-sessions', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    label: string;
+    scope: unknown;
+    targetCodeId: string | null;
+    coderAId: string | null;
+    coderBId: string | null;
+    sampleSize: number;
+    targetAgreement: number;
+    targetKappa: number;
+    minSamples: number;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const label = typeof body.label === 'string' && body.label.trim() ? body.label.trim() : '';
+  if (!label) {
+    return reply.status(400).send(fail('INVALID', 'label is required.'));
+  }
+
+  const scope = typeof body.scope === 'object' && body.scope ? body.scope : {};
+  const sampleSize = parsePositiveInteger(body.sampleSize, 40, 5, 500);
+  const targetAgreement = parseOptionalBoundedNumber(body.targetAgreement, 0, 1) ?? 0.8;
+  const targetKappa = parseOptionalBoundedNumber(body.targetKappa, -1, 1) ?? 0.7;
+  const minSamples = parsePositiveInteger(body.minSamples, 25, 5, 500);
+  const timestamp = new Date().toISOString();
+
+  const session = await insertCodingCalibrationSession({
+    id: `calibration-${randomUUID()}`,
+    projectId,
+    label,
+    scopeJson: JSON.stringify({ ...scope, sampleSize }),
+    targetCodeId: typeof body.targetCodeId === 'string' && body.targetCodeId.trim() ? body.targetCodeId.trim() : null,
+    coderAId: typeof body.coderAId === 'string' && body.coderAId.trim() ? body.coderAId.trim() : null,
+    coderBId: typeof body.coderBId === 'string' && body.coderBId.trim() ? body.coderBId.trim() : null,
+    sampleSegmentIdsJson: '[]',
+    status: 'draft',
+    targetAgreement,
+    targetKappa,
+    minSamples,
+    latestResultJson: '{}',
+    createdByUserId: userId,
+    createdByUsername: request.session.username ?? 'system',
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    completedAt: null
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'coding_calibration.create',
+    entityType: 'coding_calibration',
+    entityId: session.id,
+    details: {
+      label: session.label,
+      targetCodeId: session.targetCodeId,
+      targetAgreement: session.targetAgreement,
+      targetKappa: session.targetKappa,
+      minSamples: session.minSamples
+    }
+  });
+  reply.code(201);
+  return ok({
+    session: {
+      ...session,
+      scope: JSON.parse(session.scopeJson),
+      sampleSegmentIds: [],
+      latestResult: {}
+    }
+  });
+});
+
+server.post('/coding-calibration-sessions/:sessionId/run', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = request.params as { sessionId: string };
+  const body = (request.body ?? {}) as Partial<{ projectId: string; sampleSize: number }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const sessionId = typeof params.sessionId === 'string' ? params.sessionId.trim() : '';
+  if (!sessionId) {
+    return reply.status(400).send(fail('INVALID', 'sessionId is required.'));
+  }
+  const session = await getCodingCalibrationSession(sessionId, projectId);
+  if (!session) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Coding calibration session not found.'));
+  }
+
+  let scope: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(session.scopeJson || '{}');
+    if (parsed && typeof parsed === 'object') scope = parsed as Record<string, unknown>;
+  } catch {
+    scope = {};
+  }
+  const evidenceQuery = parseEvidenceQuery(scope as Record<string, unknown>);
+  const payload = await buildQualitativeProjectPayload(projectId);
+  const retrieval = retrieveEvidence({
+    query: evidenceQuery,
+    sources: payload.sources,
+    segments: payload.segments,
+    applications: payload.codeApplications,
+    cases: payload.cases,
+    memos: payload.memos
+  });
+  const sampleSize = parsePositiveInteger(
+    body.sampleSize ?? (scope.sampleSize as string | number | undefined) ?? session.minSamples,
+    session.minSamples,
+    5,
+    500
+  );
+  const sampledSegmentIds = [...new Set(retrieval.map((match) => match.segment.id))].slice(0, sampleSize);
+  const fallbackSegmentIds = payload.segments.slice(0, sampleSize).map((segment) => segment.id);
+  const scopedSegmentIds = sampledSegmentIds.length > 0 ? sampledSegmentIds : fallbackSegmentIds;
+  const scopedSegmentIdSet = new Set(scopedSegmentIds);
+  const scopedSegments = payload.segments.filter((segment) => scopedSegmentIdSet.has(segment.id));
+  const scopedApplications = payload.codeApplications.filter((application) => scopedSegmentIdSet.has(application.segmentId));
+
+  const coderCounts = new Map<string, number>();
+  for (const application of scopedApplications) {
+    coderCounts.set(application.coderId, (coderCounts.get(application.coderId) ?? 0) + 1);
+  }
+  const rankedCoders = [...coderCounts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([coderId]) => coderId);
+  const coderA = session.coderAId ?? rankedCoders[0] ?? null;
+  const coderB = session.coderBId ?? rankedCoders.find((coderId) => coderId !== coderA) ?? null;
+
+  const targetCodeId = session.targetCodeId
+    ?? (typeof evidenceQuery.codeId === 'string' && evidenceQuery.codeId.trim() ? evidenceQuery.codeId.trim() : null)
+    ?? (() => {
+      const codeCounts = new Map<string, number>();
+      for (const application of scopedApplications) {
+        codeCounts.set(application.codeId, (codeCounts.get(application.codeId) ?? 0) + 1);
+      }
+      return [...codeCounts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
+    })();
+  if (!targetCodeId) {
+    return reply.status(400).send(fail('INVALID', 'Calibration run requires at least one coded segment in scope.'));
+  }
+  if (!coderA || !coderB || coderA === coderB) {
+    return reply.status(400).send(fail('INVALID', 'Calibration run requires at least two coders in scope.'));
+  }
+
+  const scopedComparisonQuery = {
+    ...evidenceQuery,
+    sourceId: undefined,
+    caseId: evidenceQuery.caseId
+  };
+  const comparison = buildCodingComparison({
+    query: scopedComparisonQuery,
+    codeId: targetCodeId,
+    coderA,
+    coderB,
+    sources: payload.sources,
+    segments: scopedSegments,
+    applications: scopedApplications,
+    cases: payload.cases,
+    memos: payload.memos,
+    codes: payload.codes
+  });
+  const summary = buildInterRaterSummary({
+    query: scopedComparisonQuery,
+    coderA,
+    coderB,
+    sources: payload.sources,
+    segments: scopedSegments,
+    applications: scopedApplications,
+    cases: payload.cases,
+    memos: payload.memos,
+    codes: payload.codes
+  });
+
+  const agreementPass = (comparison.percentAgreement ?? 0) >= session.targetAgreement;
+  const kappaPass = (comparison.cohensKappa ?? -1) >= session.targetKappa;
+  const samplePass = comparison.universeSegmentCount >= session.minSamples;
+  const overallPass = agreementPass && kappaPass && samplePass;
+  const recommendations: string[] = [];
+  if (!samplePass) {
+    recommendations.push(`Increase coded overlap to at least ${session.minSamples} shared segments.`);
+  }
+  if (!agreementPass) {
+    recommendations.push('Review and tighten the codebook definitions before final merge.');
+  }
+  if (!kappaPass) {
+    recommendations.push('Run disagreement adjudication on the top diverging codes, then re-run calibration.');
+  }
+  if (recommendations.length === 0) {
+    recommendations.push('Calibration thresholds met. Proceed to broader coding rollout.');
+  }
+
+  const timestamp = new Date().toISOString();
+  const latestResult = {
+    sampleSizeRequested: sampleSize,
+    sampledSegmentCount: scopedSegmentIds.length,
+    sampledSegmentIds: scopedSegmentIds,
+    targetCodeId,
+    coderA,
+    coderB,
+    thresholds: {
+      targetAgreement: session.targetAgreement,
+      targetKappa: session.targetKappa,
+      minSamples: session.minSamples
+    },
+    checks: {
+      agreementPass,
+      kappaPass,
+      samplePass,
+      overallPass
+    },
+    comparison,
+    summary,
+    recommendations
+  };
+  const updatedSession = await updateCodingCalibrationSession({
+    ...session,
+    targetCodeId,
+    coderAId: coderA,
+    coderBId: coderB,
+    sampleSegmentIdsJson: JSON.stringify(scopedSegmentIds),
+    status: 'completed',
+    latestResultJson: JSON.stringify(latestResult),
+    updatedAt: timestamp,
+    completedAt: timestamp
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'coding_calibration.run',
+    entityType: 'coding_calibration',
+    entityId: updatedSession.id,
+    details: {
+      sampledSegmentCount: scopedSegmentIds.length,
+      targetCodeId,
+      coderA,
+      coderB,
+      overallPass
+    }
+  });
+  return ok({
+    session: {
+      ...updatedSession,
+      scope,
+      sampleSegmentIds: scopedSegmentIds,
+      latestResult
+    }
+  });
+});
+
+server.patch('/coding-calibration-sessions/:sessionId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = request.params as { sessionId: string };
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    label: string;
+    status: string;
+    scope: unknown;
+    targetCodeId: string | null;
+    coderAId: string | null;
+    coderBId: string | null;
+    targetAgreement: number;
+    targetKappa: number;
+    minSamples: number;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const sessionId = typeof params.sessionId === 'string' ? params.sessionId.trim() : '';
+  if (!sessionId) return reply.status(400).send(fail('INVALID', 'sessionId is required.'));
+  const existing = await getCodingCalibrationSession(sessionId, projectId);
+  if (!existing) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Coding calibration session not found.'));
+  }
+  const status = body.status !== undefined ? parseCodingCalibrationStatus(body.status) : existing.status;
+  const updatedAt = new Date().toISOString();
+  const updated = await updateCodingCalibrationSession({
+    ...existing,
+    label: body.label !== undefined && String(body.label).trim() ? String(body.label).trim() : existing.label,
+    scopeJson: body.scope !== undefined
+      ? JSON.stringify(typeof body.scope === 'object' && body.scope ? body.scope : {})
+      : existing.scopeJson,
+    targetCodeId: body.targetCodeId !== undefined
+      ? (typeof body.targetCodeId === 'string' && body.targetCodeId.trim() ? body.targetCodeId.trim() : null)
+      : existing.targetCodeId,
+    coderAId: body.coderAId !== undefined
+      ? (typeof body.coderAId === 'string' && body.coderAId.trim() ? body.coderAId.trim() : null)
+      : existing.coderAId,
+    coderBId: body.coderBId !== undefined
+      ? (typeof body.coderBId === 'string' && body.coderBId.trim() ? body.coderBId.trim() : null)
+      : existing.coderBId,
+    status,
+    targetAgreement: body.targetAgreement !== undefined
+      ? (parseOptionalBoundedNumber(body.targetAgreement, 0, 1) ?? existing.targetAgreement)
+      : existing.targetAgreement,
+    targetKappa: body.targetKappa !== undefined
+      ? (parseOptionalBoundedNumber(body.targetKappa, -1, 1) ?? existing.targetKappa)
+      : existing.targetKappa,
+    minSamples: body.minSamples !== undefined
+      ? parsePositiveInteger(body.minSamples, existing.minSamples, 5, 500)
+      : existing.minSamples,
+    updatedAt,
+    completedAt: status === 'completed' ? (existing.completedAt ?? updatedAt) : status === 'draft' || status === 'running' ? null : existing.completedAt
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'coding_calibration.update',
+    entityType: 'coding_calibration',
+    entityId: updated.id,
+    details: {
+      status: updated.status,
+      targetCodeId: updated.targetCodeId
+    }
+  });
+  return ok({
+    session: {
+      ...updated,
+      scope: JSON.parse(updated.scopeJson),
+      sampleSegmentIds: JSON.parse(updated.sampleSegmentIdsJson || '[]'),
+      latestResult: JSON.parse(updated.latestResultJson || '{}')
+    }
+  });
+});
+
+server.get('/merge-review/governance-policy', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = (request.query ?? {}) as Partial<{ projectId: string }>;
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const policy = await getCodingMergeGovernancePolicy(projectId);
+  return ok({ policy });
+});
+
+server.put('/merge-review/governance-policy', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    expectedUpdatedAt: string;
+    requireResolutionNote: boolean | string;
+    restrictResolutionToOwnerOrProfessor: boolean | string;
+    requireSecondReviewerForHighRisk: boolean | string;
+    highRiskMinCoderCount: number | string;
+    highRiskMinConfidenceSpread: number | string;
+    requiredApprovalCountForHighRisk: number | string;
+    approvalExpiryHours: number | string;
+    defaultTriageSlaHours: number | string;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectOwnerOrProfessor(request, userId, projectId, reply)) return;
+  const existing = await getCodingMergeGovernancePolicy(projectId);
+  if (!assertOptimisticTimestamp(reply, {
+    expectedValue: body.expectedUpdatedAt,
+    currentValue: existing.updatedAt,
+    label: 'Merge governance policy'
+  })) return;
+  const updated = await upsertCodingMergeGovernancePolicy({
+    projectId,
+    requireResolutionNote: parseBooleanFlag(body.requireResolutionNote, existing.requireResolutionNote),
+    restrictResolutionToOwnerOrProfessor: parseBooleanFlag(body.restrictResolutionToOwnerOrProfessor, existing.restrictResolutionToOwnerOrProfessor),
+    requireSecondReviewerForHighRisk: parseBooleanFlag(body.requireSecondReviewerForHighRisk, existing.requireSecondReviewerForHighRisk),
+    highRiskMinCoderCount: parsePositiveInteger(body.highRiskMinCoderCount, existing.highRiskMinCoderCount, 1, 20),
+    highRiskMinConfidenceSpread: parseOptionalBoundedNumber(body.highRiskMinConfidenceSpread, 0, 1) ?? existing.highRiskMinConfidenceSpread,
+    requiredApprovalCountForHighRisk: parsePositiveInteger(body.requiredApprovalCountForHighRisk, existing.requiredApprovalCountForHighRisk, 1, 5),
+    approvalExpiryHours: parsePositiveInteger(body.approvalExpiryHours, existing.approvalExpiryHours, 1, 720),
+    defaultTriageSlaHours: parsePositiveInteger(body.defaultTriageSlaHours, existing.defaultTriageSlaHours, 1, 720),
+    updatedAt: new Date().toISOString(),
+    updatedByUserId: userId
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'merge_review.policy_update',
+    entityType: 'merge_review_policy',
+    entityId: projectId,
+    details: updated
+  });
+  return ok({ policy: updated });
+});
+
+server.get('/merge-review/triage', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = (request.query ?? {}) as Partial<{
+    projectId: string;
+    status: string;
+    severity: string;
+    assigneeUsername: string;
+    limit: string;
+  }>;
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  let assigneeUserId: string | undefined;
+  if (typeof query.assigneeUsername === 'string' && query.assigneeUsername.trim()) {
+    const found = await findUserByUsername(normalizeMuUsername(query.assigneeUsername));
+    if (!found) return ok({ items: [], total: 0 });
+    assigneeUserId = found.user.id;
+  }
+  const status = typeof query.status === 'string' && query.status.trim()
+    ? parseCodingConflictTriageStatus(query.status)
+    : undefined;
+  const severity = typeof query.severity === 'string' && query.severity.trim()
+    ? parseCodingConflictTriageSeverity(query.severity)
+    : undefined;
+  const limit = parsePositiveInteger(query.limit, 500, 1, 5000);
+  const items = await listCodingConflictTriages(projectId, { status, severity, assigneeUserId, limit });
+  return ok({
+    items: items.map((item) => ({
+      ...item,
+      labels: (() => {
+        try {
+          const parsed = JSON.parse(item.labelsJson);
+          return Array.isArray(parsed) ? parsed.map((value) => String(value)) : [];
+        } catch {
+          return [];
+        }
+      })(),
+      metadata: (() => {
+        try {
+          const parsed = JSON.parse(item.metadataJson);
+          return typeof parsed === 'object' && parsed ? parsed : {};
+        } catch {
+          return {};
+        }
+      })()
+    })),
+    total: items.length
+  });
+});
+
+server.post('/merge-review/triage', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    segmentId: string;
+    codeId: string;
+    expectedUpdatedAt: string;
+    status: string;
+    severity: string;
+    assigneeUsername: string | null;
+    reviewerUsername: string | null;
+    dueAt: string | null;
+    triageNote: string;
+    labels: string[] | string;
+    metadata: unknown;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const segmentId = typeof body.segmentId === 'string' && body.segmentId.trim() ? body.segmentId.trim() : '';
+  const codeId = typeof body.codeId === 'string' && body.codeId.trim() ? body.codeId.trim() : '';
+  if (!segmentId || !codeId) {
+    return reply.status(400).send(fail('INVALID', 'segmentId and codeId are required.'));
+  }
+
+  const existing = await getCodingConflictTriage(projectId, segmentId, codeId);
+  const expectedUpdatedAt = parseProvidedIsoDate(body.expectedUpdatedAt);
+  if (expectedUpdatedAt === null) {
+    return reply.status(400).send(fail('INVALID', 'merge triage expectedUpdatedAt must be a valid ISO date when provided.'));
+  }
+  if (expectedUpdatedAt && !existing) {
+    return reply.status(409).send(fail('CONFLICT', 'Merge triage row no longer exists. Refresh and retry.'));
+  }
+  if (existing && !assertOptimisticTimestamp(reply, {
+    expectedValue: body.expectedUpdatedAt,
+    currentValue: existing.updatedAt,
+    label: 'Merge triage'
+  })) return;
+  const assigneeUsernameRaw = body.assigneeUsername === null ? '' : (typeof body.assigneeUsername === 'string' ? body.assigneeUsername.trim() : '');
+  const reviewerUsernameRaw = body.reviewerUsername === null ? '' : (typeof body.reviewerUsername === 'string' ? body.reviewerUsername.trim() : '');
+
+  let assigneeUserId: string | null = existing?.assigneeUserId ?? null;
+  if (body.assigneeUsername !== undefined) {
+    if (!assigneeUsernameRaw) {
+      assigneeUserId = null;
+    } else {
+      const assignee = await findUserByUsername(normalizeMuUsername(assigneeUsernameRaw));
+      if (!assignee) {
+        return reply.status(400).send(fail('INVALID', 'assigneeUsername was not found.'));
+      }
+      assigneeUserId = assignee.user.id;
+    }
+  }
+
+  let reviewerUserId: string | null = existing?.reviewerUserId ?? null;
+  if (body.reviewerUsername !== undefined) {
+    if (!reviewerUsernameRaw) {
+      reviewerUserId = null;
+    } else {
+      const reviewer = await findUserByUsername(normalizeMuUsername(reviewerUsernameRaw));
+      if (!reviewer) {
+        return reply.status(400).send(fail('INVALID', 'reviewerUsername was not found.'));
+      }
+      reviewerUserId = reviewer.user.id;
+    }
+  }
+
+  const timestamp = new Date().toISOString();
+  const item = await upsertCodingConflictTriage({
+    id: existing?.id ?? `triage-${randomUUID()}`,
+    projectId,
+    segmentId,
+    codeId,
+    status: body.status !== undefined ? parseCodingConflictTriageStatus(body.status) : (existing?.status ?? 'open'),
+    severity: body.severity !== undefined ? parseCodingConflictTriageSeverity(body.severity) : (existing?.severity ?? 'medium'),
+    assigneeUserId,
+    assigneeUsername: null,
+    reviewerUserId,
+    reviewerUsername: null,
+    dueAt: body.dueAt !== undefined ? parseOptionalIsoDate(body.dueAt) : (existing?.dueAt ?? null),
+    triageNote: body.triageNote !== undefined ? String(body.triageNote ?? '') : (existing?.triageNote ?? ''),
+    labelsJson: body.labels !== undefined
+      ? JSON.stringify(parseStringArray(body.labels))
+      : (existing?.labelsJson ?? '[]'),
+    metadataJson: body.metadata !== undefined
+      ? JSON.stringify(typeof body.metadata === 'object' && body.metadata ? body.metadata : {})
+      : (existing?.metadataJson ?? '{}'),
+    createdByUserId: existing?.createdByUserId ?? userId,
+    createdByUsername: existing?.createdByUsername ?? (request.session.username ?? 'system'),
+    createdAt: existing?.createdAt ?? timestamp,
+    updatedAt: timestamp
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'merge_review.triage',
+    entityType: 'merge_review_triage',
+    entityId: `${segmentId}:${codeId}`,
+    details: {
+      status: item.status,
+      severity: item.severity,
+      assigneeUserId: item.assigneeUserId,
+      reviewerUserId: item.reviewerUserId,
+      dueAt: item.dueAt
+    }
+  });
+  return ok({
+    triage: {
+      ...item,
+      labels: (() => {
+        try {
+          const parsed = JSON.parse(item.labelsJson);
+          return Array.isArray(parsed) ? parsed.map((value) => String(value)) : [];
+        } catch {
+          return [];
+        }
+      })(),
+      metadata: (() => {
+        try {
+          const parsed = JSON.parse(item.metadataJson);
+          return typeof parsed === 'object' && parsed ? parsed : {};
+        } catch {
+          return {};
+        }
+      })()
+    }
+  });
+});
+
+server.get('/merge-review/approvals', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = (request.query ?? {}) as Partial<{
+    projectId: string;
+    segmentId: string;
+    codeId: string;
+    includeUsed: string;
+    includeRevoked: string;
+  }>;
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const segmentId = typeof query.segmentId === 'string' && query.segmentId.trim() ? query.segmentId.trim() : undefined;
+  const codeId = typeof query.codeId === 'string' && query.codeId.trim() ? query.codeId.trim() : undefined;
+  const items = await listCodingMergeApprovals(projectId, {
+    segmentId,
+    codeId,
+    includeUsed: query.includeUsed === 'true',
+    includeRevoked: query.includeRevoked === 'true',
+    limit: 2000
+  });
+  return ok({ items, total: items.length });
+});
+
+server.post('/merge-review/approve', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    segmentId: string;
+    codeId: string;
+    note: string;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const segmentId = typeof body.segmentId === 'string' && body.segmentId.trim() ? body.segmentId.trim() : '';
+  const codeId = typeof body.codeId === 'string' && body.codeId.trim() ? body.codeId.trim() : '';
+  if (!segmentId || !codeId) {
+    return reply.status(400).send(fail('INVALID', 'segmentId and codeId are required.'));
+  }
+  const timestamp = new Date().toISOString();
+  const approval = await upsertCodingMergeApproval({
+    id: `approval-${randomUUID()}`,
+    projectId,
+    segmentId,
+    codeId,
+    approvedByUserId: userId,
+    approvedByUsername: request.session.username ?? 'system',
+    note: typeof body.note === 'string' ? body.note.trim() : '',
+    createdAt: timestamp,
+    usedAt: null,
+    revokedAt: null
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'merge_review.approve',
+    entityType: 'merge_review_approval',
+    entityId: `${segmentId}:${codeId}:${approval.approvedByUsername}`,
+    details: { note: approval.note }
+  });
+  return ok({ approval });
+});
+
+server.post('/merge-review/revoke-approval', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    segmentId: string;
+    codeId: string;
+    approvedByUsername: string;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const segmentId = typeof body.segmentId === 'string' && body.segmentId.trim() ? body.segmentId.trim() : '';
+  const codeId = typeof body.codeId === 'string' && body.codeId.trim() ? body.codeId.trim() : '';
+  const approvedByUsername = typeof body.approvedByUsername === 'string' && body.approvedByUsername.trim()
+    ? body.approvedByUsername.trim()
+    : '';
+  if (!segmentId || !codeId || !approvedByUsername) {
+    return reply.status(400).send(fail('INVALID', 'projectId, segmentId, codeId, and approvedByUsername are required.'));
+  }
+
+  const isSelf = approvedByUsername === (request.session.username ?? 'system');
+  if (!isSelf && !await assertProjectOwnerOrProfessor(request, userId, projectId, reply)) return;
+  const revoked = await revokeCodingMergeApproval({
+    projectId,
+    segmentId,
+    codeId,
+    approvedByUsername,
+    revokedAt: new Date().toISOString()
+  });
+  if (!revoked) return reply.status(404).send(fail('NOT_FOUND', 'Approval was not found.'));
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'merge_review.approval_revoke',
+    entityType: 'merge_review_approval',
+    entityId: `${segmentId}:${codeId}:${approvedByUsername}`,
+    details: {}
+  });
+  return ok({ revoked: true });
+});
+
+server.get('/merge-review/history', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const query = request.query as {
+    projectId?: string;
+    segmentId?: string;
+    codeId?: string;
+    limit?: string;
+  };
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const items = await listCodingConflictResolutions(projectId, {
+    segmentId: typeof query.segmentId === 'string' && query.segmentId.trim() ? query.segmentId.trim() : undefined,
+    codeId: typeof query.codeId === 'string' && query.codeId.trim() ? query.codeId.trim() : undefined,
+    limit: parsePositiveInteger(query.limit, 100, 1, 1000)
+  });
+  return ok({
+    items: items.map((item) => ({
+      ...item,
+      removedApplicationIds: (() => {
+        try {
+          const parsed = JSON.parse(item.removedApplicationIdsJson);
+          return Array.isArray(parsed) ? parsed.map((value) => String(value)) : [];
+        } catch {
+          return [];
+        }
+      })(),
+      metadata: (() => {
+        try {
+          const parsed = JSON.parse(item.metadataJson);
+          return typeof parsed === 'object' && parsed ? parsed : {};
+        } catch {
+          return {};
+        }
+      })()
+    })),
+    total: items.length
   });
 });
 
 server.get('/merge-review', async (request, reply) => {
   const userId = await assertAuth(request, reply);
   if (!userId) return;
-  const query = request.query as { projectId?: string; sourceId?: string; codeId?: string };
+  const query = request.query as {
+    projectId?: string;
+    sourceId?: string;
+    codeId?: string;
+    minCoderCount?: string;
+    minConfidenceSpread?: string;
+    maxRows?: string;
+    status?: string;
+  };
   const projectId = requireProjectId(reply, query.projectId);
   if (!projectId) return;
   if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const minCoderCount = parsePositiveInteger(query.minCoderCount, 2, 1, 20);
+  const minConfidenceSpread = parseOptionalBoundedNumber(query.minConfidenceSpread, 0, 1) ?? 0.2;
+  const maxRows = parsePositiveInteger(query.maxRows, 100, 1, 500);
+  const statusFilter = parseMergeConflictStatusFilter(query.status);
   const payload = await buildQualitativeProjectPayload(projectId);
+  const baseReview = buildMergeReview({
+    projectId,
+    sourceId: typeof query.sourceId === 'string' && query.sourceId.trim() ? query.sourceId.trim() : undefined,
+    codeId: typeof query.codeId === 'string' && query.codeId.trim() ? query.codeId.trim() : undefined,
+    minCoderCount,
+    minConfidenceSpread,
+    maxRows,
+    segments: payload.segments,
+    sources: payload.sources,
+    applications: payload.codeApplications,
+    codes: payload.codes
+  });
+  const governancePolicy = await getCodingMergeGovernancePolicy(projectId);
+  const latestResolutions = await listLatestCodingConflictResolutions(projectId);
+  const resolutionByKey = new Map(latestResolutions.map((item) => [`${item.segmentId}::${item.codeId}`, item]));
+  const triageItems = await listCodingConflictTriages(projectId, { limit: 5000 });
+  const triageByKey = new Map(triageItems.map((item) => [`${item.segmentId}::${item.codeId}`, item]));
+  const approvals = await listCodingMergeApprovals(projectId, { limit: 5000 });
+  const nowMs = Date.now();
+  const approvalExpiryMs = Math.max(1, governancePolicy.approvalExpiryHours) * 60 * 60 * 1000;
+  const approvalCountByKey = new Map<string, number>();
+  for (const approval of approvals) {
+    const createdAtMs = Date.parse(approval.createdAt);
+    const isExpired = Number.isFinite(createdAtMs) && (nowMs - createdAtMs) > approvalExpiryMs;
+    if (isExpired) continue;
+    const key = `${approval.segmentId}::${approval.codeId}`;
+    approvalCountByKey.set(key, (approvalCountByKey.get(key) ?? 0) + 1);
+  }
+  const withResolution = (baseReview.rows ?? []).map((row) => {
+    const key = `${row.segmentId}::${row.codeId}`;
+    const resolution = resolutionByKey.get(key) ?? null;
+    const triage = triageByKey.get(key) ?? null;
+    const coderCount = (row.coderIds ?? []).length;
+    const isHighRisk = isHighRiskMergeConflict({
+      coderCount,
+      confidenceSpread: row.confidenceSpread,
+      highRiskMinCoderCount: governancePolicy.highRiskMinCoderCount,
+      highRiskMinConfidenceSpread: governancePolicy.highRiskMinConfidenceSpread
+    });
+    const activeApprovalCount = approvalCountByKey.get(key) ?? 0;
+    const requiresSecondReviewer = governancePolicy.requireSecondReviewerForHighRisk && isHighRisk;
+    const requiredApprovalCount = isHighRisk
+      ? Math.max(
+        requiresSecondReviewer ? 1 : 0,
+        Math.max(1, governancePolicy.requiredApprovalCountForHighRisk)
+      )
+      : 0;
+    return {
+      ...row,
+      triage: triage
+        ? {
+          id: triage.id,
+          status: triage.status,
+          severity: triage.severity,
+          assigneeUserId: triage.assigneeUserId,
+          assigneeUsername: triage.assigneeUsername,
+          reviewerUserId: triage.reviewerUserId,
+          reviewerUsername: triage.reviewerUsername,
+          dueAt: triage.dueAt,
+          triageNote: triage.triageNote,
+          labels: (() => {
+            try {
+              const parsed = JSON.parse(triage.labelsJson);
+              return Array.isArray(parsed) ? parsed.map((value) => String(value)) : [];
+            } catch {
+              return [];
+            }
+          })(),
+          updatedAt: triage.updatedAt
+        }
+        : null,
+      resolution: resolution
+        ? {
+          id: resolution.id,
+          status: resolution.status,
+          keepMode: resolution.keepMode,
+          keepApplicationId: resolution.keepApplicationId,
+          keepCoderId: resolution.keepCoderId,
+          removedCount: resolution.removedCount,
+          note: resolution.resolutionNote,
+          actorUsername: resolution.actorUsername,
+          createdAt: resolution.createdAt,
+          canRestore: resolution.status === 'resolved' && resolution.removedCount > 0
+        }
+        : null,
+      risk: {
+        defaultSeverity: row.defaultSeverity ?? deriveMergeConflictSeverity({ coderCount, confidenceSpread: row.confidenceSpread }),
+        isHighRisk,
+        requiresSecondReviewer,
+        requiredApprovalCount,
+        approvalExpiryHours: governancePolicy.approvalExpiryHours,
+        activeApprovalCount,
+        blockedByMissingApproval: requiredApprovalCount > 0 && activeApprovalCount < requiredApprovalCount
+      }
+    };
+  });
+  const filteredRows = withResolution.filter((row) => {
+    const status = row.resolution?.status ?? 'open';
+    if (statusFilter === 'all') return true;
+    if (statusFilter === 'open') return !row.resolution || status === 'reopened';
+    return status === statusFilter;
+  });
+  const rows = filteredRows.slice(0, maxRows);
   return ok({
-    review: buildMergeReview({
+    review: {
+      ...baseReview,
+      statusFilter,
+      filteredCount: filteredRows.length,
+      availableRowsBeforeStatus: withResolution.length,
+      governancePolicy,
+      rows,
+      returnedCount: rows.length
+    }
+  });
+});
+
+server.post('/merge-review/resolve', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    segmentId: string;
+    codeId: string;
+    keepMode: 'highest_confidence' | 'coder' | 'application';
+    keepCoderId: string;
+    keepApplicationId: string;
+    resolutionNote: string;
+    expectedTriageUpdatedAt: string;
+    expectedPolicyUpdatedAt: string;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const segmentId = typeof body.segmentId === 'string' && body.segmentId.trim() ? body.segmentId.trim() : '';
+  const codeId = typeof body.codeId === 'string' && body.codeId.trim() ? body.codeId.trim() : '';
+  if (!segmentId || !codeId) {
+    return reply.status(400).send(fail('INVALID', 'segmentId and codeId are required.'));
+  }
+  const keepMode = body.keepMode === 'coder' || body.keepMode === 'application' ? body.keepMode : 'highest_confidence';
+  const keepCoderId = typeof body.keepCoderId === 'string' && body.keepCoderId.trim() ? body.keepCoderId.trim() : '';
+  const keepApplicationId = typeof body.keepApplicationId === 'string' && body.keepApplicationId.trim() ? body.keepApplicationId.trim() : '';
+  const resolutionNote = typeof body.resolutionNote === 'string' ? body.resolutionNote.trim() : '';
+  const governancePolicy = await getCodingMergeGovernancePolicy(projectId);
+  if (!assertOptimisticTimestamp(reply, {
+    expectedValue: body.expectedPolicyUpdatedAt,
+    currentValue: governancePolicy.updatedAt,
+    label: 'Merge governance policy'
+  })) return;
+  const existingTriage = await getCodingConflictTriage(projectId, segmentId, codeId);
+  const expectedTriageUpdatedAt = parseProvidedIsoDate(body.expectedTriageUpdatedAt);
+  if (expectedTriageUpdatedAt === null) {
+    return reply.status(400).send(fail('INVALID', 'merge triage expectedUpdatedAt must be a valid ISO date when provided.'));
+  }
+  if (expectedTriageUpdatedAt && !existingTriage) {
+    return reply.status(409).send(fail('CONFLICT', 'Merge triage row no longer exists. Refresh and retry.'));
+  }
+  if (existingTriage && !assertOptimisticTimestamp(reply, {
+    expectedValue: body.expectedTriageUpdatedAt,
+    currentValue: existingTriage.updatedAt,
+    label: 'Merge triage'
+  })) return;
+  if (governancePolicy.restrictResolutionToOwnerOrProfessor && !await assertProjectOwnerOrProfessor(request, userId, projectId, reply)) return;
+  if (governancePolicy.requireResolutionNote && !resolutionNote) {
+    return reply.status(400).send(fail('INVALID', 'resolutionNote is required by the merge governance policy.'));
+  }
+  const applications = await listCodeApplications(projectId, segmentId, codeId);
+  if (applications.length < 2) {
+    return reply.status(400).send(fail('INVALID', 'At least two code applications are required for merge resolution.'));
+  }
+  const coderCount = new Set(applications.map((application) => application.coderId)).size;
+  const confidenceSpread = applications.length > 0
+    ? Math.max(...applications.map((application) => application.confidence)) - Math.min(...applications.map((application) => application.confidence))
+    : 0;
+  const highRisk = isHighRiskMergeConflict({
+    coderCount,
+    confidenceSpread,
+    highRiskMinCoderCount: governancePolicy.highRiskMinCoderCount,
+    highRiskMinConfidenceSpread: governancePolicy.highRiskMinConfidenceSpread
+  });
+  const requiredApprovalCount = highRisk
+    ? Math.max(
+      governancePolicy.requireSecondReviewerForHighRisk ? 1 : 0,
+      Math.max(1, governancePolicy.requiredApprovalCountForHighRisk)
+    )
+    : 0;
+  if (requiredApprovalCount > 0) {
+    const activeApprovals = await listCodingMergeApprovals(projectId, { segmentId, codeId, limit: 100 });
+    const resolverUsername = request.session.username ?? 'system';
+    const nowMs = Date.now();
+    const expiryMs = Math.max(1, governancePolicy.approvalExpiryHours) * 60 * 60 * 1000;
+    const validIndependentApprovals = activeApprovals.filter((approval) => {
+      if (approval.approvedByUsername === resolverUsername) return false;
+      const createdAtMs = Date.parse(approval.createdAt);
+      if (!Number.isFinite(createdAtMs)) return true;
+      return (nowMs - createdAtMs) <= expiryMs;
+    });
+    if (validIndependentApprovals.length < requiredApprovalCount) {
+      return reply.status(400).send(fail('INVALID', `High-risk merge conflicts require ${requiredApprovalCount} independent approval(s) within ${governancePolicy.approvalExpiryHours} hour(s) before resolution.`));
+    }
+  }
+  const sorted = [...applications].sort((left, right) => {
+    if (right.confidence !== left.confidence) return right.confidence - left.confidence;
+    return left.createdAt.localeCompare(right.createdAt);
+  });
+
+  let keep = sorted[0];
+  if (keepMode === 'application') {
+    const selected = sorted.find((application) => application.id === keepApplicationId);
+    if (!selected) {
+      return reply.status(400).send(fail('INVALID', 'keepApplicationId did not match a scoped code application.'));
+    }
+    keep = selected;
+  } else if (keepMode === 'coder') {
+    const byCoder = sorted.filter((application) => application.coderId === keepCoderId);
+    if (!byCoder.length) {
+      return reply.status(400).send(fail('INVALID', 'keepCoderId did not match a scoped coder for this segment/code pair.'));
+    }
+    keep = byCoder[0];
+  }
+
+  const toRemove = sorted.filter((application) => application.id !== keep.id);
+  const timestamp = new Date().toISOString();
+  const resolutionId = `merge-resolution-${randomUUID()}`;
+  if (toRemove.length > 0) {
+    await archiveCodeApplications({
+      resolutionId,
       projectId,
-      sourceId: typeof query.sourceId === 'string' && query.sourceId.trim() ? query.sourceId.trim() : undefined,
-      codeId: typeof query.codeId === 'string' && query.codeId.trim() ? query.codeId.trim() : undefined,
-      segments: payload.segments,
-      sources: payload.sources,
-      applications: payload.codeApplications,
-      codes: payload.codes
-    })
+      applications: toRemove,
+      archivedAt: timestamp,
+      archivedByUserId: userId,
+      archivedByUsername: request.session.username ?? 'system'
+    });
+  }
+
+  let removedCount = 0;
+  for (const candidate of toRemove) {
+    if (await deleteCodeApplication(candidate.id, projectId)) {
+      removedCount += 1;
+    }
+  }
+
+  await insertCodingConflictResolution({
+    id: resolutionId,
+    projectId,
+    segmentId,
+    codeId,
+    status: 'resolved',
+    keepMode,
+    keepApplicationId: keep.id,
+    keepCoderId: keep.coderId,
+    removedApplicationIdsJson: JSON.stringify(toRemove.map((application) => application.id)),
+    removedCount,
+    resolutionNote,
+    actorUserId: userId,
+    actorUsername: request.session.username ?? 'system',
+    metadataJson: JSON.stringify({
+      applicationCountBefore: applications.length,
+      applicationCountAfter: applications.length - removedCount,
+      governance: {
+        highRisk,
+        coderCount,
+        confidenceSpread,
+        requireSecondReviewerForHighRisk: governancePolicy.requireSecondReviewerForHighRisk,
+        requiredApprovalCountForHighRisk: governancePolicy.requiredApprovalCountForHighRisk,
+        requiredApprovalCount,
+        approvalExpiryHours: governancePolicy.approvalExpiryHours
+      }
+    }),
+    createdAt: timestamp
+  });
+  if (requiredApprovalCount > 0 && highRisk) {
+    await markCodingMergeApprovalsUsed({ projectId, segmentId, codeId, usedAt: timestamp });
+  }
+  await upsertCodingConflictTriage({
+    id: existingTriage?.id ?? `triage-${randomUUID()}`,
+    projectId,
+    segmentId,
+    codeId,
+    status: 'resolved',
+    severity: existingTriage?.severity ?? deriveMergeConflictSeverity({ coderCount, confidenceSpread }),
+    assigneeUserId: existingTriage?.assigneeUserId ?? null,
+    assigneeUsername: existingTriage?.assigneeUsername ?? null,
+    reviewerUserId: existingTriage?.reviewerUserId ?? null,
+    reviewerUsername: existingTriage?.reviewerUsername ?? null,
+    dueAt: existingTriage?.dueAt ?? null,
+    triageNote: resolutionNote || existingTriage?.triageNote || '',
+    labelsJson: existingTriage?.labelsJson ?? '[]',
+    metadataJson: JSON.stringify({
+      ...(existingTriage ? (() => {
+        try {
+          const parsed = JSON.parse(existingTriage.metadataJson);
+          return typeof parsed === 'object' && parsed ? parsed : {};
+        } catch {
+          return {};
+        }
+      })() : {}),
+      lastResolutionId: resolutionId
+    }),
+    createdByUserId: existingTriage?.createdByUserId ?? userId,
+    createdByUsername: existingTriage?.createdByUsername ?? (request.session.username ?? 'system'),
+    createdAt: existingTriage?.createdAt ?? timestamp,
+    updatedAt: timestamp
+  });
+
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'merge_review.resolve',
+    entityType: 'merge_review',
+    entityId: `${segmentId}:${codeId}`,
+    details: {
+      resolutionId,
+      segmentId,
+      codeId,
+      keepMode,
+      keepApplicationId: keep.id,
+      keepCoderId: keep.coderId,
+      removedCount,
+      resolutionNote,
+      highRisk,
+      coderCount,
+      confidenceSpread
+    }
+  });
+
+  return ok({
+    resolution: {
+      id: resolutionId,
+      status: 'resolved',
+      segmentId,
+      codeId,
+      keptApplication: {
+        id: keep.id,
+        coderId: keep.coderId,
+        confidence: keep.confidence
+      },
+      highRisk,
+      removedApplicationIds: toRemove.map((application) => application.id),
+      removedCount,
+      resolutionNote
+    }
+  });
+});
+
+server.post('/merge-review/defer', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    segmentId: string;
+    codeId: string;
+    resolutionNote: string;
+    expectedTriageUpdatedAt: string;
+    expectedPolicyUpdatedAt: string;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const segmentId = typeof body.segmentId === 'string' && body.segmentId.trim() ? body.segmentId.trim() : '';
+  const codeId = typeof body.codeId === 'string' && body.codeId.trim() ? body.codeId.trim() : '';
+  if (!segmentId || !codeId) {
+    return reply.status(400).send(fail('INVALID', 'segmentId and codeId are required.'));
+  }
+  const governancePolicy = await getCodingMergeGovernancePolicy(projectId);
+  if (!assertOptimisticTimestamp(reply, {
+    expectedValue: body.expectedPolicyUpdatedAt,
+    currentValue: governancePolicy.updatedAt,
+    label: 'Merge governance policy'
+  })) return;
+  const existingTriage = await getCodingConflictTriage(projectId, segmentId, codeId);
+  const expectedTriageUpdatedAt = parseProvidedIsoDate(body.expectedTriageUpdatedAt);
+  if (expectedTriageUpdatedAt === null) {
+    return reply.status(400).send(fail('INVALID', 'merge triage expectedUpdatedAt must be a valid ISO date when provided.'));
+  }
+  if (expectedTriageUpdatedAt && !existingTriage) {
+    return reply.status(409).send(fail('CONFLICT', 'Merge triage row no longer exists. Refresh and retry.'));
+  }
+  if (existingTriage && !assertOptimisticTimestamp(reply, {
+    expectedValue: body.expectedTriageUpdatedAt,
+    currentValue: existingTriage.updatedAt,
+    label: 'Merge triage'
+  })) return;
+  const resolutionId = `merge-resolution-${randomUUID()}`;
+  const resolutionNote = typeof body.resolutionNote === 'string' ? body.resolutionNote.trim() : '';
+  const timestamp = new Date().toISOString();
+  await insertCodingConflictResolution({
+    id: resolutionId,
+    projectId,
+    segmentId,
+    codeId,
+    status: 'deferred',
+    keepMode: null,
+    keepApplicationId: null,
+    keepCoderId: null,
+    removedApplicationIdsJson: '[]',
+    removedCount: 0,
+    resolutionNote,
+    actorUserId: userId,
+    actorUsername: request.session.username ?? 'system',
+    metadataJson: '{}',
+    createdAt: timestamp
+  });
+  await upsertCodingConflictTriage({
+    id: existingTriage?.id ?? `triage-${randomUUID()}`,
+    projectId,
+    segmentId,
+    codeId,
+    status: 'deferred',
+    severity: existingTriage?.severity ?? 'medium',
+    assigneeUserId: existingTriage?.assigneeUserId ?? null,
+    assigneeUsername: existingTriage?.assigneeUsername ?? null,
+    reviewerUserId: existingTriage?.reviewerUserId ?? null,
+    reviewerUsername: existingTriage?.reviewerUsername ?? null,
+    dueAt: existingTriage?.dueAt
+      ?? new Date(Date.now() + governancePolicy.defaultTriageSlaHours * 60 * 60 * 1000).toISOString(),
+    triageNote: resolutionNote || existingTriage?.triageNote || '',
+    labelsJson: existingTriage?.labelsJson ?? '[]',
+    metadataJson: existingTriage?.metadataJson ?? '{}',
+    createdByUserId: existingTriage?.createdByUserId ?? userId,
+    createdByUsername: existingTriage?.createdByUsername ?? (request.session.username ?? 'system'),
+    createdAt: existingTriage?.createdAt ?? timestamp,
+    updatedAt: timestamp
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'merge_review.defer',
+    entityType: 'merge_review',
+    entityId: `${segmentId}:${codeId}`,
+    details: { resolutionId, resolutionNote }
+  });
+  return ok({
+    resolution: {
+      id: resolutionId,
+      status: 'deferred',
+      segmentId,
+      codeId,
+      resolutionNote
+    }
+  });
+});
+
+server.post('/merge-review/reopen', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    segmentId: string;
+    codeId: string;
+    resolutionNote: string;
+    expectedTriageUpdatedAt: string;
+    expectedPolicyUpdatedAt: string;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const segmentId = typeof body.segmentId === 'string' && body.segmentId.trim() ? body.segmentId.trim() : '';
+  const codeId = typeof body.codeId === 'string' && body.codeId.trim() ? body.codeId.trim() : '';
+  if (!segmentId || !codeId) {
+    return reply.status(400).send(fail('INVALID', 'segmentId and codeId are required.'));
+  }
+  const governancePolicy = await getCodingMergeGovernancePolicy(projectId);
+  if (!assertOptimisticTimestamp(reply, {
+    expectedValue: body.expectedPolicyUpdatedAt,
+    currentValue: governancePolicy.updatedAt,
+    label: 'Merge governance policy'
+  })) return;
+  const existingTriage = await getCodingConflictTriage(projectId, segmentId, codeId);
+  const expectedTriageUpdatedAt = parseProvidedIsoDate(body.expectedTriageUpdatedAt);
+  if (expectedTriageUpdatedAt === null) {
+    return reply.status(400).send(fail('INVALID', 'merge triage expectedUpdatedAt must be a valid ISO date when provided.'));
+  }
+  if (expectedTriageUpdatedAt && !existingTriage) {
+    return reply.status(409).send(fail('CONFLICT', 'Merge triage row no longer exists. Refresh and retry.'));
+  }
+  if (existingTriage && !assertOptimisticTimestamp(reply, {
+    expectedValue: body.expectedTriageUpdatedAt,
+    currentValue: existingTriage.updatedAt,
+    label: 'Merge triage'
+  })) return;
+  const resolutionId = `merge-resolution-${randomUUID()}`;
+  const resolutionNote = typeof body.resolutionNote === 'string' ? body.resolutionNote.trim() : '';
+  const timestamp = new Date().toISOString();
+  await insertCodingConflictResolution({
+    id: resolutionId,
+    projectId,
+    segmentId,
+    codeId,
+    status: 'reopened',
+    keepMode: null,
+    keepApplicationId: null,
+    keepCoderId: null,
+    removedApplicationIdsJson: '[]',
+    removedCount: 0,
+    resolutionNote,
+    actorUserId: userId,
+    actorUsername: request.session.username ?? 'system',
+    metadataJson: '{}',
+    createdAt: timestamp
+  });
+  await upsertCodingConflictTriage({
+    id: existingTriage?.id ?? `triage-${randomUUID()}`,
+    projectId,
+    segmentId,
+    codeId,
+    status: 'in_review',
+    severity: existingTriage?.severity ?? 'high',
+    assigneeUserId: existingTriage?.assigneeUserId ?? null,
+    assigneeUsername: existingTriage?.assigneeUsername ?? null,
+    reviewerUserId: existingTriage?.reviewerUserId ?? null,
+    reviewerUsername: existingTriage?.reviewerUsername ?? null,
+    dueAt: existingTriage?.dueAt
+      ?? new Date(Date.now() + governancePolicy.defaultTriageSlaHours * 60 * 60 * 1000).toISOString(),
+    triageNote: resolutionNote || existingTriage?.triageNote || '',
+    labelsJson: existingTriage?.labelsJson ?? '[]',
+    metadataJson: existingTriage?.metadataJson ?? '{}',
+    createdByUserId: existingTriage?.createdByUserId ?? userId,
+    createdByUsername: existingTriage?.createdByUsername ?? (request.session.username ?? 'system'),
+    createdAt: existingTriage?.createdAt ?? timestamp,
+    updatedAt: timestamp
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'merge_review.reopen',
+    entityType: 'merge_review',
+    entityId: `${segmentId}:${codeId}`,
+    details: { resolutionId, resolutionNote }
+  });
+  return ok({
+    resolution: {
+      id: resolutionId,
+      status: 'reopened',
+      segmentId,
+      codeId,
+      resolutionNote
+    }
+  });
+});
+
+server.post('/merge-review/restore', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    resolutionId: string;
+    resolutionNote: string;
+    expectedTriageUpdatedAt: string;
+  }>;
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const resolutionId = typeof body.resolutionId === 'string' && body.resolutionId.trim() ? body.resolutionId.trim() : '';
+  if (!resolutionId) return reply.status(400).send(fail('INVALID', 'resolutionId is required.'));
+
+  const original = await getCodingConflictResolution(resolutionId, projectId);
+  if (!original) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Merge resolution was not found.'));
+  }
+  if (original.removedCount < 1) {
+    return reply.status(400).send(fail('INVALID', 'Selected merge resolution has no archived code applications to restore.'));
+  }
+  const existingTriage = await getCodingConflictTriage(projectId, original.segmentId, original.codeId);
+  const expectedTriageUpdatedAt = parseProvidedIsoDate(body.expectedTriageUpdatedAt);
+  if (expectedTriageUpdatedAt === null) {
+    return reply.status(400).send(fail('INVALID', 'merge triage expectedUpdatedAt must be a valid ISO date when provided.'));
+  }
+  if (expectedTriageUpdatedAt && !existingTriage) {
+    return reply.status(409).send(fail('CONFLICT', 'Merge triage row no longer exists. Refresh and retry.'));
+  }
+  if (existingTriage && !assertOptimisticTimestamp(reply, {
+    expectedValue: body.expectedTriageUpdatedAt,
+    currentValue: existingTriage.updatedAt,
+    label: 'Merge triage'
+  })) return;
+  const archivedRows = await listArchivedCodeApplicationsByResolution(resolutionId, projectId, false);
+  if (archivedRows.length === 0) {
+    return reply.status(400).send(fail('INVALID', 'Archived code applications were already restored or are unavailable.'));
+  }
+  const timestamp = new Date().toISOString();
+  const restored = await restoreArchivedCodeApplications({
+    resolutionId,
+    projectId,
+    restoredAt: timestamp,
+    restoredByUserId: userId,
+    restoredByUsername: request.session.username ?? 'system'
+  });
+  const restoreResolutionId = `merge-resolution-${randomUUID()}`;
+  const resolutionNote = typeof body.resolutionNote === 'string' && body.resolutionNote.trim()
+    ? body.resolutionNote.trim()
+    : `Restored ${restored.restoredCount} archived applications from ${resolutionId}.`;
+  await insertCodingConflictResolution({
+    id: restoreResolutionId,
+    projectId,
+    segmentId: original.segmentId,
+    codeId: original.codeId,
+    status: 'restored',
+    keepMode: original.keepMode,
+    keepApplicationId: original.keepApplicationId,
+    keepCoderId: original.keepCoderId,
+    removedApplicationIdsJson: JSON.stringify(restored.restoredApplicationIds),
+    removedCount: restored.restoredCount,
+    resolutionNote,
+    actorUserId: userId,
+    actorUsername: request.session.username ?? 'system',
+    metadataJson: JSON.stringify({ sourceResolutionId: resolutionId }),
+    createdAt: timestamp
+  });
+  await upsertCodingConflictTriage({
+    id: existingTriage?.id ?? `triage-${randomUUID()}`,
+    projectId,
+    segmentId: original.segmentId,
+    codeId: original.codeId,
+    status: 'in_review',
+    severity: existingTriage?.severity ?? 'high',
+    assigneeUserId: existingTriage?.assigneeUserId ?? null,
+    assigneeUsername: existingTriage?.assigneeUsername ?? null,
+    reviewerUserId: existingTriage?.reviewerUserId ?? null,
+    reviewerUsername: existingTriage?.reviewerUsername ?? null,
+    dueAt: existingTriage?.dueAt ?? null,
+    triageNote: resolutionNote || existingTriage?.triageNote || '',
+    labelsJson: existingTriage?.labelsJson ?? '[]',
+    metadataJson: JSON.stringify({
+      ...(existingTriage ? (() => {
+        try {
+          const parsed = JSON.parse(existingTriage.metadataJson);
+          return typeof parsed === 'object' && parsed ? parsed : {};
+        } catch {
+          return {};
+        }
+      })() : {}),
+      sourceResolutionId: resolutionId,
+      restoreResolutionId
+    }),
+    createdByUserId: existingTriage?.createdByUserId ?? userId,
+    createdByUsername: existingTriage?.createdByUsername ?? (request.session.username ?? 'system'),
+    createdAt: existingTriage?.createdAt ?? timestamp,
+    updatedAt: timestamp
+  });
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'merge_review.restore',
+    entityType: 'merge_review',
+    entityId: `${original.segmentId}:${original.codeId}`,
+    details: {
+      sourceResolutionId: resolutionId,
+      restoreResolutionId,
+      restoredCount: restored.restoredCount
+    }
+  });
+  return ok({
+    restoration: {
+      sourceResolutionId: resolutionId,
+      restoreResolutionId,
+      segmentId: original.segmentId,
+      codeId: original.codeId,
+      restoredCount: restored.restoredCount,
+      restoredApplicationIds: restored.restoredApplicationIds
+    }
   });
 });
 
@@ -6186,13 +14917,31 @@ server.get('/transcription-jobs', async (request, reply) => {
 server.post('/transcription-jobs', async (request, reply) => {
   const userId = await assertAuth(request, reply);
   if (!userId) return;
-  const body = (request.body ?? {}) as Partial<{ projectId: string; mediaSourceId: string; note: string }>;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    mediaSourceId: string;
+    note: string;
+    mode: 'segment_assembly' | 'timeline_chunked' | 'hybrid';
+    pipelineConfig: {
+      language?: string;
+      diarization?: boolean;
+      punctuation?: boolean;
+      chunkSeconds?: number;
+      confidenceThreshold?: number;
+      speakerStrategy?: 'single' | 'alternating' | 'content_based';
+      provider?: 'internal' | 'openai';
+      providerModel?: string;
+      providerPrompt?: string;
+    };
+  }>;
   const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
   if (!projectId || !await assertProjectAccess(userId, projectId, reply)) return;
   const mediaSourceId = typeof body.mediaSourceId === 'string' ? body.mediaSourceId.trim() : '';
   if (!mediaSourceId) {
     return reply.status(400).send(fail('INVALID', 'mediaSourceId is required.'));
   }
+  const mode = body.mode === 'timeline_chunked' || body.mode === 'hybrid' ? body.mode : 'segment_assembly';
+  const pipelineConfig = parseTranscriptionPipelineConfig(body.pipelineConfig);
   const now = new Date().toISOString();
   const job = await insertTranscriptionJob({
     id: `transcription-${randomUUID()}`,
@@ -6200,8 +14949,20 @@ server.post('/transcription-jobs', async (request, reply) => {
     mediaSourceId,
     outputSourceId: null,
     status: 'queued',
-    mode: 'segment_assembly',
+    mode,
     note: typeof body.note === 'string' ? body.note : '',
+    pipelineJson: JSON.stringify({
+      requestedAt: now,
+      requestedBy: request.session.username ?? 'unknown',
+      mode,
+      config: pipelineConfig,
+      stages: [
+        { stage: 'queued', at: now, status: 'completed' }
+      ]
+    }),
+    progressPercent: 0,
+    startedAt: null,
+    errorMessage: null,
     createdAt: now,
     updatedAt: now,
     completedAt: null
@@ -6212,7 +14973,7 @@ server.post('/transcription-jobs', async (request, reply) => {
     action: 'transcription_job.create',
     entityType: 'transcription_job',
     entityId: job.id,
-    details: { mediaSourceId }
+    details: { mediaSourceId, mode, pipelineConfig }
   });
   return ok({ job });
 });
@@ -6233,83 +14994,303 @@ server.post('/transcription-jobs/:jobId/run', async (request, reply) => {
   if (!job) {
     return reply.status(404).send(fail('NOT_FOUND', 'Transcription job not found.'));
   }
-  const payload = await buildQualitativeProjectPayload(projectId);
-  const mediaSource = payload.sources.find((source) => source.id === job.mediaSourceId);
-  if (!mediaSource) {
-    return reply.status(404).send(fail('NOT_FOUND', 'Media source not found.'));
-  }
-  const timeSegments = payload.segments
-    .filter((segment) => segment.sourceId === mediaSource.id && segment.kind === 'time_range')
-    .sort((left, right) => (left.anchor as any).startMs - (right.anchor as any).startMs);
-  const transcriptBody = timeSegments.length > 0
-    ? timeSegments.map((segment) => {
-      const anchor = segment.anchor as { startMs: number; endMs: number };
-      return `[${(anchor.startMs / 1000).toFixed(1)}s - ${(anchor.endMs / 1000).toFixed(1)}s] ${segment.text}`;
-    }).join('\n')
-    : `Transcript placeholder for ${mediaSource.title}.\nNo time-range segments were present, so no transcript excerpts could be assembled yet.`;
-  const now = new Date().toISOString();
-  let outputSourceId = job.outputSourceId;
-  if (!outputSourceId) {
-    outputSourceId = `source-${randomUUID()}`;
-    await insertSource(createSource({
-      id: outputSourceId,
-      projectId,
-      kind: 'transcript',
-      title: `${mediaSource.title} transcript`,
-      language: mediaSource.language,
-      contentType: 'text/plain',
-      contentUrl: null,
-      contentText: transcriptBody,
-      createdAt: now,
-      updatedAt: now
-    }));
-  } else {
-    await updateSourceContent({
-      id: outputSourceId,
-      projectId,
-      title: `${mediaSource.title} transcript`,
-      contentType: 'text/plain',
-      contentUrl: null,
-      contentText: transcriptBody,
-      updatedAt: now
-    });
-  }
-  await deleteTranscriptSyncLinksByMediaSource(projectId, mediaSource.id);
-  for (const segment of timeSegments) {
-    const anchor = segment.anchor as { startMs: number; endMs: number };
-    await insertTranscriptSyncLink({
-      id: `sync-${randomUUID()}`,
-      projectId,
-      mediaSourceId: mediaSource.id,
-      transcriptSourceId: outputSourceId,
-      segmentId: segment.id,
-      startMs: anchor.startMs,
-      endMs: anchor.endMs,
-      transcriptText: segment.text,
-      createdAt: now,
-      updatedAt: now
-    });
-  }
-  const updatedJob = await updateTranscriptionJob({
-    ...job,
-    outputSourceId,
-    status: 'completed',
-    updatedAt: now,
-    completedAt: now
-  });
-  await recordAuditEvent({
-    request,
+  const startedAtMs = Date.now();
+  const preGuard = await evaluateAxionQeccGuard({
+    jobType: 'transcription',
+    stage: 'manual_pre_run',
     projectId,
-    action: 'transcription_job.run',
-    entityType: 'transcription_job',
-    entityId: updatedJob.id,
-    details: { mediaSourceId: mediaSource.id, outputSourceId, segmentCount: timeSegments.length }
+    retryCount: job.status === 'failed' ? 1 : 0,
+    load: 0.6,
+    metadata: {
+      jobId: job.id,
+      provider: (() => {
+        try {
+          return JSON.parse(job.pipelineJson || '{}')?.config?.provider ?? 'internal';
+        } catch {
+          return 'internal';
+        }
+      })()
+    }
   });
-  return ok({
-    job: updatedJob,
-    transcriptSourceId: outputSourceId,
-    segmentCount: timeSegments.length
+  if (preGuard.action === 'halt') {
+    const haltedAt = new Date().toISOString();
+    await updateTranscriptionJob({
+      ...job,
+      status: 'failed',
+      mode: job.mode === 'timeline_chunked' || job.mode === 'hybrid' ? job.mode : 'segment_assembly',
+      pipelineJson: JSON.stringify({
+        guard: preGuard,
+        failedAt: haltedAt,
+        stages: [
+          { stage: 'qecc_guard', status: 'failed', at: haltedAt, reason: preGuard.reason }
+        ]
+      }),
+      progressPercent: 100,
+      startedAt: haltedAt,
+      errorMessage: `QECC guard blocked transcription run (${preGuard.reason}).`,
+      updatedAt: haltedAt,
+      completedAt: haltedAt
+    });
+    await recordAuditEvent({
+      request,
+      projectId,
+      action: 'transcription_job.qecc_guard_halt',
+      entityType: 'transcription_job',
+      entityId: job.id,
+      details: { decision: preGuard }
+    });
+    return reply.status(409).send(fail('QECC_HALT', `QECC guard blocked transcription run (${preGuard.reason}).`));
+  }
+  const runningAt = new Date().toISOString();
+  const parsedPipelineConfig = (() => {
+    try {
+      const parsed = JSON.parse(job.pipelineJson || '{}');
+      return parseTranscriptionPipelineConfig(parsed?.config);
+    } catch {
+      return parseTranscriptionPipelineConfig({});
+    }
+  })();
+  const mode = job.mode === 'timeline_chunked' || job.mode === 'hybrid' ? job.mode : 'segment_assembly';
+  const runningPipeline = {
+    mode,
+    config: parsedPipelineConfig,
+    startedAt: runningAt,
+    stages: [
+      { stage: 'ingest', status: 'running', at: runningAt, provider: parsedPipelineConfig.provider }
+    ]
+  };
+  await updateTranscriptionJob({
+    ...job,
+    status: 'running',
+    mode,
+    pipelineJson: JSON.stringify(runningPipeline),
+    progressPercent: 5,
+    startedAt: runningAt,
+    errorMessage: null,
+    completedAt: null,
+    updatedAt: runningAt
   });
+
+  try {
+    const payload = await buildQualitativeProjectPayload(projectId);
+    const mediaSource = payload.sources.find((source) => source.id === job.mediaSourceId);
+    if (!mediaSource) {
+      throw new Error('Media source not found.');
+    }
+
+    const timeSegments = payload.segments
+      .filter((segment) => segment.sourceId === mediaSource.id && segment.kind === 'time_range')
+      .sort((left, right) => (left.anchor as any).startMs - (right.anchor as any).startMs)
+      .map((segment) => ({
+        id: segment.id,
+        anchor: {
+          startMs: Number((segment.anchor as any).startMs ?? 0),
+          endMs: Number((segment.anchor as any).endMs ?? 0)
+        },
+        text: segment.text
+      }));
+
+    const draft = parsedPipelineConfig.provider === 'openai'
+      ? await runOpenAiTranscription({
+        media: await resolveMediaSourceBytes({
+          id: mediaSource.id,
+          title: mediaSource.title,
+          contentType: mediaSource.contentType,
+          contentUrl: mediaSource.contentUrl
+        }),
+        mediaTitle: mediaSource.title,
+        mode,
+        pipeline: parsedPipelineConfig,
+        timeSegments
+      })
+      : buildTranscriptionDraft({
+        mediaTitle: mediaSource.title,
+        mode,
+        pipeline: parsedPipelineConfig,
+        timeSegments
+      });
+
+    const now = new Date().toISOString();
+    let outputSourceId = job.outputSourceId;
+    if (!outputSourceId) {
+      outputSourceId = `source-${randomUUID()}`;
+      await insertSource(createSource({
+        id: outputSourceId,
+        projectId,
+        kind: 'transcript',
+        title: `${mediaSource.title} transcript`,
+        language: parsedPipelineConfig.language || mediaSource.language,
+        contentType: 'text/plain',
+        contentUrl: null,
+        contentText: draft.transcriptBody,
+        createdAt: now,
+        updatedAt: now
+      }));
+    } else {
+      await updateSourceContent({
+        id: outputSourceId,
+        projectId,
+        title: `${mediaSource.title} transcript`,
+        contentType: 'text/plain',
+        contentUrl: null,
+        contentText: draft.transcriptBody,
+        updatedAt: now
+      });
+    }
+
+    await updateTranscriptionJob({
+      ...job,
+      outputSourceId,
+      status: 'running',
+      mode,
+      pipelineJson: JSON.stringify({
+        ...runningPipeline,
+        outputSourceId,
+        stages: [
+          ...runningPipeline.stages,
+          {
+            stage: 'decode',
+            status: 'completed',
+            at: now,
+            generatedEntryCount: draft.syncEntries.length,
+            provider: parsedPipelineConfig.provider
+          }
+        ]
+      }),
+      progressPercent: 55,
+      startedAt: runningAt,
+      errorMessage: null,
+      completedAt: null,
+      updatedAt: now
+    });
+
+    await deleteTranscriptSyncLinksByMediaSource(projectId, mediaSource.id);
+    for (const entry of draft.syncEntries) {
+      await insertTranscriptSyncLink({
+        id: `sync-${randomUUID()}`,
+        projectId,
+        mediaSourceId: mediaSource.id,
+        transcriptSourceId: outputSourceId,
+        segmentId: entry.segmentId,
+        startMs: entry.startMs,
+        endMs: entry.endMs,
+        transcriptText: entry.transcriptText,
+        speakerLabel: entry.speakerLabel,
+        confidence: entry.confidence,
+        syncScore: entry.syncScore,
+        tokenTimelineJson: JSON.stringify(entry.tokenTimeline),
+        createdAt: now,
+        updatedAt: now
+      });
+    }
+
+    const completedAt = new Date().toISOString();
+    const postGuard = await evaluateAxionQeccGuard({
+      jobType: 'transcription',
+      stage: 'manual_post_run',
+      projectId,
+      durationSeconds: Math.max(0, (Date.now() - startedAtMs) / 1000),
+      load: 0.7,
+      metadata: {
+        jobId: job.id,
+        provider: parsedPipelineConfig.provider
+      }
+    });
+    const updatedJob = await updateTranscriptionJob({
+      ...job,
+      outputSourceId,
+      status: 'completed',
+      mode,
+      pipelineJson: JSON.stringify({
+        mode,
+        config: parsedPipelineConfig,
+        startedAt: runningAt,
+        completedAt,
+        mediaSourceId: mediaSource.id,
+        outputSourceId,
+        modeStats: draft.modeStats,
+        stages: [
+          { stage: 'ingest', status: 'completed', at: runningAt, timeSegmentCount: timeSegments.length, provider: parsedPipelineConfig.provider },
+          { stage: 'decode', status: 'completed', at: now, generatedEntryCount: draft.syncEntries.length, provider: parsedPipelineConfig.provider },
+          { stage: 'align', status: 'completed', at: completedAt, linkedSegmentCount: draft.syncEntries.filter((entry) => Boolean(entry.segmentId)).length, provider: parsedPipelineConfig.provider },
+          { stage: 'publish', status: 'completed', at: completedAt, outputSourceId }
+        ]
+      }),
+      progressPercent: 100,
+      startedAt: runningAt,
+      errorMessage: null,
+      updatedAt: completedAt,
+      completedAt
+    });
+
+    await recordAuditEvent({
+      request,
+      projectId,
+      action: 'transcription_job.run',
+      entityType: 'transcription_job',
+      entityId: updatedJob.id,
+      details: {
+        mediaSourceId: mediaSource.id,
+        outputSourceId,
+        mode,
+        provider: parsedPipelineConfig.provider,
+        providerModel: parsedPipelineConfig.providerModel || null,
+        qeccGuard: postGuard,
+        generatedEntryCount: draft.syncEntries.length,
+        linkedSegmentCount: draft.syncEntries.filter((entry) => Boolean(entry.segmentId)).length,
+        tokenCount: draft.syncEntries.reduce((total, entry) => total + entry.tokenTimeline.length, 0)
+      }
+    });
+    return ok({
+      job: updatedJob,
+      transcriptSourceId: outputSourceId,
+      segmentCount: draft.syncEntries.length
+    });
+  } catch (error) {
+    const failedAt = new Date().toISOString();
+    const errorMessage = error instanceof Error ? error.message : 'Unknown transcription pipeline error.';
+    const failGuard = await evaluateAxionQeccGuard({
+      jobType: 'transcription',
+      stage: 'manual_failed',
+      projectId,
+      durationSeconds: Math.max(0, (Date.now() - startedAtMs) / 1000),
+      errorRate: 1,
+      failedStage: true,
+      load: 0.85,
+      metadata: {
+        jobId: job.id
+      }
+    });
+    const failedJob = await updateTranscriptionJob({
+      ...job,
+      status: 'failed',
+      mode,
+      pipelineJson: JSON.stringify({
+        mode,
+        config: parsedPipelineConfig,
+        startedAt: runningAt,
+        failedAt,
+        stages: [
+          { stage: 'ingest', status: 'completed', at: runningAt, provider: parsedPipelineConfig.provider },
+          { stage: 'decode', status: 'failed', at: failedAt, error: errorMessage, provider: parsedPipelineConfig.provider, qeccGuard: failGuard }
+        ]
+      }),
+      progressPercent: 100,
+      startedAt: runningAt,
+      errorMessage: failGuard.action === 'halt' ? `${errorMessage} (QECC halt: ${failGuard.reason})` : errorMessage,
+      updatedAt: failedAt,
+      completedAt: failedAt
+    });
+    await recordAuditEvent({
+      request,
+      projectId,
+      action: 'transcription_job.fail',
+      entityType: 'transcription_job',
+      entityId: failedJob.id,
+      details: { error: errorMessage, qeccGuard: failGuard }
+    });
+    return reply.status(500).send(fail('INTERNAL', failGuard.action === 'halt' ? `${errorMessage} (QECC halt: ${failGuard.reason})` : errorMessage));
+  }
 });
 
 // ── Attributes ────────────────────────────────────────────────────────────────
@@ -6399,6 +15380,102 @@ server.post('/segments', async (request, reply) => {
   });
   reply.code(201);
   return ok({ segment: created });
+});
+
+server.put('/segments/:segmentId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ segmentId: string }>;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    sourceId: string;
+    kind: string;
+    anchor: Record<string, unknown>;
+    text: string;
+  }>;
+  const segmentId = typeof params.segmentId === 'string' ? params.segmentId.trim() : '';
+  if (!segmentId) {
+    return reply.status(400).send(fail('INVALID', 'segmentId is required.'));
+  }
+  const projectId = requireProjectId(reply, body.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const existing = (await listSegments(projectId)).find((segment) => segment.id === segmentId);
+  if (!existing) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Segment not found.'));
+  }
+
+  const anchorInput = (() => {
+    if (body.anchor && typeof body.anchor === 'object') {
+      const incomingKind = parseSegmentKind((body.anchor as Record<string, unknown>).kind ?? body.kind ?? existing.kind);
+      return {
+        ...(body.anchor as Record<string, unknown>),
+        kind: incomingKind
+      } as Parameters<typeof createSegment>[0]['anchor'];
+    }
+    if (typeof body.kind === 'string' && body.kind.trim()) {
+      return {
+        ...(existing.anchor as Record<string, unknown>),
+        kind: parseSegmentKind(body.kind)
+      } as Parameters<typeof createSegment>[0]['anchor'];
+    }
+    return existing.anchor;
+  })();
+
+  let updated;
+  try {
+    updated = createSegment({
+      ...existing,
+      sourceId: typeof body.sourceId === 'string' && body.sourceId.trim() ? body.sourceId.trim() : existing.sourceId,
+      kind: parseSegmentKind((anchorInput as Record<string, unknown>).kind ?? existing.kind),
+      anchor: anchorInput,
+      text: typeof body.text === 'string' ? body.text : existing.text,
+      updatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    return reply.status(400).send(fail('INVALID', error instanceof Error ? error.message : 'Invalid segment update.'));
+  }
+
+  const saved = await updateSegment(updated);
+  if (!saved) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Segment not found.'));
+  }
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'segment.update',
+    entityType: 'segment',
+    entityId: saved.id,
+    details: { sourceId: saved.sourceId, kind: saved.kind }
+  });
+  return ok({ segment: saved });
+});
+
+server.delete('/segments/:segmentId', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const params = (request.params ?? {}) as Partial<{ segmentId: string }>;
+  const query = (request.query ?? {}) as Partial<{ projectId: string }>;
+  const segmentId = typeof params.segmentId === 'string' ? params.segmentId.trim() : '';
+  if (!segmentId) {
+    return reply.status(400).send(fail('INVALID', 'segmentId is required.'));
+  }
+  const projectId = requireProjectId(reply, query.projectId);
+  if (!projectId) return;
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+  const removed = await deleteSegment(segmentId, projectId);
+  if (!removed) {
+    return reply.status(404).send(fail('NOT_FOUND', 'Segment not found.'));
+  }
+  await recordAuditEvent({
+    request,
+    projectId,
+    action: 'segment.delete',
+    entityType: 'segment',
+    entityId: segmentId,
+    details: {}
+  });
+  return ok({ removed: true });
 });
 
 // ── Code Applications ─────────────────────────────────────────────────────────
@@ -6756,12 +15833,38 @@ server.post('/nonparametric-tests', async (request, reply) => {
     analysis: unknown;
     outcomeField: string;
     groupField: string;
+    method: string;
+    beforeField: string;
+    relatedFields: string[];
+    exact: boolean;
+    continuityCorrection: boolean;
   }>;
   const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
   const outcomeField = typeof body.outcomeField === 'string' && body.outcomeField.trim() ? body.outcomeField.trim() : undefined;
   const groupField = typeof body.groupField === 'string' && body.groupField.trim() ? body.groupField.trim() : undefined;
-  if (!projectId || !outcomeField || !groupField) {
-    return reply.status(400).send(fail('INVALID', 'projectId, outcomeField, and groupField are required.'));
+  const method = body.method === 'mann_whitney_u'
+    || body.method === 'kruskal_wallis'
+    || body.method === 'wilcoxon_signed_rank'
+    || body.method === 'friedman'
+    || body.method === 'median_test'
+    || body.method === 'runs_test'
+    ? body.method
+    : undefined;
+  const beforeField = typeof body.beforeField === 'string' && body.beforeField.trim() ? body.beforeField.trim() : undefined;
+  const relatedFields = Array.isArray(body.relatedFields)
+    ? body.relatedFields.map((field) => String(field ?? '').trim()).filter(Boolean)
+    : undefined;
+  const requiresGroupField = !method || method === 'mann_whitney_u' || method === 'kruskal_wallis' || method === 'median_test';
+  if (!projectId || !outcomeField || (requiresGroupField && !groupField)) {
+    return reply.status(400).send(fail('INVALID', requiresGroupField
+      ? 'projectId, outcomeField, and groupField are required.'
+      : 'projectId and outcomeField are required.'));
+  }
+  if (method === 'wilcoxon_signed_rank' && (!beforeField || beforeField === outcomeField)) {
+    return reply.status(400).send(fail('INVALID', 'Wilcoxon signed-rank requires beforeField different from outcomeField.'));
+  }
+  if (method === 'friedman' && (!relatedFields || relatedFields.length < 3)) {
+    return reply.status(400).send(fail('INVALID', 'Friedman requires relatedFields with at least three repeated fields.'));
   }
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
@@ -6774,7 +15877,14 @@ server.post('/nonparametric-tests', async (request, reply) => {
       analysis
     });
     return ok({
-      nonparametric: analyzeNonparametricComparison(dataset, outcomeField, groupField, analysis)
+      nonparametric: analyzeNonparametricComparison(dataset, outcomeField, groupField ?? '__sequence__', {
+        ...analysis,
+        method,
+        beforeField,
+        relatedFields,
+        exact: typeof body.exact === 'boolean' ? body.exact : undefined,
+        continuityCorrection: typeof body.continuityCorrection === 'boolean' ? body.continuityCorrection : undefined
+      })
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to run nonparametric test.';
@@ -6792,6 +15902,7 @@ server.post('/reliability', async (request, reply) => {
     analysis: unknown;
     fields: string[];
     subscales: Array<{ label?: string; fields?: string[] }>;
+    stratifyField: string;
   }>;
   const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
   const fields = Array.isArray(body.fields) ? body.fields.map((field) => String(field ?? '').trim()).filter(Boolean) : [];
@@ -6818,7 +15929,10 @@ server.post('/reliability', async (request, reply) => {
             label: typeof subscale?.label === 'string' ? subscale.label : '',
             fields: Array.isArray(subscale?.fields) ? subscale.fields.map((field) => String(field ?? '')) : []
           }))
-          : []
+          : [],
+        typeof body.stratifyField === 'string' && body.stratifyField.trim()
+          ? body.stratifyField.trim()
+          : undefined
       )
     });
   } catch (error) {
@@ -6838,15 +15952,25 @@ server.post('/factor-analysis', async (request, reply) => {
     fields: string[];
     factorCount: number;
     rotation: string;
+    extraction: string;
+    maxIterations: number;
+    convergenceTolerance: number;
+    parallelAnalysisSamples: number;
+    confidenceLevel: number;
   }>;
   const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
   const fields = Array.isArray(body.fields) ? body.fields.map((field) => String(field ?? '').trim()).filter(Boolean) : [];
   const factorCount = typeof body.factorCount === 'number' ? body.factorCount : undefined;
   const rotation = body.rotation === 'varimax'
     ? 'varimax'
+    : body.rotation === 'quartimax'
+      ? 'quartimax'
     : body.rotation === 'promax'
       ? 'promax'
       : 'none';
+  const extraction = body.extraction === 'principal_axis'
+    ? 'principal_axis'
+    : 'principal_components';
   if (!projectId || fields.length < 2) {
     return reply.status(400).send(fail('INVALID', 'projectId and at least two fields are required.'));
   }
@@ -6861,10 +15985,165 @@ server.post('/factor-analysis', async (request, reply) => {
       analysis
     });
     return ok({
-      factorAnalysis: analyzeFactorAnalysis(dataset, fields, factorCount, analysis, rotation as never)
+      factorAnalysis: analyzeFactorAnalysis(dataset, fields, factorCount, analysis, rotation as never, extraction as never, {
+        maxIterations: typeof body.maxIterations === 'number' ? body.maxIterations : undefined,
+        convergenceTolerance: typeof body.convergenceTolerance === 'number' ? body.convergenceTolerance : undefined,
+        parallelAnalysisSamples: typeof body.parallelAnalysisSamples === 'number' ? body.parallelAnalysisSamples : undefined,
+        confidenceLevel: typeof body.confidenceLevel === 'number' ? body.confidenceLevel : undefined
+      })
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to run factor analysis.';
+    return reply.status(400).send(fail('INVALID', message));
+  }
+});
+
+server.post('/conjoint-analysis', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    filters: unknown[];
+    recodes: unknown[];
+    analysis: unknown;
+    profileField: string;
+    ratingField: string;
+    attributeFields: string[];
+    holdoutFraction: number;
+  }>;
+  const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
+  const profileField = typeof body.profileField === 'string' && body.profileField.trim() ? body.profileField.trim() : null;
+  const ratingField = typeof body.ratingField === 'string' && body.ratingField.trim() ? body.ratingField.trim() : '';
+  const attributeFields = Array.isArray(body.attributeFields)
+    ? body.attributeFields.map((field) => String(field ?? '').trim()).filter(Boolean)
+    : [];
+  const holdoutFraction = typeof body.holdoutFraction === 'number' && Number.isFinite(body.holdoutFraction)
+    ? body.holdoutFraction
+    : 0.2;
+  if (!projectId || !ratingField || attributeFields.length === 0) {
+    return reply.status(400).send(fail('INVALID', 'projectId, ratingField, and at least one attribute field are required.'));
+  }
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+
+  try {
+    const analysis = parseDatasetAnalysisOptions(body.analysis);
+    const base = await buildProjectDatasetPayload(projectId);
+    const dataset = transformDataset(base.dataset, {
+      filters: parseDatasetFilters(body.filters),
+      recodes: parseDatasetRecodes(body.recodes),
+      analysis
+    });
+    return ok({
+      conjointAnalysis: analyzeConjoint(
+        dataset,
+        profileField,
+        ratingField,
+        attributeFields,
+        analysis,
+        holdoutFraction
+      )
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to run conjoint analysis.';
+    return reply.status(400).send(fail('INVALID', message));
+  }
+});
+
+server.post('/optimal-scaling', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    filters: unknown[];
+    recodes: unknown[];
+    analysis: unknown;
+    fields: string[];
+    anchorField: string;
+    maxIterations: number;
+  }>;
+  const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
+  const fields = Array.isArray(body.fields)
+    ? body.fields.map((field) => String(field ?? '').trim()).filter(Boolean)
+    : [];
+  const anchorField = typeof body.anchorField === 'string' && body.anchorField.trim() ? body.anchorField.trim() : null;
+  const maxIterations = typeof body.maxIterations === 'number' && Number.isFinite(body.maxIterations)
+    ? body.maxIterations
+    : 20;
+  if (!projectId || fields.length < 2) {
+    return reply.status(400).send(fail('INVALID', 'projectId and at least two fields are required.'));
+  }
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+
+  try {
+    const analysis = parseDatasetAnalysisOptions(body.analysis);
+    const base = await buildProjectDatasetPayload(projectId);
+    const dataset = transformDataset(base.dataset, {
+      filters: parseDatasetFilters(body.filters),
+      recodes: parseDatasetRecodes(body.recodes),
+      analysis
+    });
+    return ok({
+      optimalScaling: analyzeOptimalScaling(
+        dataset,
+        fields,
+        anchorField,
+        analysis,
+        maxIterations
+      )
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to run optimal scaling.';
+    return reply.status(400).send(fail('INVALID', message));
+  }
+});
+
+server.post('/direct-marketing', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    filters: unknown[];
+    recodes: unknown[];
+    analysis: unknown;
+    customerField: string;
+    responseField: string;
+    recencyField: string;
+    frequencyField: string;
+    monetaryField: string;
+    scoringWeights: Partial<{ recency: number; frequency: number; monetary: number; response: number }>;
+  }>;
+  const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
+  const customerField = typeof body.customerField === 'string' && body.customerField.trim() ? body.customerField.trim() : null;
+  const responseField = typeof body.responseField === 'string' && body.responseField.trim() ? body.responseField.trim() : null;
+  const recencyField = typeof body.recencyField === 'string' && body.recencyField.trim() ? body.recencyField.trim() : null;
+  const frequencyField = typeof body.frequencyField === 'string' && body.frequencyField.trim() ? body.frequencyField.trim() : null;
+  const monetaryField = typeof body.monetaryField === 'string' && body.monetaryField.trim() ? body.monetaryField.trim() : null;
+  const hasScoringField = Boolean(responseField || recencyField || frequencyField || monetaryField);
+  if (!projectId || !hasScoringField) {
+    return reply.status(400).send(fail('INVALID', 'projectId and at least one response/RFM field are required.'));
+  }
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+
+  try {
+    const analysis = parseDatasetAnalysisOptions(body.analysis);
+    const base = await buildProjectDatasetPayload(projectId);
+    const dataset = transformDataset(base.dataset, {
+      filters: parseDatasetFilters(body.filters),
+      recodes: parseDatasetRecodes(body.recodes),
+      analysis
+    });
+    return ok({
+      directMarketing: analyzeDirectMarketing(dataset, {
+        customerField,
+        responseField,
+        recencyField,
+        frequencyField,
+        monetaryField,
+        scoringWeights: body.scoringWeights && typeof body.scoringWeights === 'object' ? body.scoringWeights : undefined
+      }, analysis)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to run direct marketing analysis.';
     return reply.status(400).send(fail('INVALID', message));
   }
 });
@@ -6915,14 +16194,63 @@ server.post('/exact-tests', async (request, reply) => {
     filters: unknown[];
     recodes: unknown[];
     analysis: unknown;
+    testType: string;
     rowField: string;
     columnField: string;
+    binaryField: string;
+    successValue: string | number | boolean | null;
+    nullProportion: number;
+    beforeField: string;
+    afterField: string;
+    positiveValue: string | number | boolean | null;
+    continuityCorrection: boolean;
+    exactThreshold: number;
   }>;
   const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
-  const rowField = typeof body.rowField === 'string' && body.rowField.trim() ? body.rowField.trim() : undefined;
-  const columnField = typeof body.columnField === 'string' && body.columnField.trim() ? body.columnField.trim() : undefined;
-  if (!projectId || !rowField || !columnField) {
-    return reply.status(400).send(fail('INVALID', 'projectId, rowField, and columnField are required.'));
+  const normalizeFieldKey = (value: unknown): string | null =>
+    typeof value === 'string' && value.trim() ? value.trim() : null;
+  const normalizeExactValue = (value: unknown): string | number | boolean | null | undefined => {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+    return String(value);
+  };
+  const testType = body.testType === 'binomial'
+    ? 'binomial'
+    : body.testType === 'mcnemar'
+      ? 'mcnemar'
+      : body.testType === 'sign'
+        ? 'sign'
+        : body.testType === 'wilcoxon_signed_rank'
+          ? 'wilcoxon_signed_rank'
+          : body.testType === 'runs'
+            ? 'runs'
+        : 'fisher_2x2';
+  const rowField = normalizeFieldKey(body.rowField);
+  const columnField = normalizeFieldKey(body.columnField);
+  const binaryField = normalizeFieldKey(body.binaryField);
+  const beforeField = normalizeFieldKey(body.beforeField);
+  const afterField = normalizeFieldKey(body.afterField);
+  const nullProportion = typeof body.nullProportion === 'number' && Number.isFinite(body.nullProportion)
+    ? body.nullProportion
+    : undefined;
+  if (!projectId) {
+    return reply.status(400).send(fail('INVALID', 'projectId is required.'));
+  }
+  if (testType === 'fisher_2x2' && (!rowField || !columnField || rowField === columnField)) {
+    return reply.status(400).send(fail('INVALID', 'Fisher exact test requires two different categorical fields.'));
+  }
+  if (testType === 'binomial' && !binaryField) {
+    return reply.status(400).send(fail('INVALID', 'Binomial exact test requires a binaryField.'));
+  }
+  if ((testType === 'mcnemar' || testType === 'sign') && (!beforeField || !afterField || beforeField === afterField)) {
+    return reply.status(400).send(fail('INVALID', `${testType === 'mcnemar' ? 'McNemar' : 'Sign'} test requires two different paired fields.`));
+  }
+  if (testType === 'wilcoxon_signed_rank' && (!beforeField || !afterField || beforeField === afterField)) {
+    return reply.status(400).send(fail('INVALID', 'Wilcoxon signed-rank requires two different paired fields.'));
+  }
+  if (testType === 'runs' && !binaryField && !rowField) {
+    return reply.status(400).send(fail('INVALID', 'Runs test requires binaryField or rowField.'));
   }
   if (!await assertProjectAccess(userId, projectId, reply)) return;
 
@@ -6935,7 +16263,21 @@ server.post('/exact-tests', async (request, reply) => {
       analysis
     });
     return ok({
-      exactTest: analyzeExactTest(dataset, rowField, columnField, analysis)
+      exactTest: analyzeExactTest(dataset, {
+        testType,
+        rowField,
+        columnField,
+        binaryField,
+        successValue: normalizeExactValue(body.successValue),
+        nullProportion,
+        beforeField,
+        afterField,
+        positiveValue: normalizeExactValue(body.positiveValue),
+        continuityCorrection: typeof body.continuityCorrection === 'boolean' ? body.continuityCorrection : undefined,
+        exactThreshold: typeof body.exactThreshold === 'number' && Number.isFinite(body.exactThreshold)
+          ? body.exactThreshold
+          : undefined
+      }, analysis)
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to run exact test.';
@@ -7018,6 +16360,142 @@ server.post('/missing-values', async (request, reply) => {
   }
 });
 
+function parseImputationStrategies(
+  input: unknown
+): Array<{
+  field: string;
+  method: 'mean' | 'median' | 'mode' | 'constant' | 'random_hot_deck' | 'predictive_mean_matching' | 'logistic_binary';
+  value?: string | number | boolean | null;
+  predictorFields?: string[];
+  nearestNeighbors?: number;
+  donorField?: string;
+}> {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((strategy) => {
+      const candidate = strategy as {
+        field?: unknown;
+        method?: unknown;
+        value?: unknown;
+        predictorFields?: unknown;
+        nearestNeighbors?: unknown;
+        donorField?: unknown;
+      };
+      const field = typeof candidate.field === 'string' ? candidate.field.trim() : '';
+      const method: 'mean' | 'median' | 'mode' | 'constant' | 'random_hot_deck' | 'predictive_mean_matching' | 'logistic_binary' =
+        candidate.method === 'mean'
+        || candidate.method === 'median'
+        || candidate.method === 'mode'
+        || candidate.method === 'constant'
+        || candidate.method === 'random_hot_deck'
+        || candidate.method === 'predictive_mean_matching'
+        || candidate.method === 'logistic_binary'
+        ? candidate.method
+        : 'mode';
+      const predictorFields = Array.isArray(candidate.predictorFields)
+        ? candidate.predictorFields.map((item) => String(item ?? '').trim()).filter(Boolean)
+        : undefined;
+      const nearestNeighbors = typeof candidate.nearestNeighbors === 'number' && Number.isFinite(candidate.nearestNeighbors)
+        ? candidate.nearestNeighbors
+        : undefined;
+      const donorField = typeof candidate.donorField === 'string' && candidate.donorField.trim()
+        ? candidate.donorField.trim()
+        : undefined;
+      return {
+        field,
+        method,
+        value: candidate.value as string | number | boolean | null | undefined,
+        predictorFields,
+        nearestNeighbors,
+        donorField
+      };
+    })
+    .filter((strategy) => strategy.field);
+}
+
+function parseMultipleImputationConfig(input: unknown): {
+  imputations?: number;
+  randomSeed?: number;
+  chainIterations?: number;
+  includeOriginalDataset?: boolean;
+  confidenceLevel?: number;
+} {
+  const config = (input ?? {}) as Partial<{
+    imputations: number;
+    randomSeed: number;
+    chainIterations: number;
+    includeOriginalDataset: boolean;
+    confidenceLevel: number;
+  }>;
+  return {
+    imputations: typeof config.imputations === 'number' && Number.isFinite(config.imputations) ? config.imputations : undefined,
+    randomSeed: typeof config.randomSeed === 'number' && Number.isFinite(config.randomSeed) ? config.randomSeed : undefined,
+    chainIterations: typeof config.chainIterations === 'number' && Number.isFinite(config.chainIterations) ? config.chainIterations : undefined,
+    includeOriginalDataset: typeof config.includeOriginalDataset === 'boolean' ? config.includeOriginalDataset : undefined,
+    confidenceLevel: typeof config.confidenceLevel === 'number' && Number.isFinite(config.confidenceLevel) ? config.confidenceLevel : undefined
+  };
+}
+
+function parseMultipleImputationTarget(input: unknown): (
+  | { procedure: 'regression'; dependentField: string; predictorFields: string[]; model?: 'linear' | 'logistic' }
+  | { procedure: 't_test'; outcomeField: string; groupField: string }
+  | { procedure: 'paired_t_test'; beforeField: string; afterField: string }
+  | { procedure: 'compare_means'; outcomeField: string; groupField: string }
+  | { procedure: 'correlation'; xField: string; yField: string }
+) | null {
+  const target = (input ?? {}) as Partial<{
+    procedure: string;
+    dependentField: string;
+    predictorFields: string[];
+    model: string;
+    outcomeField: string;
+    groupField: string;
+    beforeField: string;
+    afterField: string;
+    xField: string;
+    yField: string;
+  }>;
+  const procedure = typeof target.procedure === 'string' ? target.procedure.trim() : '';
+  if (procedure === 'regression') {
+    const dependentField = typeof target.dependentField === 'string' ? target.dependentField.trim() : '';
+    const predictorFields = Array.isArray(target.predictorFields)
+      ? target.predictorFields.map((field) => String(field ?? '').trim()).filter(Boolean)
+      : [];
+    if (!dependentField || predictorFields.length === 0) return null;
+    return {
+      procedure: 'regression',
+      dependentField,
+      predictorFields,
+      model: target.model === 'logistic' ? 'logistic' : 'linear'
+    };
+  }
+  if (procedure === 't_test') {
+    const outcomeField = typeof target.outcomeField === 'string' ? target.outcomeField.trim() : '';
+    const groupField = typeof target.groupField === 'string' ? target.groupField.trim() : '';
+    if (!outcomeField || !groupField) return null;
+    return { procedure: 't_test', outcomeField, groupField };
+  }
+  if (procedure === 'paired_t_test') {
+    const beforeField = typeof target.beforeField === 'string' ? target.beforeField.trim() : '';
+    const afterField = typeof target.afterField === 'string' ? target.afterField.trim() : '';
+    if (!beforeField || !afterField || beforeField === afterField) return null;
+    return { procedure: 'paired_t_test', beforeField, afterField };
+  }
+  if (procedure === 'compare_means') {
+    const outcomeField = typeof target.outcomeField === 'string' ? target.outcomeField.trim() : '';
+    const groupField = typeof target.groupField === 'string' ? target.groupField.trim() : '';
+    if (!outcomeField || !groupField) return null;
+    return { procedure: 'compare_means', outcomeField, groupField };
+  }
+  if (procedure === 'correlation') {
+    const xField = typeof target.xField === 'string' ? target.xField.trim() : '';
+    const yField = typeof target.yField === 'string' ? target.yField.trim() : '';
+    if (!xField || !yField || xField === yField) return null;
+    return { procedure: 'correlation', xField, yField };
+  }
+  return null;
+}
+
 server.post('/imputation-plan', async (request, reply) => {
   const userId = await assertAuth(request, reply);
   if (!userId) return;
@@ -7026,18 +16504,17 @@ server.post('/imputation-plan', async (request, reply) => {
     filters: unknown[];
     recodes: unknown[];
     analysis: unknown;
-    strategies: Array<{ field?: string; method?: string; value?: string | number | boolean | null }>;
+    strategies: Array<{
+      field?: string;
+      method?: string;
+      value?: string | number | boolean | null;
+      predictorFields?: string[];
+      nearestNeighbors?: number;
+      donorField?: string;
+    }>;
   }>;
   const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
-  const strategies = Array.isArray(body.strategies)
-    ? body.strategies
-      .map((strategy) => ({
-        field: typeof strategy?.field === 'string' ? strategy.field.trim() : '',
-        method: strategy?.method === 'mean' ? 'mean' as const : strategy?.method === 'constant' ? 'constant' as const : 'mode' as const,
-        value: strategy?.value ?? null
-      }))
-      .filter((strategy) => strategy.field)
-    : [];
+  const strategies = parseImputationStrategies(body.strategies);
   if (!projectId || strategies.length === 0) {
     return reply.status(400).send(fail('INVALID', 'projectId and at least one imputation strategy are required.'));
   }
@@ -7060,6 +16537,80 @@ server.post('/imputation-plan', async (request, reply) => {
   }
 });
 
+server.post('/multiple-imputation-plan', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    filters: unknown[];
+    recodes: unknown[];
+    analysis: unknown;
+    strategies: unknown[];
+    config: unknown;
+  }>;
+  const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
+  const strategies = parseImputationStrategies(body.strategies);
+  if (!projectId || strategies.length === 0) {
+    return reply.status(400).send(fail('INVALID', 'projectId and at least one imputation strategy are required.'));
+  }
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+
+  try {
+    const analysis = parseDatasetAnalysisOptions(body.analysis);
+    const config = parseMultipleImputationConfig(body.config);
+    const base = await buildProjectDatasetPayload(projectId);
+    const dataset = transformDataset(base.dataset, {
+      filters: parseDatasetFilters(body.filters),
+      recodes: parseDatasetRecodes(body.recodes),
+      analysis
+    });
+    return ok({
+      multipleImputationPlan: buildMultipleImputationPlan(dataset, strategies, analysis, config)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to build multiple-imputation plan.';
+    return reply.status(400).send(fail('INVALID', message));
+  }
+});
+
+server.post('/multiple-imputation-analysis', async (request, reply) => {
+  const userId = await assertAuth(request, reply);
+  if (!userId) return;
+  const body = (request.body ?? {}) as Partial<{
+    projectId: string;
+    filters: unknown[];
+    recodes: unknown[];
+    analysis: unknown;
+    strategies: unknown[];
+    config: unknown;
+    target: unknown;
+  }>;
+  const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
+  const strategies = parseImputationStrategies(body.strategies);
+  const target = parseMultipleImputationTarget(body.target);
+  if (!projectId || strategies.length === 0 || !target) {
+    return reply.status(400).send(fail('INVALID', 'projectId, strategies, and a valid target definition are required.'));
+  }
+  if (!await assertProjectAccess(userId, projectId, reply)) return;
+
+  try {
+    const analysis = parseDatasetAnalysisOptions(body.analysis);
+    const config = parseMultipleImputationConfig(body.config);
+    const base = await buildProjectDatasetPayload(projectId);
+    const dataset = transformDataset(base.dataset, {
+      filters: parseDatasetFilters(body.filters),
+      recodes: parseDatasetRecodes(body.recodes),
+      analysis
+    });
+    return ok({
+      multipleImputationAnalysis: analyzeWithMultipleImputation(dataset, target, strategies, analysis, config)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to run multiple-imputation analysis.';
+    return reply.status(400).send(fail('INVALID', message));
+  }
+});
+
 server.post('/forecasting', async (request, reply) => {
   const userId = await assertAuth(request, reply);
   if (!userId) return;
@@ -7074,6 +16625,11 @@ server.post('/forecasting', async (request, reply) => {
     method: string;
     movingAverageWindow: number;
     smoothingAlpha: number;
+    smoothingBeta: number;
+    dampingPhi: number;
+    holdoutFraction: number;
+    confidenceLevel: number;
+    ljungBoxLags: number;
   }>;
   const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
   const timeField = typeof body.timeField === 'string' && body.timeField.trim() ? body.timeField.trim() : undefined;
@@ -7099,9 +16655,21 @@ server.post('/forecasting', async (request, reply) => {
         typeof body.horizon === 'number' ? body.horizon : 3,
         analysis,
         {
-          method: body.method === 'moving_average' || body.method === 'exponential_smoothing' ? body.method : 'linear_trend',
+          method: body.method === 'moving_average'
+            || body.method === 'exponential_smoothing'
+            || body.method === 'auto'
+            || body.method === 'arima_auto'
+            || body.method === 'ets_auto'
+            || body.method === 'linear_trend'
+            ? body.method
+            : 'auto',
           movingAverageWindow: typeof body.movingAverageWindow === 'number' ? body.movingAverageWindow : undefined,
-          smoothingAlpha: typeof body.smoothingAlpha === 'number' ? body.smoothingAlpha : undefined
+          smoothingAlpha: typeof body.smoothingAlpha === 'number' ? body.smoothingAlpha : undefined,
+          smoothingBeta: typeof body.smoothingBeta === 'number' ? body.smoothingBeta : undefined,
+          dampingPhi: typeof body.dampingPhi === 'number' ? body.dampingPhi : undefined,
+          holdoutFraction: typeof body.holdoutFraction === 'number' ? body.holdoutFraction : undefined,
+          confidenceLevel: typeof body.confidenceLevel === 'number' ? body.confidenceLevel : undefined,
+          ljungBoxLags: typeof body.ljungBoxLags === 'number' ? body.ljungBoxLags : undefined
         }
       )
     });
@@ -7157,6 +16725,13 @@ server.post('/decision-tree', async (request, reply) => {
     targetField: string;
     predictorFields: string[];
     maxDepth: number;
+    method: string;
+    criterion: string;
+    treeCount: number;
+    minSamplesLeaf: number;
+    minGain: number;
+    featureSubsetCount: number;
+    seed: number;
   }>;
   const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
   const targetField = typeof body.targetField === 'string' && body.targetField.trim() ? body.targetField.trim() : undefined;
@@ -7175,7 +16750,22 @@ server.post('/decision-tree', async (request, reply) => {
       analysis
     });
     return ok({
-      decisionTree: analyzeDecisionTree(dataset, targetField, predictorFields, typeof body.maxDepth === 'number' ? body.maxDepth : 3, analysis)
+      decisionTree: analyzeDecisionTree(
+        dataset,
+        targetField,
+        predictorFields,
+        typeof body.maxDepth === 'number' ? body.maxDepth : 3,
+        analysis,
+        {
+          method: body.method === 'random_forest' ? 'random_forest' : 'cart',
+          criterion: body.criterion === 'entropy' ? 'entropy' : 'gini',
+          treeCount: typeof body.treeCount === 'number' ? body.treeCount : undefined,
+          minSamplesLeaf: typeof body.minSamplesLeaf === 'number' ? body.minSamplesLeaf : undefined,
+          minGain: typeof body.minGain === 'number' ? body.minGain : undefined,
+          featureSubsetCount: typeof body.featureSubsetCount === 'number' ? body.featureSubsetCount : undefined,
+          seed: typeof body.seed === 'number' ? body.seed : undefined
+        }
+      )
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to run decision tree.';
@@ -7194,6 +16784,12 @@ server.post('/general-linear-model', async (request, reply) => {
     dependentField: string;
     factorFields: string[];
     covariateFields: string[];
+    family: string;
+    link: string;
+    maxIterations: number;
+    tolerance: number;
+    confidenceLevel: number;
+    covarianceEstimator: string;
   }>;
   const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
   const dependentField = typeof body.dependentField === 'string' && body.dependentField.trim() ? body.dependentField.trim() : undefined;
@@ -7213,7 +16809,28 @@ server.post('/general-linear-model', async (request, reply) => {
       analysis
     });
     return ok({
-      generalLinearModel: analyzeGeneralLinearModel(dataset, dependentField, factorFields, covariateFields, analysis)
+      generalLinearModel: analyzeGeneralLinearModel(
+        dataset,
+        dependentField,
+        factorFields,
+        covariateFields,
+        analysis,
+        {
+          family: body.family === 'binomial' || body.family === 'poisson' ? body.family : 'gaussian',
+          link: body.link === 'logit'
+            || body.link === 'log'
+            || body.link === 'identity'
+            || body.link === 'probit'
+            || body.link === 'cloglog'
+            || body.link === 'sqrt'
+            ? body.link
+            : undefined,
+          maxIterations: typeof body.maxIterations === 'number' ? body.maxIterations : undefined,
+          tolerance: typeof body.tolerance === 'number' ? body.tolerance : undefined,
+          confidenceLevel: typeof body.confidenceLevel === 'number' ? body.confidenceLevel : undefined,
+          covarianceEstimator: body.covarianceEstimator === 'model' ? 'model' : undefined
+        }
+      )
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to run GLM.';
@@ -7232,6 +16849,10 @@ server.post('/mixed-model', async (request, reply) => {
     dependentField: string;
     predictorFields: string[];
     groupField: string;
+    randomSlopeFields: string[];
+    covarianceStructure: string;
+    estimationMethod: string;
+    confidenceLevel: number;
   }>;
   const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
   const dependentField = typeof body.dependentField === 'string' && body.dependentField.trim() ? body.dependentField.trim() : undefined;
@@ -7251,7 +16872,14 @@ server.post('/mixed-model', async (request, reply) => {
       analysis
     });
     return ok({
-      mixedModel: analyzeMixedModel(dataset, dependentField, predictorFields, groupField, analysis)
+      mixedModel: analyzeMixedModel(dataset, dependentField, predictorFields, groupField, analysis, {
+        randomSlopeFields: Array.isArray(body.randomSlopeFields)
+          ? body.randomSlopeFields.map((field) => String(field ?? '').trim()).filter(Boolean)
+          : undefined,
+        covarianceStructure: body.covarianceStructure === 'independent' ? 'independent' : undefined,
+        estimationMethod: body.estimationMethod === 'ml' ? 'ml' : body.estimationMethod === 'reml' ? 'reml' : undefined,
+        confidenceLevel: typeof body.confidenceLevel === 'number' ? body.confidenceLevel : undefined
+      })
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to run mixed model.';
@@ -7272,13 +16900,26 @@ server.post('/gee-model', async (request, reply) => {
     clusterField: string;
     family: string;
     correlation: string;
+    link: string;
+    maxIterations: number;
+    tolerance: number;
+    confidenceLevel: number;
+    smallSampleCorrection: boolean;
   }>;
   const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
   const dependentField = typeof body.dependentField === 'string' && body.dependentField.trim() ? body.dependentField.trim() : undefined;
   const clusterField = typeof body.clusterField === 'string' && body.clusterField.trim() ? body.clusterField.trim() : undefined;
   const predictorFields = Array.isArray(body.predictorFields) ? body.predictorFields.map((field) => String(field ?? '').trim()).filter(Boolean) : [];
-  const family = body.family === 'binomial' ? 'binomial' : 'gaussian';
-  const correlation = body.correlation === 'exchangeable' ? 'exchangeable' : 'independence';
+  const family = body.family === 'binomial'
+    ? 'binomial'
+    : body.family === 'poisson'
+      ? 'poisson'
+      : 'gaussian';
+  const correlation = body.correlation === 'exchangeable'
+    ? 'exchangeable'
+    : body.correlation === 'ar1'
+      ? 'ar1'
+      : 'independence';
   if (!projectId || !dependentField || !clusterField || predictorFields.length === 0) {
     return reply.status(400).send(fail('INVALID', 'projectId, dependentField, clusterField, and at least one predictor field are required.'));
   }
@@ -7293,7 +16934,20 @@ server.post('/gee-model', async (request, reply) => {
       analysis
     });
     return ok({
-      geeModel: analyzeGeneralizedEstimatingEquation(dataset, dependentField, predictorFields, clusterField, family, correlation, analysis)
+      geeModel: analyzeGeneralizedEstimatingEquation(dataset, dependentField, predictorFields, clusterField, family, correlation, analysis, {
+        link: body.link === 'identity'
+          || body.link === 'log'
+          || body.link === 'sqrt'
+          || body.link === 'logit'
+          || body.link === 'probit'
+          || body.link === 'cloglog'
+          ? body.link
+          : undefined,
+        maxIterations: typeof body.maxIterations === 'number' ? body.maxIterations : undefined,
+        tolerance: typeof body.tolerance === 'number' ? body.tolerance : undefined,
+        confidenceLevel: typeof body.confidenceLevel === 'number' ? body.confidenceLevel : undefined,
+        smallSampleCorrection: typeof body.smallSampleCorrection === 'boolean' ? body.smallSampleCorrection : undefined
+      })
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to run GEE model.';
@@ -7346,11 +17000,19 @@ server.post('/survival-analysis', async (request, reply) => {
     timeField: string;
     eventField: string;
     groupField: string;
+    predictorFields: string[];
+    confidenceLevel: number;
+    tieMethod: string;
+    landmarkTimes: number[];
   }>;
   const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
   const timeField = typeof body.timeField === 'string' && body.timeField.trim() ? body.timeField.trim() : undefined;
   const eventField = typeof body.eventField === 'string' && body.eventField.trim() ? body.eventField.trim() : undefined;
   const groupField = typeof body.groupField === 'string' && body.groupField.trim() ? body.groupField.trim() : undefined;
+  const predictorFields = Array.isArray(body.predictorFields) ? body.predictorFields.map((field) => String(field ?? '').trim()).filter(Boolean) : [];
+  const landmarkTimes = Array.isArray(body.landmarkTimes)
+    ? body.landmarkTimes.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+    : undefined;
   if (!projectId || !timeField || !eventField) {
     return reply.status(400).send(fail('INVALID', 'projectId, timeField, and eventField are required.'));
   }
@@ -7365,7 +17027,19 @@ server.post('/survival-analysis', async (request, reply) => {
       analysis
     });
     return ok({
-      survivalAnalysis: analyzeSurvivalAnalysis(dataset, timeField, eventField, groupField, analysis)
+      survivalAnalysis: analyzeSurvivalAnalysis(
+        dataset,
+        timeField,
+        eventField,
+        groupField,
+        analysis,
+        predictorFields,
+        {
+          confidenceLevel: typeof body.confidenceLevel === 'number' ? body.confidenceLevel : undefined,
+          tieMethod: body.tieMethod === 'efron' ? 'efron' : body.tieMethod === 'breslow' ? 'breslow' : undefined,
+          landmarkTimes
+        }
+      )
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to run survival analysis.';
@@ -7385,6 +17059,9 @@ server.post('/complex-samples', async (request, reply) => {
     strataField: string;
     clusterField: string;
     groupField: string;
+    varianceEstimator: string;
+    replicateWeightFields: string[];
+    finitePopulationCorrectionField: string;
   }>;
   const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
   const targetField = typeof body.targetField === 'string' && body.targetField.trim() ? body.targetField.trim() : undefined;
@@ -7409,7 +17086,14 @@ server.post('/complex-samples', async (request, reply) => {
         ...analysis,
         strataField,
         clusterField,
-        groupField
+        groupField,
+        varianceEstimator: body.varianceEstimator === 'replicate' ? 'replicate' : undefined,
+        replicateWeightFields: Array.isArray(body.replicateWeightFields)
+          ? body.replicateWeightFields.map((field) => String(field ?? '').trim()).filter(Boolean)
+          : undefined,
+        finitePopulationCorrectionField: typeof body.finitePopulationCorrectionField === 'string'
+          ? body.finitePopulationCorrectionField.trim() || undefined
+          : undefined
       })
     });
   } catch (error) {
@@ -7430,6 +17114,11 @@ server.post('/neural-network', async (request, reply) => {
     predictorFields: string[];
     task: string;
     hiddenUnits: number;
+    learningRate: number;
+    epochs: number;
+    l2Penalty: number;
+    validationSplit: number;
+    seed: number;
   }>;
   const projectId = typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId.trim() : undefined;
   const targetField = typeof body.targetField === 'string' && body.targetField.trim() ? body.targetField.trim() : undefined;
@@ -7449,7 +17138,22 @@ server.post('/neural-network', async (request, reply) => {
       analysis
     });
     return ok({
-      neuralNetwork: analyzeNeuralNetwork(dataset, targetField, predictorFields, task, typeof body.hiddenUnits === 'number' ? body.hiddenUnits : 5, analysis)
+      neuralNetwork: analyzeNeuralNetwork(
+        dataset,
+        targetField,
+        predictorFields,
+        task,
+        typeof body.hiddenUnits === 'number' ? body.hiddenUnits : 5,
+        analysis,
+        {
+          hiddenUnits: typeof body.hiddenUnits === 'number' ? body.hiddenUnits : undefined,
+          learningRate: typeof body.learningRate === 'number' ? body.learningRate : undefined,
+          epochs: typeof body.epochs === 'number' ? body.epochs : undefined,
+          l2Penalty: typeof body.l2Penalty === 'number' ? body.l2Penalty : undefined,
+          validationSplit: typeof body.validationSplit === 'number' ? body.validationSplit : undefined,
+          seed: typeof body.seed === 'number' ? body.seed : undefined
+        }
+      )
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to run neural network.';

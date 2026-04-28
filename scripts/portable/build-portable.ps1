@@ -49,6 +49,12 @@ Copy-Item -Path (Join-Path $repoRoot 'scripts\portable\stop-portable.ps1') -Dest
 Copy-Item -Path (Join-Path $repoRoot 'scripts\portable\status-portable.ps1') -Destination $portableScriptsTarget -Force
 Copy-Item -Path (Join-Path $repoRoot 'scripts\portable\install-shortcut.ps1') -Destination $portableScriptsTarget -Force
 
+Write-Host "Copying Axion sidecar assets..."
+$axionTarget = Join-Path $deployRoot 'services\axion'
+New-Item -ItemType Directory -Path $axionTarget -Force | Out-Null
+Copy-Item -Path (Join-Path $repoRoot 'services\axion\axion_sidecar.py') -Destination $axionTarget -Force
+Copy-Item -Path (Join-Path $repoRoot 'services\axion\parallel_cubed_region_genome.json') -Destination $axionTarget -Force
+
 Write-Host "Writing portable app environment..."
 $bytes = New-Object byte[] 48
 [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
@@ -61,6 +67,16 @@ MU_PORTABLE_DB_DIR=./data/portable-db
 APP_ORIGIN=http://127.0.0.1:4000
 PORT=4000
 SESSION_SECRET=$secret
+MU_AXION_SIDECAR_ENABLED=1
+MU_AXION_SIDECAR_AUTOSTART=1
+MU_AXION_SIDECAR_URL=http://127.0.0.1:8765
+MU_AXION_SIDECAR_SCRIPT_PATH=./services/axion/axion_sidecar.py
+MU_AXION_PARALLEL_CUBED_GENOME=./services/axion/parallel_cubed_region_genome.json
+MU_AXION_PYTHON_COMMAND=py
+MU_AXION_PYTHON_ARGS=-3.11
+MU_AXION_PREFILTER_ENABLED=1
+MU_AXION_PREFILTER_MIN_SCORE=0.08
+MU_AXION_QECC_GUARD_ENABLED=1
 "@ | Set-Content -Path (Join-Path $deployRoot '.env') -Encoding UTF8
 
 $launcherPath = Join-Path $OutputRoot 'start-portable.cmd'

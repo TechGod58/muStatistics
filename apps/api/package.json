@@ -39,9 +39,9 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
+    "@types/mssql": "^9.1.8",
     "@types/node": "^22.10.2",
     "@types/pdfkit": "^0.17.3",
-    "@types/mssql": "^9.1.8",
     "@types/pg": "^8.11.10",
     "ts-node": "^10.9.2",
     "tsx": "^4.19.2",

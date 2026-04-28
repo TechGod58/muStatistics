@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 export type MuRole = 'student' | 'professor';
 
@@ -11,12 +12,16 @@ export type OidcConfig = {
   redirectUri: string;
   scopes: string[];
   allowedEmailDomain: string | null;
+  expectedAudience: string;
+  allowUserInfoFallback: boolean;
 };
 
 export type OidcProviderMetadata = {
+  issuer: string;
   authorization_endpoint: string;
   token_endpoint: string;
   userinfo_endpoint?: string;
+  jwks_uri?: string;
 };
 
 export type OidcIdentity = {
@@ -51,7 +56,9 @@ export function resolveOidcConfig(env: NodeJS.ProcessEnv): OidcConfig {
     clientSecret: env.OIDC_CLIENT_SECRET?.trim() ?? '',
     redirectUri,
     scopes,
-    allowedEmailDomain: env.OIDC_ALLOWED_EMAIL_DOMAIN?.trim().toLowerCase() || null
+    allowedEmailDomain: env.OIDC_ALLOWED_EMAIL_DOMAIN?.trim().toLowerCase() || null,
+    expectedAudience: env.OIDC_EXPECTED_AUDIENCE?.trim() || clientId,
+    allowUserInfoFallback: ['1', 'true'].includes(String(env.OIDC_ALLOW_USERINFO_FALLBACK ?? '').toLowerCase())
   };
 }
 
@@ -60,19 +67,39 @@ export function buildOidcDiscoveryUrl(issuer: string): string {
 }
 
 export async function fetchOidcProviderMetadata(config: OidcConfig): Promise<OidcProviderMetadata> {
-  const response = await fetch(buildOidcDiscoveryUrl(config.issuer));
+  const response = await fetch(buildOidcDiscoveryUrl(config.issuer), {
+    signal: AbortSignal.timeout(10000)
+  });
   if (!response.ok) {
     throw new Error(`OIDC discovery failed with status ${response.status}.`);
   }
   const payload = await response.json() as Partial<OidcProviderMetadata>;
-  if (!payload.authorization_endpoint || !payload.token_endpoint) {
+  if (!payload.issuer || !payload.authorization_endpoint || !payload.token_endpoint) {
     throw new Error('OIDC discovery response is missing required endpoints.');
   }
   return {
+    issuer: payload.issuer,
     authorization_endpoint: payload.authorization_endpoint,
     token_endpoint: payload.token_endpoint,
-    userinfo_endpoint: payload.userinfo_endpoint
+    userinfo_endpoint: payload.userinfo_endpoint,
+    jwks_uri: payload.jwks_uri
   };
+}
+
+export async function verifyOidcIdToken(params: {
+  config: OidcConfig;
+  metadata: OidcProviderMetadata;
+  idToken: string;
+}): Promise<Record<string, unknown>> {
+  if (!params.metadata.jwks_uri) {
+    throw new Error('OIDC discovery metadata is missing jwks_uri for ID token verification.');
+  }
+  const jwks = createRemoteJWKSet(new URL(params.metadata.jwks_uri));
+  const { payload } = await jwtVerify(params.idToken, jwks, {
+    issuer: params.config.issuer,
+    audience: params.config.expectedAudience
+  });
+  return payload as Record<string, unknown>;
 }
 
 export function buildPkcePair(): { verifier: string; challenge: string } {
@@ -147,7 +174,16 @@ export async function resolveOidcIdentity(params: {
   tokenResponse: Record<string, unknown>;
 }): Promise<OidcIdentity> {
   const idToken = typeof params.tokenResponse.id_token === 'string' ? params.tokenResponse.id_token : '';
-  const claims = idToken ? decodeJwtPayload(idToken) : {};
+  let claims: Record<string, unknown> = {};
+  if (idToken) {
+    claims = await verifyOidcIdToken({
+      config: params.config,
+      metadata: params.metadata,
+      idToken
+    });
+  } else if (!params.config.allowUserInfoFallback) {
+    throw new Error('OIDC token response did not include id_token. Enable OIDC_ALLOW_USERINFO_FALLBACK only if your provider requires it.');
+  }
 
   let email = typeof claims.email === 'string' ? claims.email : null;
   let preferredUsername = typeof claims.preferred_username === 'string' ? claims.preferred_username : '';
