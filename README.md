@@ -2,6 +2,12 @@
 
 muStatistics is a web-native mixed-methods research platform in progress.
 
+## Repository purpose
+
+muStatistics is built for university research, assessment, and institutional analysis teams that need qualitative coding, case management, traceable variable derivation, descriptive statistics, and exportable evidence bundles in one browser-based workspace.
+
+The repository is public for visibility into the product direction and implementation approach. The license and legal notice still control use, redistribution, and derivative work.
+
 Its practical goal is narrower than full IBM SPSS + NVivo parity:
 
 - qualitative coding
