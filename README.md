@@ -1,3 +1,10 @@
+<!-- WIP-BANNER:START -->
+> [!IMPORTANT]
+> **Status: Work in Progress**
+>
+> This repository is under active development. Content, structure, and implementation details may change frequently.
+<!-- WIP-BANNER:END -->
+
 # muStatistics
 
 muStatistics is a web-native mixed-methods research platform in progress.
